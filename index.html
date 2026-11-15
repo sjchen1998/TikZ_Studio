@@ -1,0 +1,39 @@
+﻿<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>TikZ Visual Studio</title><link rel="stylesheet" href="/style.css"></head><body>
+<div id="L"><div id="bar">
+  <button id="run">▶ 编译</button><button id="undo" class="sec">↩ 撤销</button>
+  <button id="open-tex" class="sec">📂 打开 .tex</button><input type="file" id="file-in" accept=".tex,.txt" style="display:none">
+  <button id="save-tex" class="sec">💾 保存</button>
+  <select id="tpl-sel"><option value="">📑 模板...</option><option value="rc">⚡ RC滤波</option><option value="buck">🔋 Buck</option><option value="opamp">📐 运放</option><option value="block">📦 框图</option><option value="plot">📈 曲线</option><option value="plane">📏 二维</option><option value="cms">🌐 CMS三维</option><option value="gauss">📊 高斯分布</option><option value="freq">〰️ 频率响应</option></select>
+  <select id="comp"><option value="xelatex">XeLaTeX</option><option value="pdflatex">pdfLaTeX</option></select>
+  <span id="st" style="margin-left:auto;font-size:12px;color:#4ec9b0">就绪</span>
+</div><div id="cbar"></div>
+<div id="libbox">
+  <div class="libhead"><b>添加元件</b><button id="lib-close" type="button" class="sec">关闭</button></div>
+  <label>库里已有 <select id="lib-pick"></select><button id="lib-add-pick" type="button">添加</button></label>
+  <div class="libhead"><b>自定义</b></div>
+  <label>按钮名 <input id="lib-name" placeholder="例如 稳压管"></label>
+  <label>点数 <select id="lib-n"><option value="2">2 点</option><option value="1">1 点</option><option value="0">不取点</option></select></label>
+  <label>文字栏 <select id="lib-field"><option value="">无</option><option value="文字">文字</option><option value="标注">标注</option></select></label>
+  <label>默认 <input id="lib-def" placeholder="$D$"></label>
+  <label>模板 <input id="lib-tpl" placeholder="\draw {{1}} to[zD, l={{文字}}] {{2}};"></label>
+  <div class="libhint">{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。</div>
+  <button id="lib-add-custom" type="button">添加自定义</button><span id="lib-msg"></span>
+</div><div id="ed"><div id="hl"></div><textarea id="code"></textarea></div></div>
+<div id="R"><div id="zbar">
+  <label>缩放 <input id="zm" type="range" min="0.5" max="4" step="0.25" value="2.0"></label>
+  <label style="color:#c1121f;font-weight:bold"><input id="sh-r" type="checkbox" checked> 红点</label>
+  <label style="color:#0077b6;font-weight:bold"><input id="sh-b" type="checkbox" checked> 蓝点</label>
+  <label style="color:#7b2cbf;font-weight:bold"><input id="sh-p" type="checkbox" checked> 紫点</label>
+  <label><input id="lk" type="checkbox" checked> 联动</label>
+  <label style="color:#b5179e;font-weight:bold"><input id="mv-all" type="checkbox"> ✋ 整体平移</label>
+  <label>吸附 <select id="sn"><option value="0">自由</option><option value="0.05" selected>0.05</option><option value="0.1">0.1</option><option value="0.25">0.25</option></select></label>
+  <span style="margin-left:auto;display:flex;gap:4px"><button class="exp" onclick="exportFile('pdf')">PDF</button><button class="exp" onclick="exportFile('png')">PNG</button><button class="exp" onclick="exportFile('svg')">SVG</button></span>
+</div><div id="ebar">
+  <button id="sel-all" type="button" class="sec" title="选中全部可平移、缩放的坐标">全选</button>
+  <span id="sel-info" style="color:#aaa">拖拽框选或点全选，然后平移、缩放、旋转</span>
+  <span id="place"><b id="place-title"></b><span id="place-fields"></span><button id="place-ok" type="button">确认</button><button id="place-cancel" type="button" class="sec">取消</button></span>
+  <span id="inputs" style="display:none;align-items:center;gap:5px"><span id="lx">X:</span><input id="ix" type="number" step="0.05"><span id="ly">Y:</span><input id="iy" type="number" step="0.05"><button id="apply">应用</button><button id="del-btn" class="del">删除</button> 缩放:<input id="isc" type="number" step="0.1" value="1.0" style="width:44px"> 旋转:<input id="irot" type="number" step="15" value="0" style="width:44px"><button id="xform-btn" style="background:#6a1b9a">变换</button></span>
+</div><div id="toast"></div><div id="wrap"><div id="stage"><div id="svg"></div><div id="ov"></div></div></div></div><div id="tip"></div>
+<script src="/data.js"></script><script src="/app.js"></script>
+</body></html>
