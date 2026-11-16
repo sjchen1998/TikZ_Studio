@@ -1,4 +1,4 @@
-﻿const INIT_CODE = String.raw`\begin{circuitikz}[font=\small, european, scale=0.92, transform shape]
+const INIT_CODE = String.raw`\begin{circuitikz}[font=\small, european]
   \ctikzset{bipoles/length=1.0cm, bipoles/thickness=1.2}
   % 次级端子 → 引线 → 交流结点
   \draw (0,2.0) node[left] {次级\,$+$}
@@ -27,21 +27,21 @@
   \draw (dcp) -- (6.2,3.0) coordinate (vo);
   \draw (dcn) -- (6.2,-1.0) coordinate (vog);
   \draw (vo) to[C] (vog);
-  \node[font=\footnotesize, right=6pt] at ($(vo)!0.5!(vog)$) {$C_{\mathrm{HF}}$};
+  \node[right=6pt] at ($(vo)!0.5!(vog)$) {$C_{\mathrm{HF}}$};
   \filldraw (vo) circle (1.2pt);
   \filldraw (vog) circle (1.2pt);
   % 母线双线输出（标注放在线端右侧，不向下撑开包围盒）
-  \draw (vo)  -- ++(1.4,0) node[right, font=\footnotesize] {$V_{\mathrm{bus}}^+$};
-  \draw (vog) -- ++(1.4,0) node[right, font=\footnotesize] {$V_{\mathrm{bus}}^-$};
+  \draw (vo)  -- ++(1.4,0) node[right] {$V_{\mathrm{bus}}^+$};
+  \draw (vog) -- ++(1.4,0) node[right] {$V_{\mathrm{bus}}^-$};
   \useasboundingbox (-1.6,-1.35) rectangle (9.0,3.55);
 \end{circuitikz}`;
 const TPLS = {
-  rc: "\\begin{circuitikz}[european]\n  \\draw (0,0) to[V, l=$V_{in}$] (0,3) to[R, l=$R_1$] (3,3) to[C, l=$C_1$] (3,0) -- (0,0);\n  \\node[circ] at (3,3) {};\n  \\draw (3,3) -- (4.5,3) node[right] {$V_{out}$};\n\\end{circuitikz}",
-  buck: "\\begin{circuitikz}[european]\n  \\draw (0,0) node[ground]{} to[V, l=$V_{in}$] (0,3) to[nos, l=$Q_1$] (2.5,3) to[L, l=$L_1$] (5.5,3) -- (7,3) node[right]{$V_{out}$};\n  \\draw (2.5,0) node[ground]{} to[D*, l=$D_1$] (2.5,3);\n  \\draw (5.5,3) to[C, l=$C_o$] (5.5,0) node[ground]{};\n\\end{circuitikz}",
-  opamp: "\\begin{circuitikz}[european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.8,2.5) -- (1.8,3.6) to[R, l=$R_f$] (4.2,3.6) -| (op.out);\n  \\draw (1.8,2.5) to[R, l=$R_1$] (1.8,0.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n\\end{circuitikz}",
-  block: "\\begin{tikzpicture}[>=Stealth]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {传感器};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
-  plot: "\\begin{tikzpicture}\n  \\begin{axis}[width=8cm, height=5cm, grid=major]\n    \\addplot[blue, thick, domain=0:6, samples=80] {3.3 * (1 - exp(-x))};\n  \\end{axis}\n\\end{tikzpicture}",
-  plane: String.raw`\begin{tikzpicture}[scale=1.0]
+  rc: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) to[V, l=$V_{in}$] (0,3) to[R, l=$R_1$] (3,3) to[C, l=$C_1$] (3,0) -- (0,0);\n  \\node[circ] at (3,3) {};\n  \\draw (3,3) -- (4.5,3) node[right] {$V_{out}$};\n\\end{circuitikz}",
+  buck: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) node[ground]{} to[V, l=$V_{in}$] (0,3) to[nos, l=$Q_1$] (2.5,3) to[L, l=$L_1$] (5.5,3) -- (7,3) node[right]{$V_{out}$};\n  \\draw (2.5,0) node[ground]{} to[D*, l=$D_1$] (2.5,3);\n  \\draw (5.5,3) to[C, l=$C_o$] (5.5,0) node[ground]{};\n\\end{circuitikz}",
+  opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.8,2.5) -- (1.8,3.6) to[R, l=$R_f$] (4.2,3.6) -| (op.out);\n  \\draw (1.8,2.5) to[R, l=$R_1$] (1.8,0.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n\\end{circuitikz}",
+  block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {传感器};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
+  plot: "\\begin{tikzpicture}[font=\\small]\n  \\begin{axis}[width=8cm, height=5cm, grid=major, tick label style={font=\\small}, label style={font=\\small}]\n    \\addplot[blue, thick, domain=0:6, samples=80] {3.3 * (1 - exp(-x))};\n  \\end{axis}\n\\end{tikzpicture}",
+  plane: String.raw`\begin{tikzpicture}[font=\small]
     % 1. 绘制网格（可选，若不需要可注释掉）
     \draw[step=1cm, gray!30, very thin] (-3.9,-2.9) grid (4.9,4.9);
 
@@ -51,9 +51,9 @@ const TPLS = {
 
     % 3. 绘制刻度与数字
     \foreach \x in {-3,-2,-1,1,2,3,4}
-        \draw (\x, 0.05) -- (\x, -0.05) node[below, font=\small] {\x};
+        \draw (\x, 0.05) -- (\x, -0.05) node[below] {\x};
     \foreach \y in {-2,-1,1,2,3,4}
-        \draw (0.05, \y) -- (-0.05, \y) node[left, font=\small] {\y};
+        \draw (0.05, \y) -- (-0.05, \y) node[left] {\y};
     \node at (-0.3, -0.3) {$O$}; % 原点
 
     % 4. 绘制点
@@ -82,81 +82,81 @@ const TPLS = {
 \providecommand*{\vv}[1]{\vec{\mkern0mu#1}}
 % CMS detector - east perspective
 \tdplotsetmaincoords{70}{125}
-\begin{tikzpicture}[scale=2.8,tdplot_main_coords,rotate around x=90]
+\begin{tikzpicture}[tdplot_main_coords,rotate around x=90,font=\small]
   \coordinate (O) at (0,0,0);
-  \coordinate (Z) at (0,0,1.55);
-  \tdplotsetcoord{O'}{1.24/cos(17)}{17}{60}
-  \tdplotsetcoord{O''}{0.018}{90}{60}
-  \tdplotsetcoord{P}{1.55/cos(17)}{17}{60}
+  \coordinate (Z) at (0,0,4.34);
+  \tdplotsetcoord{O'}{3.472/cos(17)}{17}{60}
+  \tdplotsetcoord{O''}{0.0504}{90}{60}
+  \tdplotsetcoord{P}{4.34/cos(17)}{17}{60}
   \def\ang{24}
   \fill[top color=red!50!black!4,bottom color=red!60!black!2,rotate around z=\ang]
-    (0,0.75,1.55) --++ (0,0,-3.1) arc(90:270:0.75) --++ (0,0,3.1) arc(270:90:0.75) -- cycle;
+    (0,2.1,4.34) --++ (0,0,-8.68) arc(90:270:2.1) --++ (0,0,8.68) arc(270:90:2.1) -- cycle;
   \fill[detector surface]
-    (0,0,1.55) --++ (0,0.75,0) arc(90:270:0.75) -- cycle;
+    (0,0,4.34) --++ (0,2.1,0) arc(90:270:2.1) -- cycle;
   \fill[detector surface]
-    (0,0,-1.55) --++ (0,0.75,0) arc(90:270:0.75) -- cycle;
-  \tdplotdrawarc[detector,thin]{(0,0,1.55)}{0.75}{0}{360}{}{}
-  \tdplotdrawarc[detector]{(0,0,-1.55)}{0.75}{0}{360}{}{}
-  \draw[detector,thin] (90:0.75) arc (90:270:0.75);
-  \draw[detector,very thin] (90:0.75) arc (90:90-\ang:0.75);
-  \draw[detector] (0,0,-1.55)++(90:0.75) --++ (0,0,3.1);
-  \draw[detector] (0,0,-1.55)++(-90:0.75) --++ (0,0,3.1);
-  \tdplotdrawarc[beam pipe]{(0,0,-2.05)}{0.04}{0}{360}{}{}
+    (0,0,-4.34) --++ (0,2.1,0) arc(90:270:2.1) -- cycle;
+  \tdplotdrawarc[detector,thin]{(0,0,4.34)}{2.1}{0}{360}{}{}
+  \tdplotdrawarc[detector]{(0,0,-4.34)}{2.1}{0}{360}{}{}
+  \draw[detector,thin] (90:2.1) arc (90:270:2.1);
+  \draw[detector,very thin] (90:2.1) arc (90:90-\ang:2.1);
+  \draw[detector] (0,0,-4.34)++(90:2.1) --++ (0,0,8.68);
+  \draw[detector] (0,0,-4.34)++(-90:2.1) --++ (0,0,8.68);
+  \tdplotdrawarc[beam pipe]{(0,0,-5.74)}{0.112}{0}{360}{}{}
   \draw[beam pipe]
-    (0,0.04,-2.05) -- (0,0.04,-0.82) -- (90:0.02)
-    -- (0,0.04,0.82) -- (0,0.04,2.05) arc(90:-90:0.04)
-    -- (0,-0.04,0.82) -- (-90:0.02) --
-    (0,-0.04,-0.82) -- (0,-0.04,-2.05) arc(-90:90:0.04);
-  \draw[beam pipe] (0,0,2.05) circle(0.04);
-  \draw[axis] (0,0,0) -- (0,0,2.35) node[anchor=north,xshift=3pt,yshift=-2pt]{$z$};
+    (0,0.112,-5.74) -- (0,0.112,-2.296) -- (90:0.056)
+    -- (0,0.112,2.296) -- (0,0.112,5.74) arc(90:-90:0.112)
+    -- (0,-0.112,2.296) -- (-90:0.056) --
+    (0,-0.112,-2.296) -- (0,-0.112,-5.74) arc(-90:90:0.112);
+  \draw[beam pipe] (0,0,5.74) circle(0.112);
+  \draw[axis] (0,0,0) -- (0,0,6.58) node[anchor=north,xshift=3pt,yshift=-2pt]{$z$};
   \fill[CMScol] (O) circle(0.5pt) node[anchor=north,xshift=1pt,yshift=-1pt] {IP};
-  \draw[axis,-] (0,0,-2.25) -- (0,0,-0.020);
-  \draw[axis] (0,0.019,0) -- (0,1.05,0) node[below left]{$y$};
-  \draw[axis] (0.022,0,0) -- (1,0,0) node[anchor=east,xshift=2pt,yshift=-1pt]{$x$};
+  \draw[axis,-] (0,0,-6.3) -- (0,0,-0.056);
+  \draw[axis] (0,0.0532,0) -- (0,2.94,0) node[below left]{$y$};
+  \draw[axis] (0.0616,0,0) -- (2.8,0,0) node[anchor=east,xshift=2pt,yshift=-1pt]{$x$};
   \draw[red] (O) -- (O');
-  \node[mydarkred,above] at (0,1.05,0) {$\eta=0$};
-  \node[mydarkred,anchor=south,yshift=6pt] at (0,0.75,0.713) {$\eta>0$};
-  \node[mydarkred,anchor=south,yshift=6pt] at (0,0.75,-0.93) {$\eta<0$};
-  \node[mydarkred,anchor=east,yshift=1pt] at (0,0,2.35) {$\eta=+\infty$};
-  \node[mydarkred,anchor=west,yshift=-1pt] at (0,0,-2.25) {$\eta=-\infty$};
-  \draw[beam pipe,fill=none] (0,0.04,-2.05) arc(90:-90:0.04);
+  \node[mydarkred,above] at (0,2.94,0) {$\eta=0$};
+  \node[mydarkred,anchor=south,yshift=6pt] at (0,2.1,1.9964) {$\eta>0$};
+  \node[mydarkred,anchor=south,yshift=6pt] at (0,2.1,-2.604) {$\eta<0$};
+  \node[mydarkred,anchor=east,yshift=1pt] at (0,0,6.58) {$\eta=+\infty$};
+  \node[mydarkred,anchor=west,yshift=-1pt] at (0,0,-6.3) {$\eta=-\infty$};
+  \draw[beam pipe,fill=none] (0,0.112,-5.74) arc(90:-90:0.112);
   \fill[detector surface]
-    (0,0.042,1.55) --++ (0,0.708,0) arc(90:-90:0.75) --++ (0,0.708,0) arc(-90:90:0.042);
+    (0,0.1176,4.34) --++ (0,1.9824,0) arc(90:-90:2.1) --++ (0,1.9824,0) arc(-90:90:0.1176);
   \fill[detector surface]
-    (0,0.042,-1.55) --++ (0,0.708,0) arc(90:-90:0.75) --++ (0,0.708,0) arc(-90:90:0.042);
-  \tdplotdrawarc[detector]{(0,0,1.55)}{0.75}{-90}{90.1}{}{}
-  \tdplotdrawarc[detector]{(0,0,-1.55)}{0.75}{-90}{90}{}{}
-  \draw[beam pipe,fill=none] (0,0.04,2.05) arc(90:-90:0.04);
-  \draw[detector,very thin] (90-\ang:0.75) arc (90-\ang:-90:0.75);
-  \draw[detector,very thin] (90-\ang:0.75) arc (90-\ang:-90:0.75);
+    (0,0.1176,-4.34) --++ (0,1.9824,0) arc(90:-90:2.1) --++ (0,1.9824,0) arc(-90:90:0.1176);
+  \tdplotdrawarc[detector]{(0,0,4.34)}{2.1}{-90}{90.1}{}{}
+  \tdplotdrawarc[detector]{(0,0,-4.34)}{2.1}{-90}{90}{}{}
+  \draw[beam pipe,fill=none] (0,0.112,5.74) arc(90:-90:0.112);
+  \draw[detector,very thin] (90-\ang:2.1) arc (90-\ang:-90:2.1);
+  \draw[detector,very thin] (90-\ang:2.1) arc (90-\ang:-90:2.1);
   \draw[dashed,myred] (Pz) -- (P);
   \draw[->,red,line cap=round] (O'') -- (Pxy) node[anchor=-92] {$\vv{p}_\mathrm{T}$};
   \draw[dashed,myred,line join=round] (Py) -- (Pxy) -- (P);
   \draw[->,red] (O') -- (P) node[anchor=-50,inner sep=1pt] {$\vv{p}$};
-  \tdplotdrawarc[thick,mycontourred]{(O)}{0.2}{4}{42}{}{}
-  \tdplotdrawarc[draw=none,opacity=0.9]{(O)}{0.2}{0}{60}
+  \tdplotdrawarc[thick,mycontourred]{(O)}{0.56}{4}{42}{}{}
+  \tdplotdrawarc[draw=none,opacity=0.9]{(O)}{0.56}{0}{60}
     {anchor=mid east,xshift=1pt,yshift=-4pt}{\contour{mycontourred}{$\phi$}}
-  \tdplotdrawarc[->]{(O)}{0.2}{0}{60}
+  \tdplotdrawarc[->]{(O)}{0.56}{0}{60}
     {anchor=mid east,xshift=1pt,yshift=-4pt}{$\phi$}
   \tdplotdrawarc[->,rotate around z=-30,rotate around y=-90]
-    {(O)}{1.05}{0}{17}{anchor=mid east,yshift=2pt}{$\theta$}
+    {(O)}{2.94}{0}{17}{anchor=mid east,yshift=2pt}{$\theta$}
   \tdplotdrawarc[-{>[bend=1]},rotate around z=-30,rotate around y=-90,line cap=round]
-    {(O)}{0.3}{90}{17}{anchor=mid east,xshift=2pt,yshift=4pt}{$\eta$}
-  \draw[mydarkred,line cap=round] (0.004,0,1.55) --++ (0.75,0,0);
-  \tdplotdrawarc[thick,mycontourred2]{(Z)}{0.2}{4}{42}{}{}
-  \tdplotdrawarc[draw=none]{(Z)}{0.2}{0}{60}
+    {(O)}{0.84}{90}{17}{anchor=mid east,xshift=2pt,yshift=4pt}{$\eta$}
+  \draw[mydarkred,line cap=round] (0.0112,0,4.34) --++ (2.1,0,0);
+  \tdplotdrawarc[thick,mycontourred2]{(Z)}{0.56}{4}{42}{}{}
+  \tdplotdrawarc[draw=none]{(Z)}{0.56}{0}{60}
     {anchor=mid east,xshift=1pt,yshift=-4pt,opacity=0.9}{\contour{mycontourred2}{$\phi$}}
-  \tdplotdrawarc[->]{(Z)}{0.2}{0}{60}
+  \tdplotdrawarc[->]{(Z)}{0.56}{0}{60}
     {anchor=mid east,xshift=1pt,yshift=-4pt}{$\phi$}
-  \begin{scope}[shift={(0.975,-0.75,1.395)},rotate around y=12]
-    \draw[<->,black!50] (-0.3,0,0) -- (0.3,0,0);
-    \draw[<->,black!50] (0,0,-0.3) -- (0,0,0.3);
-    \node[anchor=south,xshift=4pt,black!50,scale=0.6] at (-0.3,0,0) {N};
-    \node[anchor=east,xshift=1pt,yshift=1pt,green!20!black!50,scale=0.6] at (0,0,0.3) {Jura};
-    \node[anchor=north,xshift=-2pt,yshift=-1pt,blue!30!black!50,scale=0.6] at (0.3,0,0) {ATLAS};
+  \begin{scope}[shift={(2.73,-2.1,3.906)},rotate around y=12]
+    \draw[<->,black!50] (-0.84,0,0) -- (0.84,0,0);
+    \draw[<->,black!50] (0,0,-0.84) -- (0,0,0.84);
+    \node[anchor=south,xshift=4pt,black!50] at (-0.84,0,0) {N};
+    \node[anchor=east,xshift=1pt,yshift=1pt,green!20!black!50] at (0,0,0.84) {Jura};
+    \node[anchor=north,xshift=-2pt,yshift=-1pt,blue!30!black!50] at (0.84,0,0) {ATLAS};
   \end{scope}
-  \draw[->,thick,orange!30!black] (0.42,-0.75,0.31) --++ (0.6,0,0)
-    node[anchor=east,yshift=-1pt,scale=0.8,align=center] {center of\\[-1pt]the LHC};
+  \draw[->,thick,orange!30!black] (1.176,-2.1,0.868) --++ (1.68,0,0)
+    node[anchor=east,yshift=-1pt,align=center] {center of\\[-1pt]the LHC};
 \end{tikzpicture}`,
   gauss: String.raw`\pgfmathdeclarefunction{gauss}{3}{%
   \pgfmathparse{1/(#3*sqrt(2*pi))*exp(-((#1-#2)^2)/(2*#3^2))}%
@@ -164,7 +164,7 @@ const TPLS = {
 \colorlet{mydarkblue}{blue!30!black}
 \def\N{50}
 % GAUSSIANs: 68-95-99 rule
-\begin{tikzpicture}
+\begin{tikzpicture}[font=\small]
   \def\B{11}
   \def\Bs{3.0}
   \def\xmax{\B+3.2*\Bs}
@@ -179,10 +179,11 @@ const TPLS = {
                enlargelimits=upper,
                ticks=none,
                xlabel=$x$,
-               every axis x label/.style={at={(current axis.right of origin)},anchor=north},
+               every axis x label/.style={at={(current axis.right of origin)},anchor=north,font=\small},
                width=0.85*\textwidth, height=0.55*\textwidth,
                y=700pt,
-               clip=false]
+               clip=false,
+               every node/.append style={font=\small}]
     \addplot[blue,thick,smooth,name path=B] {gauss(x,\B,\Bs)};
     \path[name path=xaxis] (0,0) -- (\pgfkeysvalueof{/pgfplots/xmax},0);
     \addplot[blue!50] fill between[of=xaxis and B, soft clip={domain={\B-3*\Bs}:{\B+3*\Bs}}];
@@ -190,25 +191,25 @@ const TPLS = {
     \addplot[blue!10] fill between[of=xaxis and B, soft clip={domain={\B-1*\Bs}:{\B+1*\Bs}}];
     \addplot[black,dashed,thick]
       coordinates {({\B-3*\Bs},{20*gauss(\B-3*\Bs,\B,\Bs)}) ({\B-3*\Bs},{-\h})}
-      node[below=-3pt,scale=0.8] {\strut$\mu-3\sigma$};
+      node[below=-3pt] {\strut$\mu-3\sigma$};
     \addplot[black,dashed,thick]
       coordinates {({\B-2*\Bs},{4*gauss(\B-2*\Bs,\B,\Bs)}) ({\B-2*\Bs},{-\h})}
-      node[below=-3pt,scale=0.8] {\strut$\mu-2\sigma$};
+      node[below=-3pt] {\strut$\mu-2\sigma$};
     \addplot[black,dashed,thick]
       coordinates {({\B-1*\Bs},{1.3*gauss(\B-\Bs,\B,\Bs)}) ({\B-1*\Bs},{-\h})}
-      node[below=-3pt,scale=0.8] at ({\B-\Bs},{-\h}) {\strut$\mu-\sigma$};
+      node[below=-3pt] at ({\B-\Bs},{-\h}) {\strut$\mu-\sigma$};
     \addplot[black,dashed,line width=0.7pt]
       coordinates {(\B,{1.05*gauss(\B,\B,\Bs)}) (\B,{-\h})}
-      node[below=-3pt,scale=0.8] {\strut$\mu$};
+      node[below=-3pt] {\strut$\mu$};
     \addplot[black,dashed,thick]
       coordinates {({\B+1*\Bs},{1.3*gauss(\B+\Bs,\B,\Bs)}) ({\B+1*\Bs},{-\h})}
-      node[below=-3pt,scale=0.8] at ({\B+\Bs},{-\h}) {\strut$\mu+\sigma$};
+      node[below=-3pt] at ({\B+\Bs},{-\h}) {\strut$\mu+\sigma$};
     \addplot[black,dashed,thick]
       coordinates {({\B+2*\Bs},{4*gauss(\B+2*\Bs,\B,\Bs)}) ({\B+2*\Bs},{-\h})}
-      node[below=-3pt,scale=0.8] at ({\B+2*\Bs},{-\h}) {\strut$\mu+2\sigma$};
+      node[below=-3pt] at ({\B+2*\Bs},{-\h}) {\strut$\mu+2\sigma$};
     \addplot[black,dashed,thick]
       coordinates {({\B+3*\Bs},{20*gauss(\B+3*\Bs,\B,\Bs)}) ({\B+3*\Bs},{-\h})}
-      node[below=-3pt,scale=0.8] at ({\B+3*\Bs},{-\h}) {\strut$\mu+3\sigma$};
+      node[below=-3pt] at ({\B+3*\Bs},{-\h}) {\strut$\mu+3\sigma$};
     \addplot[<->,mydarkblue,thick]
       coordinates {({\B-\Bs},{.55*gauss(\B,\B,\Bs)}) ({\B+\Bs},{.55*gauss(\B,\B,\Bs)})};
     \addplot[<->,mydarkblue,thick]
@@ -234,7 +235,7 @@ const TPLS = {
 \def\tick#1#2{\draw[thick] (#1)++(#2:0.12) --++ (#2-180:0.24)}
 \def\N{100}
 % RESONANCE
-\begin{tikzpicture}
+\begin{tikzpicture}[font=\small]
   \def\xmax{4.5}
   \def\ymax{2.7}
   \def\c{1.4}
@@ -257,8 +258,8 @@ const TPLS = {
     plot(\x,{\A*\ba*\c/sqrt((\c*\c-\x*\x)^2+(\bc*\x)^2)});
   \draw[xline,mygreen,samples=\N,smooth,variable=\x,domain=0.01:0.94*\xmax]
     plot(\x,{\A*\ba*\c/sqrt((\c*\c-\x*\x)^2+(\bd*\x)^2)});
-  \node[mydarkred,align=left,right,scale=0.95] at ({0.26*(\c+\xmax)},0.8*\A) {small $b$, $\Delta\omega$\\large $Q$};
-  \node[myblue,align=left,above,scale=0.95] at ({0.65*(\c+\xmax)},0.3*\A*\ba/\bc) {large $b$, $\Delta\omega$\\small $Q$};
+  \node[mydarkred,align=left,right] at ({0.26*(\c+\xmax)},0.8*\A) {small $b$, $\Delta\omega$\\large $Q$};
+  \node[myblue,align=left,above] at ({0.65*(\c+\xmax)},0.3*\A*\ba/\bc) {large $b$, $\Delta\omega$\\small $Q$};
   \draw[dashed,thin] (C) --++ (0,\A);
   \tick{C}{90} node[below] {$\omega_0$};
 \end{tikzpicture}`
@@ -386,6 +387,55 @@ function turnAxis(p0, p1, label, a0, a1, rx, ry) {
   const mx = +((x0 + x1) / 2).toFixed(3), my = +((y0 + y1) / 2).toFixed(3), deg = +(Number.isFinite(ang) ? ang : 0).toFixed(3);
   return `\\begin{scope}[shift={(${mx},${my})}, rotate={${deg}}]\n    \\draw[${head}, thick] ${arc};\n  \\end{scope}`;
 }
+function dimFeet(p1, p2, t, mode) {
+  let nx = 0, ny = 1;
+  if (mode === 'v') { nx = 1; ny = 0; }
+  else if (mode === 'a') {
+    const dx = p2[0] - p1[0], dy = p2[1] - p1[1], L = Math.hypot(dx, dy);
+    if (L > 1e-6) { nx = -dy / L; ny = dx / L; }
+  }
+  const foot = p => {
+    const k = (t[0] - p[0]) * nx + (t[1] - p[1]) * ny;
+    return [p[0] + k * nx, p[1] + k * ny];
+  };
+  return [foot(p1), foot(p2)];
+}
+function dimCode(pts, label, v) {
+  const mode = v && (v.mode === 'v' || v.mode === 'a') ? v.mode : 'h';
+  const arrow = v && v.arrow === 'out' ? 'out' : 'in';
+  const id = (v && v.id) || 1;
+  const A = 'd' + id + 'a', B = 'd' + id + 'b', T = 'd' + id + 't', C = 'd' + id + 'c', D = 'd' + id + 'd';
+  const tip = '>={Stealth[length=2mm, width=2mm]}';
+  const [fc, fd] = dimFeet(pts[0], pts[1], pts[2], mode);
+  const xy = p => `(${+Number(p[0]).toFixed(4)},${+Number(p[1]).toFixed(4)})`;
+  const lines = [
+    '\\begin{scope}[thin] % udim',
+    `    \\coordinate (${A}) at ${P(pts[0])};`,
+    `    \\coordinate (${B}) at ${P(pts[1])};`,
+    `    \\coordinate (${T}) at ${P(pts[2])};`,
+    `    \\coordinate (${C}) at ${xy(fc)};`,
+    `    \\coordinate (${D}) at ${xy(fd)};`
+  ];
+  lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${A}}{center}}\\pgfgetlastxy{\\udax}{\\uday}`);
+  lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${B}}{center}}\\pgfgetlastxy{\\udbx}{\\udby}`);
+  lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${C}}{center}}\\pgfgetlastxy{\\udcx}{\\udcy}`);
+  lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${D}}{center}}\\pgfgetlastxy{\\uddx}{\\uddy}`);
+  lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${T}}{center}}\\pgfgetlastxy{\\udtx}{\\udty}`);
+  lines.push('    \\begin{scope}');
+  lines.push('      \\pgftransformreset');
+  lines.push('      \\draw[thin, black!65] ($(\\udax,\\uday)!2pt!(\\udcx,\\udcy)$) -- ($(\\udcx,\\udcy)!-4pt!(\\udax,\\uday)$);');
+  lines.push('      \\draw[thin, black!65] ($(\\udbx,\\udby)!2pt!(\\uddx,\\uddy)$) -- ($(\\uddx,\\uddy)!-4pt!(\\udbx,\\udby)$);');
+  if (arrow === 'out') {
+    lines.push(`      \\draw[->, thin, black, ${tip}] ($(\\udcx,\\udcy)!-10pt!(\\uddx,\\uddy)$) -- (\\udcx,\\udcy);`);
+    lines.push(`      \\draw[->, thin, black, ${tip}] ($(\\uddx,\\uddy)!-10pt!(\\udcx,\\udcy)$) -- (\\uddx,\\uddy);`);
+    lines.push('      \\draw[thin, black] (\\udcx,\\udcy) -- (\\uddx,\\uddy);');
+  } else lines.push(`      \\draw[<->, thin, black, ${tip}] (\\udcx,\\udcy) -- (\\uddx,\\uddy);`);
+  lines.push(`      \\node[fill=white, inner sep=1.5pt, font=\\small, transform shape=false, text=black] at (\\udtx,\\udty) {${label}};`);
+  lines.push('    \\end{scope}');
+  lines.push('  \\end{scope}');
+  const head = v && v.prefix ? v.prefix + '\n  ' : '';
+  return head + lines.join('\n');
+}
 function tickList(from, to) {
   let a = Math.round(Number(from)), b = Math.round(Number(to));
   if (!Number.isFinite(a) || !Number.isFinite(b)) return '1,2,3';
@@ -395,7 +445,7 @@ function tickList(from, to) {
   return xs.length ? xs.join(',') : '1';
 }
 const PLACE = {
-  text: { name: '文字', btn: 'T 文字', n: 1, field: '文字', def: '标注', build: (p, a, rot) => `\\node[${withRot('font=\\scriptsize', rot)}] at ${P(p[0])} {${a}};` },
+  text: { name: '文字', btn: 'T 文字', n: 1, field: '文字', def: '标注', build: (p, a, rot) => `\\node[${withRot('font=\\small', rot)}] at ${P(p[0])} {${a}};` },
   wire: { name: '线', btn: '─ 线', n: 2, build: p => `\\draw ${P(p[0])} -- ${P(p[1])};` },
   R: { name: '电阻', btn: 'R', n: 2, field: '标注', def: '$R$', build: (p, a) => `\\draw ${P(p[0])} to[R, l=${a}] ${P(p[1])};` },
   C: { name: '电容', btn: 'C', n: 2, field: '标注', def: '$C$', build: (p, a) => `\\draw ${P(p[0])} to[C, l=${a}] ${P(p[1])};` },
@@ -435,7 +485,7 @@ Object.assign(PLACE, {
   bellipse: { panel: 'block', name: '椭圆', btn: '椭圆', n: 1, field: '文字', def: '起止', build: (p, a, rot) => `\\node[${withRot('draw, ellipse', rot)}] at ${P(p[0])} {${a}};` },
   pfn: { panel: 'plot', name: '函数', btn: '函数', n: 0, inputs: [{ id: 'expr', label: '式', def: 'x', wide: true }, { id: 'a', label: '从', def: '0' }, { id: 'b', label: '到', def: '6' }], build: (p, a, rot, v) => `\\addplot[blue, thick, domain=${v.a}:${v.b}, samples=80] {${v.expr}};` },
   pmarks: { panel: 'plot', name: '散点', btn: '散点', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,1) (1,2) (2,1.5) (3,2.4)', wide: true }], build: (p, a, rot, v) => `\\addplot[only marks, mark=*] coordinates {${v.pts}};` },
-  plabel: { panel: 'plot', name: '标注', btn: '标注', n: 0, inputs: [{ id: 't', label: '文字', def: '标注', wide: true }, { id: 'x', label: 'X', def: '2' }, { id: 'y', label: 'Y', def: '2' }], build: (p, a, rot, v) => `\\node[font=\\scriptsize, anchor=south west] at (axis cs:${v.x},${v.y}) {${v.t}};` },
+  plabel: { panel: 'plot', name: '标注', btn: '标注', n: 0, inputs: [{ id: 't', label: '文字', def: '标注', wide: true }, { id: 'x', label: 'X', def: '2' }, { id: 'y', label: 'Y', def: '2' }], build: (p, a, rot, v) => `\\node[font=\\small, anchor=south west] at (axis cs:${v.x},${v.y}) {${v.t}};` },
   pbar: { panel: 'plot', name: '柱状', btn: '柱状', n: 0, inputs: [{ id: 'pts', label: '点', def: '(1,2) (2,3) (3,1.4)', wide: true }], build: (p, a, rot, v) => `\\addplot[ybar, bar width=8pt, fill=blue!35] coordinates {${v.pts}};` },
   pstep: { panel: 'plot', name: '阶梯', btn: '阶梯', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,0) (1,1) (2,1) (3,2)', wide: true }], build: (p, a, rot, v) => `\\addplot[const plot, thick] coordinates {${v.pts}};` },
   psmooth: { panel: 'plot', name: '平滑', btn: '平滑', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,0) (1,1.2) (2,0.4) (3,1.6)', wide: true }], build: (p, a, rot, v) => `\\addplot[smooth, thick] coordinates {${v.pts}};` },
@@ -474,16 +524,17 @@ Object.assign(PLACE, {
   sline: { panel: 'space', name: '三维线段', btn: '三维线段', n: 0, inputs: [{ id: 'pts', label: '坐标', def: '(0,0,0) -- (1,1,1)', wide: 'path' }], build: (p, a, rot, v) => `\\draw[thick] ${spacePath(v.pts)};` },
   sarrow: { panel: 'space', name: '三维箭头', btn: '三维箭头', n: 0, inputs: [{ id: 'pts', label: '坐标', def: '(0,0,0) -- (1,1,1)', wide: 'path' }], build: (p, a, rot, v) => `\\draw[->,thick] ${spacePath(v.pts)};` },
   scirc: { panel: 'space', name: '三维圆', btn: '三维圆', n: 0, inputs: [{ id: 'c', label: '圆心', def: '(0,0,0)', wide: true }, { id: 'r', label: '半径', def: '0.5' }, { id: 'plane', label: '平面', def: 'xy', wide: 'path' }, { id: 'tip', label: '线', def: '' }], build: (p, a, rot, v) => arc3(v, true) },
-  sarc: { panel: 'space', name: '三维弧', btn: '三维弧', n: 0, inputs: [{ id: 'c', label: '圆心', def: '(0,0,0)', wide: true }, { id: 'r', label: '半径', def: '0.5' }, { id: 'a', label: '起', def: '20' }, { id: 'b', label: '终', def: '200' }, { id: 'plane', label: '平面', def: 'xy', wide: 'path' }, { id: 'tip', label: '线', def: '->' }], build: (p, a, rot, v) => arc3(v, false) }
+  sarc: { panel: 'space', name: '三维弧', btn: '三维弧', n: 0, inputs: [{ id: 'c', label: '圆心', def: '(0,0,0)', wide: true }, { id: 'r', label: '半径', def: '0.5' }, { id: 'a', label: '起', def: '20' }, { id: 'b', label: '终', def: '200' }, { id: 'plane', label: '平面', def: 'xy', wide: 'path' }, { id: 'tip', label: '线', def: '->' }], build: (p, a, rot, v) => arc3(v, false) },
+  dim: { panel: 'any', dim: true, name: '尺寸', btn: '尺寸', n: 3, field: '文字', def: '', build: (p, a, rot, v) => dimCode(p, a, v) }
 });
 const FIXED = ['rot2', 'rot3', 'ax2', 'ax3'];
 const SHOWN_COMMON = ['gline', 'gtext', 'garrow', 'grect', 'gcirc', 'gfill', 'gell', 'garc', 'gdash', 'ggrid'];
 const PANELS = {
-  circuit: { title: '电路', core: ['text', 'wire', 'R', 'C', 'L', 'V', 'I', 'sw'], lib: ['D', 'nmos', 'npn', 'xfmr', 'opamp', 'gnd', 'dot', 'box', 'spring', 'damper', 'mass', 'wall', 'force'] },
-  block: { title: '框图', core: ['btext', 'bbox', 'barrow'], lib: ['bround', 'bdiamond', 'bellipse'] },
-  plot: { title: '曲线', core: ['pfn', 'pmarks', 'plabel'], lib: ['pbar', 'pstep', 'psmooth', 'parea', 'pvline'] },
-  plane: { title: '二维', core: ['xpt', 'xseg', 'xfn'], lib: ['xaxes', 'xticks'] },
-  space: { title: '三维', core: ['sline', 'sarrow', 'scirc', 'sarc'], lib: [] }
+  circuit: { title: '电路', core: ['text', 'wire', 'R', 'C', 'L', 'V', 'I', 'sw', 'dim'], lib: ['D', 'nmos', 'npn', 'xfmr', 'opamp', 'gnd', 'dot', 'box', 'spring', 'damper', 'mass', 'wall', 'force'] },
+  block: { title: '框图', core: ['btext', 'bbox', 'barrow', 'dim'], lib: ['bround', 'bdiamond', 'bellipse'] },
+  plot: { title: '曲线', core: ['pfn', 'pmarks', 'plabel', 'dim'], lib: ['pbar', 'pstep', 'psmooth', 'parea', 'pvline'] },
+  plane: { title: '二维', core: ['xpt', 'xseg', 'xfn', 'dim'], lib: ['xaxes', 'xticks'] },
+  space: { title: '三维', core: ['sline', 'sarrow', 'scirc', 'sarc', 'dim'], lib: [] }
 };
 function visibleCommon(name) {
   return SHOWN_COMMON.filter(k => !((PLACE[k].hideOn || []).includes(name)));

@@ -1,4 +1,4 @@
-﻿const $ = id => document.getElementById(id);
+const $ = id => document.getElementById(id);
 let pts = [], ports = [], W = 0, H = 0, cal = null, activeIdx = -1, multiSet = new Set(), lastGood = '', history = [];
 let place = null, placeHover = null;
 
@@ -273,12 +273,48 @@ function pickWorld(clientX, clientY) {
   if (sn > 0) { x = Math.round(x / sn) * sn; y = Math.round(y / sn) * sn; }
   return { x: +x.toFixed(3), y: +y.toFixed(3), ref: '' };
 }
+function dimModeNow() {
+  if (!place || !place.dim || place.dim.mode !== 'auto') return place && place.dim ? place.dim.mode : 'h';
+  const p1 = place.pts[0], p2 = place.pts[1];
+  const t = place.pts[2] || (placeHover ? [placeHover.x, placeHover.y] : null);
+  if (!p1 || !p2 || !t) return 'h';
+  const mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
+  return Math.abs(t[1] - my) >= Math.abs(t[0] - mx) ? 'h' : 'v';
+}
+function dimLength(p1, p2, mode) {
+  const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+  const n = mode === 'v' ? Math.abs(dy) : mode === 'a' ? Math.hypot(dx, dy) : Math.abs(dx);
+  return String(Math.round(n * 1000) / 1000);
+}
+function setDimLabel(text) {
+  const el = $('plab');
+  if (!el || !place || !place.dim || place.dim.labelEdited) return;
+  place.dim.filling = true; el.value = text; place.dim.filling = false;
+}
+function setDimMode(mode) {
+  if (!place || !place.dim) return;
+  place.dim.mode = mode;
+  if (place.pts[0] && place.pts[1] && place.pts[2]) setDimLabel(dimLength(place.pts[0], place.pts[1], mode));
+  placeTitle(); paintPlace();
+}
+function setDimArrow(arrow) {
+  if (!place || !place.dim) return;
+  place.dim.arrow = arrow; placeTitle(); paintPlace();
+}
+function syncDimButtons() {
+  if (!place || !place.dim) return;
+  const mode = dimModeNow();
+  ['h', 'v', 'a'].forEach(k => { const b = $('dim-' + k); if (b) b.classList.toggle('dimon', k === mode); });
+  const inn = $('dim-in'), out = $('dim-out');
+  if (inn) inn.classList.toggle('dimon', place.dim.arrow !== 'out');
+  if (out) out.classList.toggle('dimon', place.dim.arrow === 'out');
+}
 function paintPlace() {
-  $('ov').querySelectorAll('.ghost,.ghost-line,.port').forEach(el => el.remove());
+  $('ov').querySelectorAll('.ghost,.ghost-line,.ghost-lab,.port').forEach(el => el.remove());
   if (!place || !cal) return;
   const z = +$('zm').value, pos = (x, y) => { const [px, py] = tikzToPage(x, y); return { x: px * z, y: py * z }; };
   const spots = place.pts.map(p => p ? pos(p[0], p[1]) : null);
-  if (place.n === 2 && spots[0] && !spots[1] && placeHover) spots[1] = pos(placeHover.x, placeHover.y);
+  if (!place.pts[1] && spots[0] && placeHover) spots[1] = pos(placeHover.x, placeHover.y);
   if (place.n >= 1) ports.forEach(p => {
     if (p.wx == null || p.anchor === 'center') return;
     const d = document.createElement('div'); d.className = 'port'; d.title = '(' + p.ref + ')';
@@ -286,7 +322,9 @@ function paintPlace() {
     d.onmousedown = e => { e.preventDefault(); e.stopPropagation(); putPlace(p.wx, p.wy, p.ref); };
     $('ov').appendChild(d);
   });
-  if (spots[0] && spots[1]) {
+  const tLive = place.dim && place.pts[0] && place.pts[1] ? (place.pts[2] || (placeHover ? [placeHover.x, placeHover.y] : null)) : null;
+  if (tLive) paintDimFrame(place.pts[0], place.pts[1], tLive, pos);
+  else if (spots[0] && spots[1]) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'ghost-line');
     const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -318,7 +356,44 @@ function paintPlace() {
     $('ov').appendChild(svg);
   }
 }
+function paintDimFrame(p1, p2, t, pos) {
+  const mode = dimModeNow(), [d1, d2] = dimFeet(p1, p2, t, mode);
+  const A = pos(p1[0], p1[1]), B = pos(p2[0], p2[1]), C = pos(d1[0], d1[1]), D = pos(d2[0], d2[1]), T = pos(t[0], t[1]);
+  const pt = Math.max(1.2, Math.hypot(cal.xx, cal.xy) * +$('zm').value / 28.45);
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('class', 'ghost-line ghost-dim');
+  const seg = (a, b, ext) => {
+    const ln = document.createElementNS(ns, 'line');
+    ln.setAttribute('x1', a.x); ln.setAttribute('y1', a.y); ln.setAttribute('x2', b.x); ln.setAttribute('y2', b.y);
+    if (ext) ln.setAttribute('class', 'ext'); svg.appendChild(ln);
+  };
+  const walk = (from, to, dist) => { const dx = to.x - from.x, dy = to.y - from.y, L = Math.hypot(dx, dy) || 1; return { x: from.x + dx / L * dist, y: from.y + dy / L * dist }; };
+  const head = (tip, from) => { const back = walk(tip, from, 11), dx = tip.x - from.x, dy = tip.y - from.y, L = Math.hypot(dx, dy) || 1; const px = -dy / L * 4, py = dx / L * 4; seg(tip, { x: back.x + px, y: back.y + py }); seg(tip, { x: back.x - px, y: back.y - py }); };
+  if (Math.hypot(C.x - A.x, C.y - A.y) > 4) seg(walk(A, C, pt * 2), walk(C, A, -pt * 4), true);
+  if (Math.hypot(D.x - B.x, D.y - B.y) > 4) seg(walk(B, D, pt * 2), walk(D, B, -pt * 4), true);
+  if (place.dim.arrow === 'out') { const o1 = walk(C, D, -pt * 10), o2 = walk(D, C, -pt * 10); seg(o1, C); seg(o2, D); seg(C, D); head(C, o1); head(D, o2); }
+  else { seg(C, D); head(C, D); head(D, C); }
+  $('ov').appendChild(svg);
+  const lab = document.createElement('div'); lab.className = 'ghost-lab';
+  lab.textContent = ($('plab') && place.dim.labelEdited && $('plab').value) || dimLength(p1, p2, mode);
+  lab.style.left = T.x + 'px'; lab.style.top = T.y + 'px'; $('ov').appendChild(lab);
+  if (!place.pts[2]) {
+    const g = document.createElement('div'); g.className = 'ghost'; g.textContent = 'T';
+    g.style.left = T.x + 'px'; g.style.top = T.y + 'px'; $('ov').appendChild(g);
+  }
+}
 function placeTitle() {
+  if (place && place.dim) {
+    syncDimButtons();
+    const got = place.pts.filter(Boolean).length;
+    const mode = { h: '水平', v: '竖直', a: '对齐' }[dimModeNow()];
+    const arrow = place.dim.arrow === 'out' ? '箭头在外' : '箭头在内';
+    if (got < 1) { $('place-title').textContent = '尺寸：点起点'; return; }
+    if (got < 2) { $('place-title').textContent = '尺寸：点终点'; return; }
+    const len = place.pts[0] && place.pts[1] ? ' ' + dimLength(place.pts[0], place.pts[1], dimModeNow()) : '';
+    $('place-title').textContent = got < 3 ? `尺寸：点文字位置（${mode}，${arrow}）${len}。H 水平，V 竖直，R 对齐，I 内，O 外` : '尺寸：改文字后回车确认';
+    return;
+  }
   const spec = PLACE[place.key], got = place.pts.filter(Boolean).length;
   const refs = place.pts.map(p => p && p.ref ? `(${p.ref})` : '').filter(Boolean).join(' → ');
   if (!spec.n) { $('place-title').textContent = `添加${spec.name}：填好后点确认`; return; }
@@ -329,12 +404,18 @@ function putPlace(x, y, ref) {
   if (x && typeof x === 'object') { ref = x.ref; y = x.y; x = x.x; }
   let idx = place.pts.findIndex(p => p == null);
   if (idx < 0) idx = place.n - 1;
+  const fresh = place.pts[idx] == null;
   const p = [+Number(x).toFixed(3), +Number(y).toFixed(3)];
   if (ref) p.ref = ref;
   place.pts[idx] = p;
   $('px' + idx).value = p[0]; $('py' + idx).value = p[1];
   const tag = $('pr' + idx); if (tag) tag.textContent = ref ? `(${ref})` : '';
-  placeHover = null; placeTitle(); paintPlace();
+  placeHover = null;
+  if (place.dim && idx === 2 && place.pts[0] && place.pts[1]) {
+    setDimLabel(dimLength(place.pts[0], place.pts[1], dimModeNow()));
+    if (fresh && $('plab')) { $('plab').focus(); $('plab').select(); }
+  }
+  placeTitle(); paintPlace();
 }
 function readPlaceInputs() {
   if (!place) return;
@@ -346,15 +427,21 @@ function readPlaceInputs() {
     place.pts[i] = [x, y];
     if ($('pr' + i)) $('pr' + i).textContent = '';
   }
+  if (place.dim && place.pts[0] && place.pts[1] && place.pts[2]) setDimLabel(dimLength(place.pts[0], place.pts[1], dimModeNow()));
   placeTitle(); paintPlace();
 }
 function startPlace(key) {
   const spec = PLACE[key]; if (!spec) return;
-  place = { key, n: spec.n, pts: Array(spec.n).fill(null) }; placeHover = null;
+  place = { key, n: spec.n, pts: Array(spec.n).fill(null), dim: spec.dim ? { mode: 'auto', arrow: 'in', labelEdited: false, filling: false } : null }; placeHover = null;
   $('inputs').style.display = 'none'; activeIdx = -1; idleSel();
   const box = $('place-fields'); box.innerHTML = '';
   const attr = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-  if (spec.field) box.insertAdjacentHTML('beforeend', `<span>${spec.field}</span><input id="plab" class="wide" value="${attr(spec.def || '')}">`);
+  if (spec.dim) {
+    box.insertAdjacentHTML('beforeend', '<span>方向</span><button type="button" id="dim-h" class="sec">水平</button><button type="button" id="dim-v" class="sec">竖直</button><button type="button" id="dim-a" class="sec">对齐</button><span>箭头</span><button type="button" id="dim-in" class="sec">内</button><button type="button" id="dim-out" class="sec">外</button>');
+    $('dim-h').onclick = () => setDimMode('h'); $('dim-v').onclick = () => setDimMode('v'); $('dim-a').onclick = () => setDimMode('a');
+    $('dim-in').onclick = () => setDimArrow('in'); $('dim-out').onclick = () => setDimArrow('out');
+  }
+  if (spec.field) box.insertAdjacentHTML('beforeend', `<span>${spec.field}</span><input id="plab" class="wide" placeholder="${spec.dim ? '长度或 $L$' : ''}" value="${attr(spec.def || '')}">`);
   (spec.inputs || []).forEach(inp => {
     const cls = inp.wide ? (inp.wide === true ? 'wide' : 'wide ' + inp.wide) : '';
     box.insertAdjacentHTML('beforeend', `<span>${inp.label}</span><input id="pf-${inp.id}" class="${cls}" value="${attr(inp.def || '')}">`);
@@ -362,11 +449,15 @@ function startPlace(key) {
   });
   if (spec.n === 1 && spec.rot !== false) box.insertAdjacentHTML('beforeend', `<span>角度</span><input id="prot" type="number" step="15" value="0">`);
   for (let i = 0; i < spec.n; i++) {
-    box.insertAdjacentHTML('beforeend', `<span>点${i + 1} X</span><input id="px${i}" type="number" step="0.05"><span>Y</span><input id="py${i}" type="number" step="0.05"><b id="pr${i}" class="pref"></b>`);
+    const pointName = spec.dim ? ['起点', '终点', '文字'][i] : ('点' + (i + 1));
+    box.insertAdjacentHTML('beforeend', `<span>${pointName} X</span><input id="px${i}" type="number" step="0.05"><span>Y</span><input id="py${i}" type="number" step="0.05"><b id="pr${i}" class="pref"></b>`);
     $('px' + i).oninput = $('py' + i).oninput = readPlaceInputs;
     $('px' + i).onkeydown = $('py' + i).onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); confirmPlace(); } };
   }
-  if ($('plab')) $('plab').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); confirmPlace(); } };
+  if ($('plab')) {
+    $('plab').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); confirmPlace(); } };
+    $('plab').oninput = () => { if (place && place.dim && !place.dim.filling) place.dim.labelEdited = true; };
+  }
   if ($('prot')) { $('prot').oninput = paintPlace; $('prot').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); confirmPlace(); } }; }
   $('place').style.display = 'inline-flex'; $('wrap').classList.toggle('placing', spec.n > 0); placeTitle(); paintPlace();
 }
@@ -380,9 +471,14 @@ function confirmPlace() {
   readPlaceInputs();
   const spec = PLACE[place.key];
   if (spec.n && place.pts.some(p => !p)) { $('st').textContent = '请先在画布上取点，或把坐标填完整'; return; }
-  const extra = spec.field ? $('plab').value : '';
+  let extra = spec.field ? $('plab').value : '';
   const rot = $('prot') ? (parseFloat($('prot').value) || 0) : 0;
   const vals = {}; (spec.inputs || []).forEach(inp => { const el = $('pf-' + inp.id); vals[inp.id] = el ? el.value : ''; });
+  if (place.dim) {
+    vals.mode = dimModeNow(); vals.arrow = place.dim.arrow;
+    vals.id = ($('code').value.match(/\\begin\{scope\}[^\n]*\budim\b/g) || []).length + 1;
+    if (!extra) extra = dimLength(place.pts[0], place.pts[1], vals.mode);
+  }
   const snip = '\n  ' + spec.build(place.pts, extra, rot, vals);
   endPlace(); appendSnip(snip, spec);
 }
@@ -392,8 +488,36 @@ function appendSnip(s, spec) {
   if (i < 0) i = Math.max(v.lastIndexOf('\\end{circuitikz}'), v.lastIndexOf('\\end{tikzpicture}'));
   ta.value = i !== -1 ? v.slice(0, i).trimEnd() + s + "\n" + v.slice(i) : v + s; go(true);
 }
+function udimScopeSpan(text, pos) {
+  const re = /\\begin\{scope\}|\\end\{scope\}/g;
+  const stack = [];
+  let m;
+  while ((m = re.exec(text))) {
+    if (m[0].charAt(1) === 'b') {
+      const lineEnd = text.indexOf('\n', m.index);
+      const line = text.slice(m.index, lineEnd === -1 ? text.length : lineEnd);
+      const udim = /\\begin\{scope\}/.test(line) && /\budim\b/.test(line);
+      stack.push({ at: m.index, udim });
+    } else if (stack.length) {
+      const top = stack.pop();
+      const end = m.index + m[0].length;
+      if (top.udim && pos >= top.at && pos < end) {
+        let st = top.at;
+        const lineStart = text.lastIndexOf('\n', st - 1) + 1;
+        if (/^\s*$/.test(text.slice(lineStart, st))) st = lineStart;
+        let ed = end;
+        if (text.charAt(ed) === '\r') ed++;
+        if (text.charAt(ed) === '\n') ed++;
+        return [st, ed];
+      }
+    }
+  }
+  return null;
+}
 function delSel() {
   if (activeIdx < 0) return; const c = pts.at(activeIdx), t = $('code').value;
+  const scope = udimScopeSpan(t, c.s);
+  if (scope) { $('code').value = t.slice(0, scope[0]) + t.slice(scope[1]); go(true); return; }
   let st = t.lastIndexOf('\n', c.s); st = st === -1 ? 0 : st + 1;
   let ed = t.indexOf(';', c.e); ed = ed === -1 ? t.length : ed + 1;
   if (t.at(ed) === '\r') ed++; if (t.at(ed) === '\n') ed++;
@@ -631,6 +755,20 @@ function applyMultiMove(dx, dy) {
   });
   const uniq = new Map(); edits.forEach(ed => uniq.set(ed.s, ed)); [...uniq.values()].sort((a, b) => b.s - a.s).forEach(ed => { t = t.slice(0, ed.s) + ed.txt + t.slice(ed.e); }); $('code').value = t; go(true);
 }
+async function importDxfFile(f) {
+  $('st').textContent = '⏳ 导入 DXF...';
+  const fd = new FormData(); fd.append('file', f);
+  let d;
+  try {
+    const r = await fetch('/api/dxf', {method:'POST', body: fd});
+    d = await r.json();
+  } catch (err) {
+    $('toast').style.display = 'block'; $('toast').textContent = '❌ 导入失败：\n' + err; $('st').textContent = '❌ 失败'; return;
+  }
+  if (!d.ok) { $('toast').style.display = 'block'; $('toast').textContent = '❌ 导入失败：\n' + d.err; $('st').textContent = '❌ 失败'; return; }
+  $('toast').style.display = 'none'; $('code').value = d.code; await go(false);
+  if ($('st').textContent.startsWith('✅')) $('st').textContent = '✅ ' + d.note;
+}
 async function go(rb = false) {
   const cur = $('code').value; syncPanel(cur); $('st').textContent = '⏳ 编译中...';
   const r = await fetch('/api/compile', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code:cur, compiler:$('comp').value})});
@@ -692,6 +830,8 @@ window.onload = () => {
   $('tpl-sel').onchange = e => { if (e.target.value) { endPlace(); $('code').value = TPLS[e.target.value]; syncPanel($('code').value); e.target.value = ""; go(false); } };
   $('open-tex').onclick = () => $('file-in').click();
   $('file-in').onchange = e => { const f = e.target.files.item(0); if (!f) return; const rd = new FileReader(); rd.onload = ev => { $('code').value = ev.target.result; go(false); }; rd.readAsText(f, 'UTF-8'); e.target.value = ''; };
+  $('open-dxf').onclick = () => $('dxf-in').click();
+  $('dxf-in').onchange = e => { const f = e.target.files.item(0); e.target.value = ''; if (f) importDxfFile(f); };
   $('save-tex').onclick = () => dl(new Blob([$('code').value], {type:'text/plain'}), 'tikz.tex');
   $('place-ok').onclick = confirmPlace; $('place-cancel').onclick = endPlace;
   $('lib-close').onclick = () => { $('libbox').style.display = 'none'; };
@@ -704,12 +844,24 @@ window.onload = () => {
       if (tag !== 'TEXTAREA' && tag !== 'INPUT' && tag !== 'SELECT') { e.preventDefault(); selectAllPoints(); }
       return;
     }
+    if (place && place.dim) {
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        const k = e.key.toLowerCase();
+        if (k === 'h') { e.preventDefault(); setDimMode('h'); return; }
+        if (k === 'v') { e.preventDefault(); setDimMode('v'); return; }
+        if (k === 'r') { e.preventDefault(); setDimMode('a'); return; }
+        if (k === 'i') { e.preventDefault(); setDimArrow('in'); return; }
+        if (k === 'o') { e.preventDefault(); setDimArrow('out'); return; }
+      }
+    }
     if (e.key !== 'Escape') return;
     if (place) { e.preventDefault(); endPlace(); return; }
     if ($('libbox').style.display === 'block') { e.preventDefault(); $('libbox').style.display = 'none'; }
   });
   $('wrap').onmousemove = e => {
-    if (!place || !cal || place.n < 2 || place.pts[0] == null || place.pts[1] != null) { if (placeHover) { placeHover = null; paintPlace(); } return; }
+    const slot = place ? place.pts.findIndex(p => p == null) : -1;
+    if (!place || !cal || slot < 1) { if (placeHover) { placeHover = null; paintPlace(); } return; }
     const w = pickWorld(e.clientX, e.clientY);
     if (placeHover && w.x === placeHover.x && w.y === placeHover.y && w.ref === placeHover.ref) return;
     placeHover = w; paintPlace();

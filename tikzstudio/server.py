@@ -1,9 +1,11 @@
-﻿import os, re, subprocess, pymupdf, uvicorn
-from fastapi import FastAPI
+import os, re, subprocess, pymupdf, uvicorn
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 app = FastAPI()
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_WEB = os.path.join(_ROOT, "web")
 
 class Req(BaseModel):
     code: str
@@ -21,6 +23,12 @@ PREAMBLE = (
     "\\usepgfplotslibrary{fillbetween}\n"
     "\\usetikzlibrary{arrows.meta,bending,3d,positioning,calc,shapes,"
     "decorations.pathreplacing,decorations.pathmorphing,patterns}\n"
+    "\\tikzset{udim/.style={>=stealth,thin,"
+    "ext line/.style={thin,black!65},"
+    "dim in/.style={<->,thin,black},"
+    "dim out/.style={->,thin,black},"
+    "dim bridge/.style={thin,black},"
+    "dim text/.style={fill=white,inner sep=1.5pt,font=\\small,text=black}}}\n"
     "\\begin{document}\n"
 )
 
@@ -177,6 +185,24 @@ def _put(probes, pts, expr, at, pt, ranges):
     pts.append(pt)
     return pid
 
+def _inside_calc(code, pos):
+    line_at = code.rfind("\n", 0, pos) + 1
+    depth = 0
+    i = pos - 1
+    while i >= line_at:
+        ch = code[i]
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            depth = max(0, depth - 1)
+        elif ch == "$" and depth == 0:
+            j = i + 1
+            while j < pos and code[j] in " \t":
+                j += 1
+            return j < pos and code[j] == "("
+        i -= 1
+    return False
+
 def add_steps(code, pts, probes, used, spans, ranges):
     """++ updates the current point; a single + does not. Both can carry units or be polar."""
     cart = re.compile(rf'(?<!\+)\+\+?\s*\(\s*([-+]?\d*\.?\d+)\s*({_U})?\s*,\s*([-+]?\d*\.?\d+)\s*({_U})?\s*\)')
@@ -189,6 +215,8 @@ def add_steps(code, pts, probes, used, spans, ranges):
         hits.append((m.start(), "pol", m))
     for _pos, kind, m in sorted(hits, key=lambda t: t[0]):
         if _commented(spans, m.start()):
+            continue
+        if _inside_calc(code, m.start()):
             continue
         info = _at(spans, m.start())
         if not info:
@@ -431,6 +459,7 @@ def parse_points(code):
             if '}' in line and not line.strip().endswith('{'): in_fe = False
             off += len(line); continue
         for m in p_calc.finditer(line):
+            if line[:m.start()].count("$") % 2 == 1: continue
             base, dx, dy = m.group(1).strip(), float(m.group(2)), float(m.group(3))
             if '\\' in base or '!' in base: continue
             lp = line.find('(', line.find('+', m.start())); rp = line.find(')', lp) + 1
@@ -535,7 +564,7 @@ def prep(raw, probes=None):
     return body if is_doc else PREAMBLE + body + "\n\\end{document}\n"
 
 def build_pdf(tex_str, compiler):
-    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tikz_cache"); os.makedirs(d, exist_ok=True)
+    d = os.path.join(_ROOT, ".tikz_cache"); os.makedirs(d, exist_ok=True)
     tf, pf = os.path.join(d, "m.tex"), os.path.join(d, "m.pdf")
     if os.path.exists(pf):
         try: os.remove(pf)
@@ -585,6 +614,18 @@ def extract_pos(pg):
             cal = {"ox": p0[0], "oy": p0[1], "xx": sx, "xy": 0.0, "yx": 0.0, "yy": sy}
     return cal, pm
 
+@app.post("/api/dxf")
+async def import_dxf(file: UploadFile = File(...)):
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        return {"ok": False, "err": "文件超过 20MB"}
+    try:
+        from .dxf_import import dxf_to_tikz
+        code, note = dxf_to_tikz(data, file.filename or "drawing.dxf")
+    except Exception as ex:
+        return {"ok": False, "err": str(ex) or "无法读取这个 DXF"}
+    return {"ok": True, "code": code, "note": note}
+
 @app.post("/api/compile")
 def run_tex(req: Req):
     pts, probes, ports = parse_points(req.code)
@@ -626,11 +667,11 @@ _FRESH = {"Cache-Control": "no-cache"}
 @app.get("/{fn}")
 def static_f(fn: str):
     if fn in ("style.css", "data.js", "app.js"):
-        return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), fn), headers=_FRESH)
+        return FileResponse(os.path.join(_WEB, fn), headers=_FRESH)
 
 @app.get("/")
 def home():
-    return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"), headers=_FRESH)
+    return FileResponse(os.path.join(_WEB, "index.html"), headers=_FRESH)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8765)

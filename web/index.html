@@ -1,8 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>TikZ Visual Studio</title><link rel="stylesheet" href="/style.css"></head><body>
 <div id="L"><div id="bar">
   <button id="run">▶ 编译</button><button id="undo" class="sec">↩ 撤销</button>
   <button id="open-tex" class="sec">📂 打开 .tex</button><input type="file" id="file-in" accept=".tex,.txt" style="display:none">
+  <button id="open-dxf" class="sec">导入 DXF</button><input type="file" id="dxf-in" accept=".dxf" style="display:none">
   <button id="save-tex" class="sec">💾 保存</button>
   <select id="tpl-sel"><option value="">📑 模板...</option><option value="rc">⚡ RC滤波</option><option value="buck">🔋 Buck</option><option value="opamp">📐 运放</option><option value="block">📦 框图</option><option value="plot">📈 曲线</option><option value="plane">📏 二维</option><option value="cms">🌐 CMS三维</option><option value="gauss">📊 高斯分布</option><option value="freq">〰️ 频率响应</option></select>
   <select id="comp"><option value="xelatex">XeLaTeX</option><option value="pdflatex">pdfLaTeX</option></select>
