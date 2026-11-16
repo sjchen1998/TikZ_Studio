@@ -54,4 +54,4 @@ python -m tikzstudio
 python -m tikzstudio.server
 ```
 
-`start_tikz_studio.bat` 从 `C:\tools\TikZ_Studio` 启动桌面窗口。换目录后请改这一行。
+`start_tikz_studio.bat` 从自己所在的目录启动桌面窗口。整个项目换到别的文件夹后，直接双击即可。

@@ -1,3 +1,3 @@
 @echo off
-cd /d "C:\tools\TikZ_Studio"
+cd /d "%~dp0"
 start "" pythonw -m tikzstudio
