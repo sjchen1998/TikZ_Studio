@@ -1,3 +1,4 @@
 .tikz_cache/
 __pycache__/
 *.pyc
+/.editorconfig

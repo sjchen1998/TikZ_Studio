@@ -20,7 +20,7 @@ button.comp.lib.add{border-radius:4px}
 select{background:#3c3c3c;color:#fff;border:1px solid #555;padding:3px 6px;border-radius:4px;font-size:12px}
 #ed{position:relative;flex:1;min-height:0;display:flex;background:#1e1e1e;overflow:hidden}
 #hl{position:absolute;left:0;right:0;height:20px;background:rgba(255,196,64,.38);pointer-events:none;display:none;z-index:0}
-textarea{flex:1;min-width:0;background:transparent;color:#d4d4d4;border:none;padding:12px;font:13px/20px Consolas,monospace;white-space:pre;overflow:auto;outline:none;user-select:text;position:relative;z-index:1;resize:none}
+textarea{flex:1;min-width:0;background:transparent;color:#d4d4d4;border:none;padding:12px;font:13px/20px Consolas,monospace;white-space:pre;overflow:auto;outline:none;user-select:text;position:relative;z-index:1;resize:none;tab-size:4;-moz-tab-size:4}
 textarea::selection{background:rgba(255,196,64,.7);color:#1e1e1e}
 #R{flex:1;display:flex;flex-direction:column;background:#e5e5e5;overflow:hidden}
 #zbar,#ebar{padding:6px 10px;background:#dcdcdc;color:#222;font-size:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -31,6 +31,7 @@ textarea::selection{background:rgba(255,196,64,.7);color:#1e1e1e}
 #stage{position:relative;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.2)}
 #ov{position:absolute;inset:0;pointer-events:none}
 .dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;background:rgba(230,57,70,.45);border:1px solid rgba(255,255,255,.65);border-radius:50%;cursor:grab;pointer-events:auto;z-index:3}
+.dot.locked{cursor:pointer;background:rgba(108,117,125,.4)}
 .dot.rel{background:rgba(0,119,182,.45);z-index:1} .dot.lerp{background:rgba(155,93,229,.5);z-index:2}
 .dot:hover,.dot.sel{transform:scale(1.5);background:rgba(255,159,28,.95);border-color:#fff;z-index:25}
 .dot.msel{transform:scale(1.4);background:rgba(0,200,83,.95);border-color:#fff;box-shadow:0 0 0 3px rgba(0,200,83,.4);z-index:24}
@@ -42,13 +43,24 @@ textarea::selection{background:rgba(255,196,64,.7);color:#1e1e1e}
 #place-fields input.wide.path{width:260px}
 #place-fields button{font-weight:normal;padding:3px 7px}
 #place-fields button.dimon{background:#0e639c;font-weight:bold}
+#dimedit{align-items:center;gap:4px;flex-wrap:wrap}
+#dimedit input{width:88px}
+#dimedit.rdim > button, #dimedit.rdim > span, #dimedit.ddim > button, #dimedit.ddim > span{display:none}
+#dimedit.adim > span, #dimedit.adim #ed-h, #dimedit.adim #ed-v, #dimedit.adim #ed-a, #dimedit.adim #ed-s1, #dimedit.adim #ed-s2{display:none}
+#dimedit.rdim input, #dimedit.ddim input, #dimedit.adim input{width:120px}
+#dimedit button.dimon{background:#0e639c;font-weight:bold}
 .ghost-lab{position:absolute;transform:translate(-50%,-50%);background:#fff;color:#111;font:12px sans-serif;padding:0 3px;z-index:31;pointer-events:none;white-space:nowrap}
 #wrap.placing,#wrap.placing #stage,#wrap.placing .dot{cursor:crosshair}
 .pref{color:#e85d04;font-size:11px;min-width:0}
+.pid-msg{color:#ffb4a9;font-size:11px;font-weight:normal;min-width:0}
+.pid-msg.bad{color:#ff8a80}
+#place-fields #pf-id{width:72px}
 .port{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border:1.5px solid #e85d04;background:#fff;transform:rotate(45deg);z-index:6;pointer-events:auto;cursor:crosshair}
 .ghost{position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#ff9f1c;color:#1a1a1a;font:bold 10px sans-serif;display:flex;align-items:center;justify-content:center;z-index:30;pointer-events:none;box-shadow:0 0 0 2px rgba(255,159,28,.35)}
 #ov svg.ghost-line{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:29}
 #ov svg.ghost-line line{stroke:#ff9f1c;stroke-width:2;stroke-dasharray:5 3}
+#ov svg.ghost-line circle.rim,#ov svg.ghost-line ellipse.rim,#ov svg.ghost-line polygon.rim{fill:none;stroke:#ff9f1c;stroke-width:2;stroke-dasharray:5 3}
+#ov svg.ghost-line circle.tip{fill:#ff9f1c;stroke:none}
 #ov svg.ghost-line.ghost-dim line{stroke:#9b2226;stroke-width:1.5;stroke-dasharray:none}
 #ov svg.ghost-line.ghost-dim line.ext{stroke:#6c757d}
 #marquee{position:fixed;border:1px solid #0e639c;background:rgba(14,99,156,.18);pointer-events:none;z-index:80}

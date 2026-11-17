@@ -1,11 +1,82 @@
-import os, re, subprocess, pymupdf, uvicorn
-from fastapi import FastAPI, File, UploadFile
+import math, os, re, subprocess, pymupdf, uvicorn
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 app = FastAPI()
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _WEB = os.path.join(_ROOT, "web")
+_VSCODE = os.path.join(_ROOT, ".vscode")
+_EDITORCONFIG = os.path.join(_VSCODE, ".editorconfig")
+_EDITORCONFIG_DEFAULT = (
+    "root = true\n"
+    "\n"
+    "[*]\n"
+    "indent_style = space\n"
+    "indent_size = 4\n"
+    "tab_width = 4\n"
+    "insert_final_newline = true\n"
+    "trim_trailing_whitespace = true\n"
+    "\n"
+    "[*.{js,css,html,py,md,json}]\n"
+    "indent_style = space\n"
+    "indent_size = 4\n"
+    "tab_width = 4\n"
+)
+
+def ensure_editorconfig():
+    """Keep canonical config in .vscode/.editorconfig; expose a root link/copy for discovery."""
+    os.makedirs(_VSCODE, exist_ok=True)
+    if not os.path.isfile(_EDITORCONFIG):
+        with open(_EDITORCONFIG, "w", encoding="utf-8", newline="\n") as f:
+            f.write(_EDITORCONFIG_DEFAULT)
+    root_ec = os.path.join(_ROOT, ".editorconfig")
+    try:
+        src_real = os.path.normcase(os.path.realpath(_EDITORCONFIG))
+        if os.path.islink(root_ec) or os.path.isfile(root_ec):
+            try:
+                if os.path.normcase(os.path.realpath(root_ec)) == src_real:
+                    return _EDITORCONFIG
+            except OSError:
+                pass
+            try:
+                os.remove(root_ec)
+            except OSError:
+                pass
+        rel = os.path.relpath(_EDITORCONFIG, _ROOT)
+        try:
+            os.symlink(rel, root_ec)
+        except OSError:
+            with open(_EDITORCONFIG, encoding="utf-8") as f:
+                text = f.read()
+            with open(root_ec, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+    except OSError:
+        pass
+    return _EDITORCONFIG
+
+def read_editorconfig():
+    path = ensure_editorconfig()
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = _EDITORCONFIG_DEFAULT
+    indent_size, tab_width = 4, 4
+    for m in re.finditer(r"^\s*(indent_size|tab_width)\s*=\s*(\d+)\s*$", text, re.M):
+        if m.group(1) == "indent_size":
+            indent_size = int(m.group(2))
+        else:
+            tab_width = int(m.group(2))
+    return {
+        "ok": True,
+        "path": ".vscode/.editorconfig",
+        "indent_size": indent_size,
+        "tab_width": tab_width or indent_size,
+        "text": text,
+    }
+
+ensure_editorconfig()
 
 class Req(BaseModel):
     code: str
@@ -140,6 +211,16 @@ def _num_pair(text):
     if not m:
         return None
     return m
+
+def _center_expr(inner, dx, dy):
+    raw = inner.strip()
+    m = re.fullmatch(r'\(\s*([+-]?\d*\.?\d+)\s*,\s*([+-]?\d*\.?\d+)\s*(?:,\s*([+-]?\d*\.?\d+))?\s*\)', raw)
+    if m:
+        x, y = float(m.group(1)) + dx, float(m.group(2)) + dy
+        if m.group(3) is None:
+            return f"({x:.4f},{y:.4f})"
+        return f"({x:.4f},{y:.4f},{m.group(3)})"
+    return f"($({_as_probe(raw)})+({dx:.4f},{dy:.4f})$)"
 
 def _as_probe(inner):
     t = inner.strip()
@@ -372,6 +453,8 @@ def add_paths(code, pts, probes, used, spans, ranges, resolved):
         if not inner:
             continue
         a0, a1, rad, unit = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+        rr = float(rad) * _uscale(unit)
+        ang = math.radians(float(a0))
         rtxt = rad + unit
         arm0 = f"+({{-{rtxt}*cos({a0})}},{{-{rtxt}*sin({a0})}})"
         arm1 = f"+({{{rtxt}*cos({a1})}},{{{rtxt}*sin({a1})}})"
@@ -381,7 +464,7 @@ def add_paths(code, pts, probes, used, spans, ranges, resolved):
         probes.append((cpid, cen_expr, m.start()))
         lp, rp = m.group(0).find("("), m.end()
         s = m.start() + lp
-        pt = {"kind": "arc", "label": "弧端", "x": float(a1), "y": float(rad), "a0": float(a0), "s": s, "e": rp, "l": _at(spans, m.start())[0], "cpid": cpid}
+        pt = {"kind": "arc", "label": "弧端", "x": float(a1), "y": float(rad), "a0": float(a0), "rr": rr, "cen": _center_expr(inner, -rr * math.cos(ang), -rr * math.sin(ang)), "s": s, "e": rp, "l": _at(spans, m.start())[0], "cpid": cpid}
         if unit:
             pt["uy"], pt["ys"] = unit, _uscale(unit)
         _put(probes, pts, end, m.start(), pt, ranges)
@@ -390,7 +473,7 @@ def add_paths(code, pts, probes, used, spans, ranges, resolved):
         if _commented(spans, m.start()):
             continue
         num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-        if _uscale(unit) * float(num) < 0.2:
+        if _uscale(unit) * float(num) < 0.08:
             continue
         semi = code.rfind(";", 0, m.start())
         inner = _last_current(code, semi + 1, m.start(), resolved)
@@ -401,10 +484,45 @@ def add_paths(code, pts, probes, used, spans, ranges, resolved):
         cpid = len(probes)
         probes.append((cpid, _as_probe(inner), m.start()))
         step = f"+({num}{unit or ''},0)"
-        pt = {"kind": "rad", "label": "半径", "axis": "x", "x": float(num), "y": 0.0, "s": ns, "e": ne, "l": _at(spans, m.start())[0], "cpid": cpid}
+        pt = {"kind": "rad", "label": "半径", "axis": "x", "x": float(num), "y": 0.0, "rr": float(num) * _uscale(unit), "cen": inner.strip() if inner.strip().startswith("(") else "(" + inner.strip() + ")", "s": ns, "e": ne, "l": _at(spans, m.start())[0], "cpid": cpid}
         if unit:
             pt["ux"], pt["xs"] = unit, _uscale(unit)
         _put(probes, pts, f"${inner}{step}$", m.start(), pt, ranges)
+    def _ell_put(inner, rx, ry, ux, uy, sx, sy, ex, ey, rot, at, line):
+        cpid = len(probes)
+        probes.append((cpid, _as_probe(inner), at))
+        th = float(rot or 0.0)
+        th_r = math.radians(th)
+        for axis, val, s0, e0, unit in (
+            ("x", rx, sx, ex, ux),
+            ("y", ry, sy, ey, uy),
+        ):
+            r_cm = float(val) * _uscale(unit)
+            if abs(th) > 1e-9:
+                if axis == "x":
+                    step = f"+({r_cm * math.cos(th_r):.4f},{r_cm * math.sin(th_r):.4f})"
+                else:
+                    step = f"+({-r_cm * math.sin(th_r):.4f},{r_cm * math.cos(th_r):.4f})"
+            else:
+                step = f"+({val}{unit or ''},0)" if axis == "x" else f"+(0,{val}{unit or ''})"
+            pt = {
+                "kind": "rad",
+                "label": "X半径" if axis == "x" else "Y半径",
+                "axis": axis,
+                "x": float(val),
+                "y": 0.0,
+                "rr": r_cm,
+                "rot": th,
+                "cen": inner.strip() if inner.strip().startswith("(") else "(" + inner.strip() + ")",
+                "s": s0,
+                "e": e0,
+                "l": line,
+                "cpid": cpid,
+            }
+            if unit:
+                pt["ux"], pt["xs"] = unit, _uscale(unit)
+            _put(probes, pts, f"${inner}{step}$", at, pt, ranges)
+
     p_ell = re.compile(rf'ellipse\s*\(\s*([-+]?\d*\.?\d+)\s*({_U})?\s+and\s+([-+]?\d*\.?\d+)\s*({_U})?\s*\)')
     for m in p_ell.finditer(code):
         if _commented(spans, m.start()):
@@ -413,13 +531,42 @@ def add_paths(code, pts, probes, used, spans, ranges, resolved):
         inner = _last_current(code, semi + 1, m.start(), resolved)
         if not inner:
             continue
-        cpid = len(probes)
-        probes.append((cpid, _as_probe(inner), m.start()))
-        for axis, gi, ui, step in (("x", 1, 2, f"+({m.group(1)}{m.group(2) or ''},0)"), ("y", 3, 4, f"+(0,{m.group(3)}{m.group(4) or ''})")):
-            pt = {"kind": "rad", "label": "X半径" if axis == "x" else "Y半径", "axis": axis, "x": float(m.group(gi)), "y": 0.0, "s": m.start(gi), "e": m.end(ui) if m.group(ui) else m.end(gi), "l": _at(spans, m.start())[0], "cpid": cpid}
-            if m.group(ui):
-                pt["ux"], pt["xs"] = m.group(ui), _uscale(m.group(ui))
-            _put(probes, pts, f"${inner}{step}$", m.start(), pt, ranges)
+        st = code.rfind("\n", 0, m.start()) + 1
+        ed = code.find(";", m.start())
+        head = code[st:m.start()]
+        rot_m = re.search(r'rotate\s*=\s*([-+]?\d*\.?\d+)', head)
+        if not rot_m:
+            rot_m = re.search(r'rotate\s+around\s*=\s*\{\s*([-+]?\d*\.?\d+)\s*:', head)
+        rot = float(rot_m.group(1)) if rot_m else 0.0
+        _ell_put(
+            inner,
+            m.group(1), m.group(3), m.group(2), m.group(4),
+            m.start(1), m.start(3),
+            m.end(2) if m.group(2) else m.end(1),
+            m.end(4) if m.group(4) else m.end(3),
+            rot, m.start(), _at(spans, m.start())[0],
+        )
+    p_ell_br = re.compile(
+        rf'ellipse\s*\[\s*x\s+radius\s*=\s*([-+]?\d*\.?\d+)\s*({_U})?\s*,\s*y\s+radius\s*=\s*([-+]?\d*\.?\d+)\s*({_U})?'
+        rf'(?:\s*,\s*rotate\s*=\s*([-+]?\d*\.?\d+))?\s*\]',
+        re.I,
+    )
+    for m in p_ell_br.finditer(code):
+        if _commented(spans, m.start()):
+            continue
+        semi = code.rfind(";", 0, m.start())
+        inner = _last_current(code, semi + 1, m.start(), resolved)
+        if not inner:
+            continue
+        rot = float(m.group(5) or 0.0)
+        _ell_put(
+            inner,
+            m.group(1), m.group(3), m.group(2), m.group(4),
+            m.start(1), m.start(3),
+            m.end(2) if m.group(2) else m.end(1),
+            m.end(4) if m.group(4) else m.end(3),
+            rot, m.start(), _at(spans, m.start())[0],
+        )
 
 def parse_points(code):
     pts, probes, used = [], [], set()
@@ -430,7 +577,7 @@ def parse_points(code):
     p_xyz = re.compile(rf'(?<![+\w.=:])\s*\(\s*([-+]?\d*\.?\d+)\s*({_U})?\s*,\s*([-+]?\d*\.?\d+)\s*({_U})?\s*,\s*([-+]?\d*\.?\d+)\s*({_U})?\s*\)')
     p_abs = re.compile(rf'(?<![+\w.=:])\s*\(\s*([-+]?\d*\.?\d+)\s*({_U})?\s*,\s*([-+]?\d*\.?\d+)\s*({_U})?\s*\)')
     p_anc = re.compile(r'(?<![+\w.$!])\s*\(\s*([A-Za-z][A-Za-z0-9_]*(?:\.(?:[+\-]|[A-Za-z0-9_]+|north east|north west|south east|south west))?(?:\s*(?:\|-|-\|)\s*[A-Za-z][A-Za-z0-9_.+\-]*)?)\s*\)')
-    p_scope = re.compile(r'\\begin\{scope\}\s*\[\s*shift\s*=\s*\{\s*\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)\s*\}\s*\]')
+    p_scope = re.compile(r'\\begin\{scope\}\s*\[[^\]]*?shift\s*=\s*\{\s*\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*(?:,\s*([-+]?\d*\.?\d+)\s*)?\)\s*\}[^\]]*\]')
     ranges, spans = _scope_table(code), _line_table(code)
     lines = code.splitlines(True)
     off, sx_off, sy_off, in_fe, fe_xs = 0, 0.0, 0.0, False, []
@@ -542,21 +689,36 @@ def parse_points(code):
             ports.append({"name": name, "anchor": anc, "ref": ref, "pid": pid})
     return pts, probes, ports
 
+def _env_body_empty(code):
+    m = re.search(r'\\begin\s*\{(tikzpicture|circuitikz)\}(?:\s*\[[^\]]*\])?(.*?)\\end\s*\{\1\}', code, re.S)
+    if not m:
+        return False
+    kept = []
+    for line in m.group(2).splitlines():
+        cut = len(line)
+        for i, ch in enumerate(line):
+            if ch == '%' and (i == 0 or line[i - 1] != '\\'):
+                cut = i
+                break
+        kept.append(line[:cut])
+    return not "".join(kept).strip()
+
 def prep(raw, probes=None):
     is_doc = (r"\documentclass" in raw or r"\begin{document}" in raw)
-    if not probes:
-        body = raw.strip()
-        return body if is_doc else PREAMBLE + body + "\n\\end{document}\n"
     buckets = {}
-    for pid, expr, at in probes:
+    for pid, expr, at in (probes or []):
         g, b = (pid // 200) + 10, (pid % 200) + 10
         frag = f"\\definecolor{{cp{pid}}}{{RGB}}{{200,{g},{b}}}\\fill[cp{pid},opacity=0.05]({expr})circle(0.4pt);\n"
         buckets.setdefault(_inject_at(raw, at), []).append(frag)
-    cal = ("\\definecolor{ca}{RGB}{254,1,253}\\definecolor{cb}{RGB}{1,254,252}"
-           "\\definecolor{cc}{RGB}{254,80,1}\\definecolor{cd}{RGB}{1,80,254}"
-           "\\fill[ca,opacity=0.05](0,0)circle(0.5pt);\\fill[cb,opacity=0.05](1,1)circle(0.5pt);"
-           "\\fill[cc,opacity=0.05](1,0)circle(0.5pt);\\fill[cd,opacity=0.05](0,1)circle(0.5pt);\n")
-    buckets.setdefault(_picture_end(raw), []).append(cal)
+    end = _picture_end(raw)
+    if end < len(raw):
+        if _env_body_empty(raw):
+            buckets.setdefault(end, []).append("\\path (-4,-3) rectangle (5,5);\n")
+        cal = ("\\definecolor{ca}{RGB}{254,1,253}\\definecolor{cb}{RGB}{1,254,252}"
+               "\\definecolor{cc}{RGB}{254,80,1}\\definecolor{cd}{RGB}{1,80,254}"
+               "\\fill[ca,opacity=0.05](0,0)circle(0.5pt);\\fill[cb,opacity=0.05](1,1)circle(0.5pt);"
+               "\\fill[cc,opacity=0.05](1,0)circle(0.5pt);\\fill[cd,opacity=0.05](0,1)circle(0.5pt);\n")
+        buckets.setdefault(end, []).append(cal)
     text = raw
     for pos in sorted(buckets, reverse=True):
         text = text[:pos] + "".join(buckets[pos]) + text[pos:]
@@ -615,13 +777,13 @@ def extract_pos(pg):
     return cal, pm
 
 @app.post("/api/dxf")
-async def import_dxf(file: UploadFile = File(...)):
+async def import_dxf(file: UploadFile = File(...), lang: str = Form("zh")):
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         return {"ok": False, "err": "文件超过 20MB"}
     try:
         from .dxf_import import dxf_to_tikz
-        code, note = dxf_to_tikz(data, file.filename or "drawing.dxf")
+        code, note = dxf_to_tikz(data, file.filename or "drawing.dxf", "en" if lang == "en" else "zh")
     except Exception as ex:
         return {"ok": False, "err": str(ex) or "无法读取这个 DXF"}
     return {"ok": True, "code": code, "note": note}
@@ -649,28 +811,46 @@ def run_tex(req: Req):
     for p in ports: p.pop("pid", None)
     return {"ok": True, "svg": svg, "w": r.width, "h": r.height, "coords": pts, "ports": ports, "cal": cal}
 
+def render_export(code, compiler, fmt):
+    fmt = (fmt or "pdf").lower()
+    names = {"pdf": "tikz.pdf", "png": "tikz_600dpi.png", "svg": "tikz.svg"}
+    if fmt not in names:
+        return None, "未知格式", ""
+    pb, err = build_pdf(prep(code, None), compiler or "xelatex")
+    if err:
+        return None, err, ""
+    if fmt == "pdf":
+        return pb, None, names[fmt]
+    doc = pymupdf.open(stream=pb, filetype="pdf")
+    try:
+        pg = next(iter(doc))
+        data = pg.get_svg_image(matrix=pymupdf.Identity).encode("utf-8") if fmt == "svg" else pg.get_pixmap(dpi=600, alpha=False).tobytes("png")
+    finally:
+        doc.close()
+    return data, None, names[fmt]
+
 @app.post("/api/export")
 def export_fig(req: Req):
-    pb, err = build_pdf(prep(req.code, None), req.compiler)
-    if err: return Response(content=err, status_code=400, media_type="text/plain")
-    fmt = req.fmt.lower()
-    if fmt == "pdf": return Response(content=pb, media_type="application/pdf", headers={"Content-Disposition":"attachment; filename=tikz.pdf"})
-    doc = pymupdf.open(stream=pb, filetype="pdf"); pg = next(iter(doc))
-    if fmt == "svg":
-        sd = pg.get_svg_image(matrix=pymupdf.Identity).encode("utf-8"); doc.close()
-        return Response(content=sd, media_type="image/svg+xml", headers={"Content-Disposition":"attachment; filename=tikz.svg"})
-    pd = pg.get_pixmap(dpi=600, alpha=False).tobytes("png"); doc.close()
-    return Response(content=pd, media_type="image/png", headers={"Content-Disposition":"attachment; filename=tikz_600dpi.png"})
+    data, err, name = render_export(req.code, req.compiler, req.fmt)
+    if err:
+        return Response(content=err, status_code=400, media_type="text/plain")
+    media = {"pdf": "application/pdf", "png": "image/png", "svg": "image/svg+xml"}[req.fmt.lower()]
+    return Response(content=data, media_type=media, headers={"Content-Disposition": f"attachment; filename={name}"})
 
 _FRESH = {"Cache-Control": "no-cache"}
 
+@app.get("/api/editorconfig")
+def editorconfig_api():
+    return read_editorconfig()
+
 @app.get("/{fn}")
 def static_f(fn: str):
-    if fn in ("style.css", "data.js", "app.js"):
+    if fn in ("style.css", "i18n.js", "data.js", "app.js"):
         return FileResponse(os.path.join(_WEB, fn), headers=_FRESH)
 
 @app.get("/")
 def home():
+    ensure_editorconfig()
     return FileResponse(os.path.join(_WEB, "index.html"), headers=_FRESH)
 
 if __name__ == "__main__":

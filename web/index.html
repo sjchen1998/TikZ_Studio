@@ -1,40 +1,42 @@
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>TikZ Visual Studio</title><link rel="stylesheet" href="/style.css"></head><body>
 <div id="L"><div id="bar">
-  <button id="run">▶ 编译</button><button id="undo" class="sec">↩ 撤销</button>
-  <button id="open-tex" class="sec">📂 打开 .tex</button><input type="file" id="file-in" accept=".tex,.txt" style="display:none">
-  <button id="open-dxf" class="sec">导入 DXF</button><input type="file" id="dxf-in" accept=".dxf" style="display:none">
-  <button id="save-tex" class="sec">💾 保存</button>
-  <select id="tpl-sel"><option value="">📑 模板...</option><option value="rc">⚡ RC滤波</option><option value="buck">🔋 Buck</option><option value="opamp">📐 运放</option><option value="block">📦 框图</option><option value="plot">📈 曲线</option><option value="plane">📏 二维</option><option value="cms">🌐 CMS三维</option><option value="gauss">📊 高斯分布</option><option value="freq">〰️ 频率响应</option></select>
+  <button id="run" data-i18n="▶ 编译">▶ 编译</button><button id="undo" class="sec" data-i18n="↩ 撤销">↩ 撤销</button>
+  <button id="open-tex" class="sec" data-i18n="📂 打开 .tex">📂 打开 .tex</button><input type="file" id="file-in" accept=".tex,.txt" style="display:none">
+  <button id="open-dxf" class="sec" data-i18n="导入 DXF">导入 DXF</button><input type="file" id="dxf-in" accept=".dxf" style="display:none">
+  <button id="save-tex" class="sec" data-i18n="💾 保存">💾 保存</button>
+  <select id="tpl-sel"><option value="" data-i18n="📑 模板...">📑 模板...</option><option value="rc" data-i18n="⚡ RC滤波">⚡ RC滤波</option><option value="buck">🔋 Buck</option><option value="opamp" data-i18n="📐 运放">📐 运放</option><option value="block" data-i18n="📦 框图">📦 框图</option><option value="plot" data-i18n="📈 曲线">📈 曲线</option><option value="plane" data-i18n="📏 二维">📏 二维</option><option value="cms" data-i18n="🌐 CMS三维">🌐 CMS三维</option><option value="gauss" data-i18n="📊 高斯分布">📊 高斯分布</option><option value="freq" data-i18n="〰️ 频率响应">〰️ 频率响应</option></select>
   <select id="comp"><option value="xelatex">XeLaTeX</option><option value="pdflatex">pdfLaTeX</option></select>
+  <button id="lang" type="button" class="sec">EN</button>
   <span id="st" style="margin-left:auto;font-size:12px;color:#4ec9b0">就绪</span>
 </div><div id="cbar"></div>
 <div id="libbox">
-  <div class="libhead"><b>添加元件</b><button id="lib-close" type="button" class="sec">关闭</button></div>
-  <label>库里已有 <select id="lib-pick"></select><button id="lib-add-pick" type="button">添加</button></label>
-  <div class="libhead"><b>自定义</b></div>
-  <label>按钮名 <input id="lib-name" placeholder="例如 稳压管"></label>
-  <label>点数 <select id="lib-n"><option value="2">2 点</option><option value="1">1 点</option><option value="0">不取点</option></select></label>
-  <label>文字栏 <select id="lib-field"><option value="">无</option><option value="文字">文字</option><option value="标注">标注</option></select></label>
-  <label>默认 <input id="lib-def" placeholder="$D$"></label>
-  <label>模板 <input id="lib-tpl" placeholder="\draw {{1}} to[zD, l={{文字}}] {{2}};"></label>
-  <div class="libhint">{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。</div>
-  <button id="lib-add-custom" type="button">添加自定义</button><span id="lib-msg"></span>
+  <div class="libhead"><b data-i18n="添加元件">添加元件</b><button id="lib-close" type="button" class="sec" data-i18n="关闭">关闭</button></div>
+  <label><span data-i18n="库里已有">库里已有</span> <select id="lib-pick"></select><button id="lib-add-pick" type="button" data-i18n="添加">添加</button></label>
+  <div class="libhead"><b data-i18n="自定义">自定义</b></div>
+  <label><span data-i18n="按钮名">按钮名</span> <input id="lib-name" data-i18n="例如 稳压管" placeholder="例如 稳压管"></label>
+  <label><span data-i18n="点数">点数</span> <select id="lib-n"><option value="2" data-i18n="2 点">2 点</option><option value="1" data-i18n="1 点">1 点</option><option value="0" data-i18n="不取点">不取点</option></select></label>
+  <label><span data-i18n="文字栏">文字栏</span> <select id="lib-field"><option value="" data-i18n="无">无</option><option value="文字" data-i18n="文字">文字</option><option value="标注" data-i18n="标注">标注</option></select></label>
+  <label><span data-i18n="默认">默认</span> <input id="lib-def" placeholder="$D$"></label>
+  <label><span data-i18n="模板">模板</span> <input id="lib-tpl" placeholder="\draw {{1}} to[zD, l={{文字}}] {{2}};"></label>
+  <div class="libhint" data-i18n="{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。">{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。</div>
+  <button id="lib-add-custom" type="button" data-i18n="添加自定义">添加自定义</button><span id="lib-msg"></span>
 </div><div id="ed"><div id="hl"></div><textarea id="code"></textarea></div></div>
 <div id="R"><div id="zbar">
-  <label>缩放 <input id="zm" type="range" min="0.5" max="4" step="0.25" value="2.0"></label>
-  <label style="color:#c1121f;font-weight:bold"><input id="sh-r" type="checkbox" checked> 红点</label>
-  <label style="color:#0077b6;font-weight:bold"><input id="sh-b" type="checkbox" checked> 蓝点</label>
-  <label style="color:#7b2cbf;font-weight:bold"><input id="sh-p" type="checkbox" checked> 紫点</label>
-  <label><input id="lk" type="checkbox" checked> 联动</label>
-  <label style="color:#b5179e;font-weight:bold"><input id="mv-all" type="checkbox"> ✋ 整体平移</label>
-  <label>吸附 <select id="sn"><option value="0">自由</option><option value="0.05" selected>0.05</option><option value="0.1">0.1</option><option value="0.25">0.25</option></select></label>
+  <label><span data-i18n="缩放">缩放</span> <input id="zm" type="range" min="0.5" max="4" step="0.25" value="2.0"></label>
+  <label style="color:#c1121f;font-weight:bold"><input id="sh-r" type="checkbox" checked> <span data-i18n="红点">红点</span></label>
+  <label style="color:#0077b6;font-weight:bold"><input id="sh-b" type="checkbox" checked> <span data-i18n="蓝点">蓝点</span></label>
+  <label style="color:#7b2cbf;font-weight:bold"><input id="sh-p" type="checkbox" checked> <span data-i18n="紫点">紫点</span></label>
+  <label><input id="lk" type="checkbox" checked> <span data-i18n="联动">联动</span></label>
+  <label style="color:#b5179e;font-weight:bold"><input id="mv-all" type="checkbox"> <span data-i18n="✋ 整体平移">✋ 整体平移</span></label>
+  <label><span data-i18n="吸附">吸附</span> <select id="sn"><option value="0" data-i18n="自由">自由</option><option value="0.05" selected>0.05</option><option value="0.1">0.1</option><option value="0.25">0.25</option></select></label>
   <span style="margin-left:auto;display:flex;gap:4px"><button class="exp" onclick="exportFile('pdf')">PDF</button><button class="exp" onclick="exportFile('png')">PNG</button><button class="exp" onclick="exportFile('svg')">SVG</button></span>
 </div><div id="ebar">
-  <button id="sel-all" type="button" class="sec" title="选中全部可平移、缩放的坐标">全选</button>
-  <span id="sel-info" style="color:#aaa">拖拽框选或点全选，然后平移、缩放、旋转</span>
-  <span id="place"><b id="place-title"></b><span id="place-fields"></span><button id="place-ok" type="button">确认</button><button id="place-cancel" type="button" class="sec">取消</button></span>
-  <span id="inputs" style="display:none;align-items:center;gap:5px"><span id="lx">X:</span><input id="ix" type="number" step="0.05"><span id="ly">Y:</span><input id="iy" type="number" step="0.05"><button id="apply">应用</button><button id="del-btn" class="del">删除</button> 缩放:<input id="isc" type="number" step="0.1" value="1.0" style="width:44px"> 旋转:<input id="irot" type="number" step="15" value="0" style="width:44px"><button id="xform-btn" style="background:#6a1b9a">变换</button></span>
+  <button id="sel-all" type="button" class="sec" data-i18n="全选" data-i18n-title="选中全部可平移、缩放的坐标" title="选中全部可平移、缩放的坐标">全选</button>
+  <span id="sel-info" data-i18n="拖拽框选或点全选，然后平移、缩放、旋转" style="color:#aaa">拖拽框选或点全选，然后平移、缩放、旋转</span>
+  <span id="place"><b id="place-title"></b><span id="place-fields"></span><button id="place-ok" type="button" data-i18n="确认">确认</button><button id="place-cancel" type="button" class="sec" data-i18n="取消">取消</button></span>
+  <span id="dimedit" style="display:none"><span data-i18n="样式">样式</span><button type="button" id="ed-h" class="sec" data-i18n="水平">水平</button><button type="button" id="ed-v" class="sec" data-i18n="竖直">竖直</button><button type="button" id="ed-a" class="sec" data-i18n="对齐">对齐</button><button type="button" id="ed-in" class="sec" data-i18n="内">内</button><button type="button" id="ed-out" class="sec" data-i18n="外">外</button><button type="button" id="ed-s1" class="sec" data-i18n="抑起点" data-i18n-title="不画起点一侧的箭头和引出线" title="不画起点一侧的箭头和引出线">抑起点</button><button type="button" id="ed-s2" class="sec" data-i18n="抑终点" data-i18n-title="不画终点一侧的箭头和引出线" title="不画终点一侧的箭头和引出线">抑终点</button><input id="ed-lab"></span>
+  <span id="inputs" style="display:none;align-items:center;gap:5px"><span id="lx">X:</span><input id="ix" type="number" step="0.05"><span id="ly">Y:</span><input id="iy" type="number" step="0.05"><span id="ell-extra" style="display:none;align-items:center;gap:5px"><span data-i18n="横轴">横轴</span><input id="ell-rx" type="number" step="0.05" style="width:56px"><span data-i18n="纵轴">纵轴</span><input id="ell-ry" type="number" step="0.05" style="width:56px"><span data-i18n="转角">转角</span><input id="ell-rot" type="number" step="1" style="width:56px"></span><span id="planeaxes-extra" style="display:none;align-items:center;gap:4px;flex-wrap:wrap"><span data-i18n="轴x">轴x</span><input id="pa-x0" type="number" step="1" style="width:48px"><span>~</span><input id="pa-x1" type="number" step="1" style="width:48px"><span data-i18n="轴y">轴y</span><input id="pa-y0" type="number" step="1" style="width:48px"><span>~</span><input id="pa-y1" type="number" step="1" style="width:48px"><span data-i18n="刻x">刻x</span><input id="pa-tx0" type="number" step="1" style="width:48px"><span>~</span><input id="pa-tx1" type="number" step="1" style="width:48px"><span data-i18n="刻y">刻y</span><input id="pa-ty0" type="number" step="1" style="width:48px"><span>~</span><input id="pa-ty1" type="number" step="1" style="width:48px"></span><button id="apply" data-i18n="应用">应用</button><button id="del-btn" class="del" data-i18n="删除">删除</button> <span id="xform-wrap"><span data-i18n="缩放:">缩放:</span><input id="isc" type="number" step="0.1" value="1.0" style="width:44px"> <span data-i18n="旋转:">旋转:</span><input id="irot" type="number" step="15" value="0" style="width:44px"><button id="xform-btn" data-i18n="变换" style="background:#6a1b9a">变换</button></span></span>
 </div><div id="toast"></div><div id="wrap"><div id="stage"><div id="svg"></div><div id="ov"></div></div></div></div><div id="tip"></div>
-<script src="/data.js"></script><script src="/app.js"></script>
+<script src="/i18n.js"></script><script src="/data.js"></script><script src="/app.js"></script>
 </body></html>

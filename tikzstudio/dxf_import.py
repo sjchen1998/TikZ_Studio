@@ -23,7 +23,7 @@ _MAX = 8000
 _FIT = 16.0
 
 
-def dxf_to_tikz(data: bytes, name: str = "drawing.dxf"):
+def dxf_to_tikz(data: bytes, name: str = "drawing.dxf", lang: str = "zh"):
     if not data:
         raise ValueError("文件是空的")
     doc = _read(data)
@@ -47,7 +47,7 @@ def dxf_to_tikz(data: bytes, name: str = "drawing.dxf"):
             skipped[kind] = skipped.get(kind, 0) + 1
     if not items:
         raise ValueError("没有可转换的直线、圆、弧或文字")
-    return _emit(items, skipped, truncated, ins, _safe_name(name))
+    return _emit(items, skipped, truncated, ins, _safe_name(name), "en" if lang == "en" else "zh")
 
 
 def _read(data):
@@ -166,7 +166,7 @@ def _quad(p0, ctrl, p1):
     return mix(p0, ctrl), mix(p1, ctrl)
 
 
-def _emit(items, skipped, truncated, ins, name):
+def _emit(items, skipped, truncated, ins, name, lang="zh"):
     pts = []
     for it in items:
         pts.extend(_item_points(it))
@@ -183,24 +183,33 @@ def _emit(items, skipped, truncated, ins, name):
     def T(p):
         return ((p[0] - minx) * sc, (p[1] - miny) * sc, (p[2] - minz) * sc)
 
-    lines = ["% 从 " + name + " 导入", "% " + _note(ins, minx, miny, minz, span, sc)]
-    if truncated:
-        lines.append("% 图元很多，只转换了前 " + str(_MAX) + " 个")
-    if skipped:
-        lines.append("% 未转换：" + "、".join(k + " " + str(v) + " 个" for k, v in sorted(skipped.items())))
+    note = _note(ins, minx, miny, minz, span, sc, lang)
+    if lang == "en":
+        lines = ["% imported from " + name, "% " + note]
+        if truncated:
+            lines.append("% many entities; only the first " + str(_MAX) + " were converted")
+        if skipped:
+            lines.append("% not converted: " + ", ".join(k + " " + str(v) for k, v in sorted(skipped.items())))
+    else:
+        lines = ["% 从 " + name + " 导入", "% " + note]
+        if truncated:
+            lines.append("% 图元很多，只转换了前 " + str(_MAX) + " 个")
+        if skipped:
+            lines.append("% 未转换：" + "、".join(k + " " + str(v) + " 个" for k, v in sorted(skipped.items())))
     lines.append("\\begin{tikzpicture}[line cap=round,line join=round]")
     layer = None
     for it in items:
         if it[2] != layer:
             layer = it[2]
             if layer and layer != "0":
-                lines.append("% 图层 " + layer.replace("%", ""))
+                lines.append(("% layer " if lang == "en" else "% 图层 ") + layer.replace("%", ""))
         row = _emit_item(it, T, sc, zmode)
         if row:
             lines.append(row)
     lines.append("\\end{tikzpicture}")
-    counts = _counts(items)
-    return "\n".join(lines) + "\n", "已导入 " + "、".join(counts)
+    counts = _counts(items, lang)
+    summary = ("Imported " + ", ".join(counts)) if lang == "en" else ("已导入 " + "、".join(counts))
+    return "\n".join(lines) + "\n", summary
 
 
 def _emit_item(it, T, sc, zmode):
@@ -297,17 +306,34 @@ def _item_points(it):
     return pts
 
 
-def _counts(items):
+def _counts(items, lang="zh"):
     n = {"line": 0, "arc": 0, "path": 0, "text": 0, "point": 0}
     for it in items:
         n[it[0]] = n.get(it[0], 0) + 1
-    label = {"line": "条线", "arc": "段圆或弧", "path": "条曲线", "text": "处文字", "point": "个点"}
+    label = {"line": " lines", "arc": " arcs or circles", "path": " curves", "text": " text items", "point": " points"} if lang == "en" else {"line": "条线", "arc": "段圆或弧", "path": "条曲线", "text": "处文字", "point": "个点"}
     return [str(n[k]) + label[k] for k in ("line", "arc", "path", "text", "point") if n[k]]
 
 
-def _note(ins, minx, miny, minz, span, sc):
+_UNIT_EN = {
+    0: "unit not set, numbers treated as centimeters",
+    1: "inches", 2: "feet", 3: "miles", 4: "millimeters", 5: "centimeters", 6: "meters", 7: "kilometers",
+    10: "yards", 14: "decimeters",
+}
+
+
+def _note(ins, minx, miny, minz, span, sc, lang="zh"):
+    moved = abs(minx) > 1e-4 or abs(miny) > 1e-4 or abs(minz) > 1e-4
+    if lang == "en":
+        parts = ["Unit: " + _UNIT_EN.get(ins, "another unit")]
+        if moved:
+            parts.append("lower-left moved to the origin")
+        if sc != 1:
+            parts.append("longest side " + _f(span) + " cm, scaled to " + _f(span * sc) + " cm")
+        else:
+            parts.append("sizes placed in centimeters")
+        return ". ".join(parts) + "."
     parts = ["单位：" + _UNIT_NAME.get(ins, "其他单位")]
-    if abs(minx) > 1e-4 or abs(miny) > 1e-4 or abs(minz) > 1e-4:
+    if moved:
         parts.append("左下角已移到原点")
     if sc != 1:
         parts.append("最大边 " + _f(span) + " cm，已缩放到 " + _f(span * sc) + " cm")

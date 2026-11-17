@@ -1,19 +1,19 @@
 const INIT_CODE = String.raw`\begin{circuitikz}[font=\small, european]
   \ctikzset{bipoles/length=1.0cm, bipoles/thickness=1.2}
-  % 次级端子 → 引线 → 交流结点
-  \draw (0,2.0) node[left] {次级\,$+$}
+  % secondary terminals, leads, and AC nodes
+  \draw (0,2.0) node[left] {secondary\,$+$}
     to[short, o-] (1.2,2.0) coordinate (acp);
-  \draw (0,0.0) node[left] {次级\,$-$}
+  \draw (0,0.0) node[left] {secondary\,$-$}
     to[short, o-] (1.2,0.0) coordinate (acn);
   \filldraw (acp) circle (1.2pt);
   \filldraw (acn) circle (1.2pt);
-  % 交流母线向右延伸，供桥臂与 TVS 搭接
+  % AC bus extended to the right for the bridge arms and the TVS
   \draw (acp) -- (2.4,2.0) coordinate (acpr);
   \draw (acn) -- (2.4,0.0) coordinate (acnr);
   \filldraw (acpr) circle (1.2pt);
   \filldraw (acnr) circle (1.2pt);
   \draw (acp) to[zzD, l_={TVS}] (acn);
-  % 直流结点与桥臂（压缩上下跨距，避免图题下方留白）
+  % DC nodes and bridge arms (vertical span kept tight so the caption does not leave a gap)
   \coordinate (dcp) at (4.6,3.0);
   \coordinate (dcn) at (4.6,-1.0);
   \draw (acpr) to[D*, l=$D_1$] (dcp);
@@ -22,7 +22,7 @@ const INIT_CODE = String.raw`\begin{circuitikz}[font=\small, european]
   \draw (dcn)  to[D*, l=$D_4$] (acnr);
   \filldraw (dcp) circle (1.2pt);
   \filldraw (dcn) circle (1.2pt);
-  % 储能与旁路
+  % storage and bypass
   \draw (dcp) to[C, l=$C_{\mathrm{bus}}$] (dcn);
   \draw (dcp) -- (6.2,3.0) coordinate (vo);
   \draw (dcn) -- (6.2,-1.0) coordinate (vog);
@@ -30,40 +30,65 @@ const INIT_CODE = String.raw`\begin{circuitikz}[font=\small, european]
   \node[right=6pt] at ($(vo)!0.5!(vog)$) {$C_{\mathrm{HF}}$};
   \filldraw (vo) circle (1.2pt);
   \filldraw (vog) circle (1.2pt);
-  % 母线双线输出（标注放在线端右侧，不向下撑开包围盒）
+  % dual bus outputs (labels stay to the right of the wire ends and do not stretch the box downward)
   \draw (vo)  -- ++(1.4,0) node[right] {$V_{\mathrm{bus}}^+$};
   \draw (vog) -- ++(1.4,0) node[right] {$V_{\mathrm{bus}}^-$};
-  \useasboundingbox (-1.6,-1.35) rectangle (9.0,3.55);
+  \useasboundingbox (-2.6,-1.35) rectangle (9.0,3.55);
 \end{circuitikz}`;
 const TPLS = {
   rc: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) to[V, l=$V_{in}$] (0,3) to[R, l=$R_1$] (3,3) to[C, l=$C_1$] (3,0) -- (0,0);\n  \\node[circ] at (3,3) {};\n  \\draw (3,3) -- (4.5,3) node[right] {$V_{out}$};\n\\end{circuitikz}",
   buck: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) node[ground]{} to[V, l=$V_{in}$] (0,3) to[nos, l=$Q_1$] (2.5,3) to[L, l=$L_1$] (5.5,3) -- (7,3) node[right]{$V_{out}$};\n  \\draw (2.5,0) node[ground]{} to[D*, l=$D_1$] (2.5,3);\n  \\draw (5.5,3) to[C, l=$C_o$] (5.5,0) node[ground]{};\n\\end{circuitikz}",
   opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.8,2.5) -- (1.8,3.6) to[R, l=$R_f$] (4.2,3.6) -| (op.out);\n  \\draw (1.8,2.5) to[R, l=$R_1$] (1.8,0.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n\\end{circuitikz}",
-  block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {传感器};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
-  plot: "\\begin{tikzpicture}[font=\\small]\n  \\begin{axis}[width=8cm, height=5cm, grid=major, tick label style={font=\\small}, label style={font=\\small}]\n    \\addplot[blue, thick, domain=0:6, samples=80] {3.3 * (1 - exp(-x))};\n  \\end{axis}\n\\end{tikzpicture}",
+  block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {Sensor};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
+  plot: String.raw`\begin{tikzpicture}
+    \begin{axis}[
+        axis lines=middle,
+        xlabel={$x$},
+        ylabel={$y$},
+        xmin=-4, xmax=4,
+        ymin=-3, ymax=4.5,
+        axis equal image,
+        grid=major,
+        grid style={dashed, gray!30},
+        tick label style={font=\footnotesize},
+        title={Butterfly Curve (Temple H. Fay)}
+    ]
+        \addplot[
+        domain=0:12*pi,
+        samples=1500,
+        smooth,
+        thick,
+        color=purple!80!blue,
+        variable=\t
+    ] (
+        {sin(deg(\t)) * (exp(cos(deg(\t))) - 2*cos(deg(4*\t)) - (sin(deg(\t/12)))^5)},
+        {cos(deg(\t)) * (exp(cos(deg(\t))) - 2*cos(deg(4*\t)) - (sin(deg(\t/12)))^5)}
+    );
+    \end{axis}
+\end{tikzpicture}`,
   plane: String.raw`\begin{tikzpicture}[font=\small]
-    % 1. 绘制网格（可选，若不需要可注释掉）
+    % 1. grid (comment this out if it is not needed)
     \draw[step=1cm, gray!30, very thin] (-3.9,-2.9) grid (4.9,4.9);
 
-    % 2. 绘制坐标轴 (x轴与y轴)，并带箭头
-    \draw[->, thick] (-4,0) -- (5,0) node[right] {$x$};
-    \draw[->, thick] (0,-3) -- (0,5) node[above] {$y$};
+    % 2–3. axes + ticks (packaged)
+    \begin{scope} % planeaxes
+      \draw[->, thick] (-4,0) -- (5,0) node[right] {$x$};
+      \draw[->, thick] (0,-3) -- (0,5) node[above] {$y$};
+      \foreach \x in {-3,-2,-1,1,2,3,4}
+        \draw (\x, 0.05) -- (\x, -0.05) node[below, font=\small] {\x};
+      \foreach \y in {-2,-1,1,2,3,4}
+        \draw (0.05, \y) -- (-0.05, \y) node[left, font=\small] {\y};
+    \end{scope}
+    \node at (-0.3, -0.3) {$O$}; % origin
 
-    % 3. 绘制刻度与数字
-    \foreach \x in {-3,-2,-1,1,2,3,4}
-        \draw (\x, 0.05) -- (\x, -0.05) node[below] {\x};
-    \foreach \y in {-2,-1,1,2,3,4}
-        \draw (0.05, \y) -- (-0.05, \y) node[left] {\y};
-    \node at (-0.3, -0.3) {$O$}; % 原点
-
-    % 4. 绘制点
+    % 4. a point
     \coordinate (A) at (2, 3);
     \filldraw[red] (A) circle (2pt) node[above right] {$A(2,3)$};
 
-    % 5. 绘制线段
-    \draw[blue, thick] (-2,-1) -- (2,3) node[midway, above left] {线段};
+    % 5. a segment
+    \draw[blue, thick] (-2,-1) -- (2,3) node[midway, above left] {segment};
 
-    % 6. 绘制函数图像 (例如抛物线 y = 0.5*x^2 - 1)
+    % 6. a curve (the parabola y = 0.5*x^2 - 1)
     \draw[domain=-2.8:2.8, smooth, variable=\x, red, thick]
         plot ({\x}, {0.5*\x*\x - 1});
 
@@ -265,6 +290,11 @@ const TPLS = {
 \end{tikzpicture}`
 };
 function P(pt) { return pt && pt.ref ? `(${pt.ref})` : `(${+Number(pt[0]).toFixed(3)},${+Number(pt[1]).toFixed(3)})`; }
+function polyArrowCode(pts) {
+  const parts = (pts || []).filter(Boolean).map(P);
+  if (parts.length < 2) return '';
+  return `\\draw[->] ${parts.join(' -- ')};`;
+}
 function withRot(opts, rot) {
   const ang = Number(rot) || 0;
   return ang ? `${opts}, rotate=${ang}` : opts;
@@ -275,6 +305,10 @@ function deviceNode(kind, p, a, rot, fallback) {
   const opt = text && !named ? `${kind}, label={${text}}` : kind;
   return `\\node[${withRot(opt, rot)}] (${named ? text : fallback}) at ${P(p[0])} {};`;
 }
+function blockNamedNode(opts, p, text, rot, id) {
+  const name = String(id || '').trim();
+  return `\\node[${withRot(opts, rot)}] (${name}) at ${P(p[0])} {${text == null ? '' : text}};`;
+}
 function shiftDraw(src, pt) {
   const dx = Number(pt[0]), dy = Number(pt[1]);
   return src.replace(/\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)/g, (_, x, y) => `(${+(parseFloat(x) + dx).toFixed(3)},${+(parseFloat(y) + dy).toFixed(3)})`);
@@ -283,14 +317,16 @@ function placeLocal(body, pt, rot) {
   const ang = Number(rot) || 0;
   if (!ang && !(pt && pt.ref)) return shiftDraw(body, pt);
   const opt = ang ? `shift={${P(pt)}}, rotate=${ang}` : `shift={${P(pt)}}`;
-  return `\\begin{scope}[${opt}]\n    ${body}\n  \\end{scope}`;
+  const inner = String(body).split('\n').map(ln => '    ' + ln).join('\n');
+  return `\\begin{scope}[${opt}]\n${inner}\n  \\end{scope}`;
 }
-function relAxes(pt, rot, lines) {
+function relAxes(pt, rot, lines, mark) {
   const ang = Number(rot) || 0;
-  const at = ang ? '(0,0)' : P(pt);
-  const body = lines.map(ln => ln.split('__at__').join(at)).join('\n  ');
-  if (!ang) return body;
-  return `\\begin{scope}[shift={${P(pt)}}, rotate=${ang}]\n  ${body}\n\\end{scope}`;
+  const body = lines.map(ln => '    ' + ln.split('__at__').join('(0,0)')).join('\n');
+  const parts = [`shift={${P(pt)}}`];
+  if (ang) parts.push(`rotate=${ang}`);
+  const tag = mark ? ` % ${mark}` : '';
+  return `\\begin{scope}[${parts.join(', ')}]${tag}\n${body}\n  \\end{scope}`;
 }
 function bipole(label, tikz, def) {
   return { name: label, btn: label, n: 2, field: '标注', def, build: (p, a) => `\\draw ${P(p[0])} to[${tikz}${a ? `, l=${a}` : ''}] ${P(p[1])};` };
@@ -370,13 +406,13 @@ function atExpr(pt) {
   return pt && pt.ref ? pt.ref : `${+Number(pt[0]).toFixed(3)},${+Number(pt[1]).toFixed(3)}`;
 }
 function turnArrow(pt, label, a0, a1, rx, ry) {
-  const node = String(label || '').trim() ? ` node[midway, above] {${String(label).trim()}}` : '';
+  const node = String(label || '').trim() ? ` node[pos={2/3}, below] {${String(label).trim()}}` : '';
   const rad = ry == null ? `radius=${rx}` : `x radius=${rx}, y radius=${ry}`;
   const from = ry == null ? `${a0}:${rx}` : `${a0}:${rx} and ${ry}`;
   return `\\draw[-{Latex[length=2.5mm,width=2mm,flex'=1]}, thick] ($(${atExpr(pt)})+(${from})$) arc[start angle=${a0}, end angle=${a1}, ${rad}]${node};`;
 }
 function turnAxis(p0, p1, label, a0, a1, rx, ry) {
-  const node = String(label || '').trim() ? ` node[midway, above] {${String(label).trim()}}` : '';
+  const node = String(label || '').trim() ? ` node[pos={2/3}, above] {${String(label).trim()}}` : '';
   const head = `-{Latex[length=2.5mm,width=2mm,flex'=1]}`;
   const arc = `($(0,0)+(${a0}:${rx} and ${ry})$) arc[start angle=${a0}, end angle=${a1}, x radius=${rx}, y radius=${ry}]${node}`;
   if ((p0 && p0.ref) || (p1 && p1.ref)) {
@@ -403,38 +439,265 @@ function dimFeet(p1, p2, t, mode) {
 function dimCode(pts, label, v) {
   const mode = v && (v.mode === 'v' || v.mode === 'a') ? v.mode : 'h';
   const arrow = v && v.arrow === 'out' ? 'out' : 'in';
+  const hide = String(v && v.hide || '').replace(/[^12]/g, '');
+  const show1 = !hide.includes('1'), show2 = !hide.includes('2');
   const id = (v && v.id) || 1;
   const A = 'd' + id + 'a', B = 'd' + id + 'b', T = 'd' + id + 't', C = 'd' + id + 'c', D = 'd' + id + 'd';
   const tip = '>={Stealth[length=2mm, width=2mm]}';
-  const [fc, fd] = dimFeet(pts[0], pts[1], pts[2], mode);
   const xy = p => `(${+Number(p[0]).toFixed(4)},${+Number(p[1]).toFixed(4)})`;
+  const at = v && v.at;
+  const aAt = at ? at[0] : P(pts[0]);
+  const bAt = at ? at[1] : P(pts[1]);
+  const tAt = at ? at[2] : P(pts[2]);
+  let cAt, dAt;
+  if (v && v.feet) { cAt = v.feet[0]; dAt = v.feet[1]; }
+  else {
+    const [fc, fd] = dimFeet(pts[0], pts[1], pts[2], mode);
+    cAt = xy(fc); dAt = xy(fd);
+  }
   const lines = [
-    '\\begin{scope}[thin] % udim',
-    `    \\coordinate (${A}) at ${P(pts[0])};`,
-    `    \\coordinate (${B}) at ${P(pts[1])};`,
-    `    \\coordinate (${T}) at ${P(pts[2])};`,
-    `    \\coordinate (${C}) at ${xy(fc)};`,
-    `    \\coordinate (${D}) at ${xy(fd)};`
+    '\\begin{scope}[thin] % udim ' + mode + ' ' + arrow + (hide ? ' ' + hide : ''),
+    `    \\coordinate (${A}) at ${aAt};`,
+    `    \\coordinate (${B}) at ${bAt};`,
+    `    \\coordinate (${T}) at ${tAt};`,
+    `    \\coordinate (${C}) at ${cAt};`,
+    `    \\coordinate (${D}) at ${dAt};`
   ];
   lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${A}}{center}}\\pgfgetlastxy{\\udax}{\\uday}`);
   lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${B}}{center}}\\pgfgetlastxy{\\udbx}{\\udby}`);
   lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${C}}{center}}\\pgfgetlastxy{\\udcx}{\\udcy}`);
   lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${D}}{center}}\\pgfgetlastxy{\\uddx}{\\uddy}`);
   lines.push(`    \\pgfpointtransformed{\\pgfpointanchor{${T}}{center}}\\pgfgetlastxy{\\udtx}{\\udty}`);
+  if (show1 !== show2) lines.push(`    \\pgfpointtransformed{\\pgfpointlineattime{0.5}{\\pgfpointanchor{${C}}{center}}{\\pgfpointanchor{${D}}{center}}}\\pgfgetlastxy{\\udmx}{\\udmy}`);
   lines.push('    \\begin{scope}');
   lines.push('      \\pgftransformreset');
-  lines.push('      \\draw[thin, black!65] ($(\\udax,\\uday)!2pt!(\\udcx,\\udcy)$) -- ($(\\udcx,\\udcy)!-4pt!(\\udax,\\uday)$);');
-  lines.push('      \\draw[thin, black!65] ($(\\udbx,\\udby)!2pt!(\\uddx,\\uddy)$) -- ($(\\uddx,\\uddy)!-4pt!(\\udbx,\\udby)$);');
+  if (show1) lines.push('      \\draw[thin, black!65] ($(\\udax,\\uday)!2pt!(\\udcx,\\udcy)$) -- ($(\\udcx,\\udcy)!-4pt!(\\udax,\\uday)$);');
+  if (show2) lines.push('      \\draw[thin, black!65] ($(\\udbx,\\udby)!2pt!(\\uddx,\\uddy)$) -- ($(\\uddx,\\uddy)!-4pt!(\\udbx,\\udby)$);');
+  const from = show1 ? '(\\udcx,\\udcy)' : '(\\udmx,\\udmy)';
+  const to = show2 ? '(\\uddx,\\uddy)' : '(\\udmx,\\udmy)';
   if (arrow === 'out') {
-    lines.push(`      \\draw[->, thin, black, ${tip}] ($(\\udcx,\\udcy)!-10pt!(\\uddx,\\uddy)$) -- (\\udcx,\\udcy);`);
-    lines.push(`      \\draw[->, thin, black, ${tip}] ($(\\uddx,\\uddy)!-10pt!(\\udcx,\\udcy)$) -- (\\uddx,\\uddy);`);
-    lines.push('      \\draw[thin, black] (\\udcx,\\udcy) -- (\\uddx,\\uddy);');
-  } else lines.push(`      \\draw[<->, thin, black, ${tip}] (\\udcx,\\udcy) -- (\\uddx,\\uddy);`);
+    if (show1) lines.push(`      \\draw[->, thin, black, ${tip}] ($(\\udcx,\\udcy)!-10pt!(\\uddx,\\uddy)$) -- (\\udcx,\\udcy);`);
+    if (show2) lines.push(`      \\draw[->, thin, black, ${tip}] ($(\\uddx,\\uddy)!-10pt!(\\udcx,\\udcy)$) -- (\\uddx,\\uddy);`);
+    if (show1 || show2) lines.push(`      \\draw[thin, black] ${from} -- ${to};`);
+  } else if (show1 || show2) {
+    const arrows = show1 && show2 ? '<->' : show1 ? '<-' : '->';
+    lines.push(`      \\draw[${arrows}, thin, black, ${tip}] ${from} -- ${to};`);
+  }
   lines.push(`      \\node[fill=white, inner sep=1.5pt, font=\\small, transform shape=false, text=black] at (\\udtx,\\udty) {${label}};`);
   lines.push('    \\end{scope}');
   lines.push('  \\end{scope}');
   const head = v && v.prefix ? v.prefix + '\n  ' : '';
   return head + lines.join('\n');
+}
+function clampArc(ang, a0, a1) {
+  const sweep = a1 - a0;
+  if (!Number.isFinite(sweep) || Math.abs(sweep) >= 359.9) return ang;
+  const norm = d => ((d % 360) + 360) % 360;
+  if (sweep > 0) {
+    const d = norm(ang - a0), sw = norm(sweep);
+    if (d <= sw + 1e-6) return a0 + d;
+    return (d - sw) <= (360 - d) ? a1 : a0;
+  }
+  const d = norm(a0 - ang), sw = norm(-sweep);
+  if (d <= sw + 1e-6) return a0 - d;
+  return (d - sw) <= (360 - d) ? a1 : a0;
+}
+function radRim(ox, oy, R, tx, ty, a0, a1) {
+  let ang = Math.atan2(ty - oy, tx - ox) * 180 / Math.PI;
+  if (Math.hypot(tx - ox, ty - oy) < 1e-6) ang = a0 == null ? 0 : (a0 + a1) / 2;
+  if (!Number.isFinite(ang)) ang = 0;
+  if (a0 != null && a1 != null) ang = clampArc(ang, a0, a1);
+  const a = ang * Math.PI / 180;
+  return [ox + R * Math.cos(a), oy + R * Math.sin(a)];
+}
+function radNum(n) { return +Number(n).toFixed(4); }
+function radPt(x, y, z) {
+  return z == null ? `(${radNum(x)},${radNum(y)})` : `(${radNum(x)},${radNum(y)},${radNum(z)})`;
+}
+function radDimCode(curve, text, label, id) {
+  const tx = +text[0], ty = +text[1], z = curve.oz == null ? null : curve.oz;
+  const [px, py] = radRim(curve.ox, curve.oy, curve.rr, tx, ty, curve.a0, curve.a1);
+  const ang = curve.a0 == null ? '' : ' ' + radNum(curve.a0) + ' ' + radNum(curve.a1);
+  return [
+    '\\begin{scope}[thin] % rdim ' + radNum(curve.rr) + ang,
+    `    \\coordinate (rd${id}c) at ${curve.cen};`,
+    `    \\coordinate (rd${id}t) at ${radPt(tx, ty, z)};`,
+    `    \\coordinate (rd${id}p) at ${radPt(px, py, z)};`,
+    `    \\draw[->, thin, black, >={Stealth[length=2mm, width=2mm]}] (rd${id}t) -- (rd${id}p);`,
+    `    \\node[fill=white, inner sep=1.5pt, font=\\small, transform shape=false, text=black] at (rd${id}t) {${label}};`,
+    '  \\end{scope}'
+  ].join('\n');
+}
+function diaEnds(ox, oy, R, tx, ty) {
+  let ang = Math.atan2(ty - oy, tx - ox);
+  if (!(Math.hypot(tx - ox, ty - oy) > 1e-6) || !Number.isFinite(ang)) ang = 0;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  return {
+    near: [ox + R * c, oy + R * s],
+    far: [ox - R * c, oy - R * s],
+    outside: Math.hypot(tx - ox, ty - oy) > R + 1e-4
+  };
+}
+function diaLabel(rr) { return '$\\varnothing ' + radNum(2 * rr) + '$'; }
+function diaDimCode(curve, text, label, id) {
+  const tx = +text[0], ty = +text[1], z = curve.oz == null ? null : curve.oz;
+  const ends = diaEnds(curve.ox, curve.oy, curve.rr, tx, ty);
+  const lines = [
+    '\\begin{scope}[thin] % ddim ' + radNum(curve.rr),
+    `    \\coordinate (dd${id}c) at ${curve.cen};`,
+    `    \\coordinate (dd${id}t) at ${radPt(tx, ty, z)};`,
+    `    \\coordinate (dd${id}a) at ${radPt(ends.near[0], ends.near[1], z)};`,
+    `    \\coordinate (dd${id}b) at ${radPt(ends.far[0], ends.far[1], z)};`,
+    `    \\draw[<->, thin, black, >={Stealth[length=2mm, width=2mm]}] (dd${id}b) -- (dd${id}a);`
+  ];
+  if (ends.outside) lines.push(`    \\draw[thin, black] (dd${id}a) -- (dd${id}t);`);
+  lines.push(`    \\node[fill=white, inner sep=1.5pt, font=\\small, transform shape=false, text=black] at (dd${id}t) {${label}};`);
+  lines.push('  \\end{scope}');
+  return lines.join('\n');
+}
+function vadd(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function vsub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function vmul(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function vdot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function vcross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function vlen(a) { return Math.hypot(a[0], a[1], a[2]); }
+function vunit(a) { const L = vlen(a); return L < 1e-9 ? null : vmul(a, 1 / L); }
+function angMeet(p, u, q, v) {
+  const n = vcross(u, v), nu = vlen(u), nv = vlen(v), nn = vdot(n, n);
+  if (nu < 1e-6 || nv < 1e-6 || nn / (nu * nu * nv * nv) < 8e-5) return { ok: false, why: 'par' };
+  const w = vsub(q, p);
+  const s = vdot(vcross(w, v), n) / nn, t = vdot(vcross(w, u), n) / nn;
+  const a = vadd(p, vmul(u, s)), b = vadd(q, vmul(v, t));
+  const gap = vlen(vsub(a, b));
+  if (gap > Math.max(0.05, 0.02 * Math.max(nu, nv))) return { ok: false, why: 'skew' };
+  return { ok: true, o: vmul(vadd(a, b), 0.5), n };
+}
+function angWedge(o, d1, d2, text) {
+  const u1 = vunit(d1), u2 = vunit(d2);
+  const n = u1 && u2 ? vunit(vcross(u1, u2)) : null;
+  if (!n) return null;
+  let tp = vsub(text, o);
+  tp = vsub(tp, vmul(n, vdot(tp, n)));
+  const toward = u => (vlen(tp) < 1e-6 || vdot(u, tp) >= 0) ? u : vmul(u, -1);
+  const r1 = toward(u1), r2 = toward(u2);
+  let e2 = vcross(n, r1);
+  let ang = Math.atan2(vdot(r2, e2), vdot(r2, r1));
+  if (ang < 0) { e2 = vmul(e2, -1); ang = -ang; }
+  if (ang < 1e-3) return null;
+  const dist = vlen(tp);
+  return { r1, r2, e1: r1, e2: vunit(e2), ang, R: Math.max(dist, 0.25), text: vlen(tp) < 1e-6 ? vadd(o, vmul(vadd(r1, r2), 0.2)) : vadd(o, tp) };
+}
+function angLabel(ang) { return '$' + radNum(ang * 180 / Math.PI) + '^\\circ$'; }
+function angPt(p, useZ) {
+  return useZ ? `(${radNum(p[0])},${radNum(p[1])},${radNum(p[2] || 0)})` : `(${radNum(p[0])},${radNum(p[1])})`;
+}
+function ellAxes(ang) {
+  const th = (Number(ang) || 0) * Math.PI / 180;
+  return { ux: Math.cos(th), uy: Math.sin(th), vx: -Math.sin(th), vy: Math.cos(th) };
+}
+function ellDimCode(c, rx, ry, ang) {
+  const a = radNum(Math.max(0.02, +rx || 0)), b = radNum(Math.max(0.02, +ry || 0));
+  const th = radNum(Number(ang) || 0);
+  if (Math.abs(th) < 1e-6) return `\\draw ${P(c)} ellipse (${a} and ${b});`;
+  return `\\draw ${P(c)} ellipse [x radius=${a}, y radius=${b}, rotate=${th}];`;
+}
+function arcNormDeg(a) {
+  let x = Number(a) || 0;
+  while (x <= -180) x += 360;
+  while (x > 180) x -= 360;
+  return x;
+}
+function arcGeom(c, start, end) {
+  if (!c || !start) return null;
+  const r = Math.max(0.02, Math.hypot(start[0] - c[0], start[1] - c[1]));
+  let a0 = Math.atan2(start[1] - c[1], start[0] - c[0]) * 180 / Math.PI;
+  let a1 = a0 + 90;
+  if (end) {
+    a1 = Math.atan2(end[1] - c[1], end[0] - c[0]) * 180 / Math.PI;
+    while (a1 <= a0 + 1e-6) a1 += 360;
+    if (a1 - a0 > 360) a1 = a0 + 360;
+  }
+  const toRad = d => d * Math.PI / 180;
+  return {
+    r, a0, a1,
+    start: [c[0] + r * Math.cos(toRad(a0)), c[1] + r * Math.sin(toRad(a0))],
+    end: [c[0] + r * Math.cos(toRad(a1)), c[1] + r * Math.sin(toRad(a1))],
+  };
+}
+function arcDimCode(c, a0, a1, r) {
+  const rr = radNum(Math.max(0.02, +r || 0));
+  const aa = radNum(arcNormDeg(a0)), bb = radNum(+a1);
+  return `\\draw (${radNum(c[0])},${radNum(c[1])}) ++(${aa}:${rr}) arc (${aa}:${bb}:${rr});`;
+}
+function ellGeom(c, xpt, ypt) {
+  if (!c || !xpt) return null;
+  const dx = xpt[0] - c[0], dy = xpt[1] - c[1];
+  const rx = Math.hypot(dx, dy);
+  if (rx < 0.02) return null;
+  const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+  const { ux, uy, vx, vy } = ellAxes(ang);
+  let ry = 0.4, yEnd = [c[0] + vx * ry, c[1] + vy * ry];
+  if (ypt) {
+    const t = (ypt[0] - c[0]) * vx + (ypt[1] - c[1]) * vy;
+    ry = Math.max(0.02, Math.abs(t));
+    const s = t < 0 ? -1 : 1;
+    yEnd = [c[0] + vx * ry * s, c[1] + vy * ry * s];
+  }
+  return { rx, ry, ang, xEnd: [c[0] + ux * rx, c[1] + uy * rx], yEnd };
+}
+function angOnArc(g, deg) {
+  const th = deg * Math.PI / 180;
+  return vadd(g.o, vadd(vmul(g.e1, Math.cos(th) * g.R), vmul(g.e2, Math.sin(th) * g.R)));
+}
+function angMid(g) { return angOnArc(g, g.ang * 180 / Math.PI / 2); }
+function angNum(n) { return +Number(n).toFixed(4); }
+function angBrace(p, useZ) {
+  return useZ ? `({${angNum(p[0])}},{${angNum(p[1])}},{${angNum(p[2] || 0)}})` : `({${angNum(p[0])}},{${angNum(p[1])}})`;
+}
+function angArcOp(a0, a1, R) { return `arc ({${angNum(a0)}}:{${angNum(a1)}}:{${angNum(R)}})`; }
+function angPage(g) {
+  const sign = g.e1[0] * g.e2[1] - g.e1[1] * g.e2[0] >= 0 ? 1 : -1;
+  const deg = g.ang * 180 / Math.PI;
+  const a0 = Math.atan2(g.e1[1], g.e1[0]) * 180 / Math.PI;
+  return { a0, a1: a0 + sign * deg, deg, sign };
+}
+function angDimCode(g, label, id, arrow) {
+  const useZ = !!g.useZ, pt = p => angPt(p, useZ);
+  const deg = g.ang * 180 / Math.PI;
+  const tip = '>={Stealth[length=2mm, width=2mm]}';
+  const lines = [
+    '\\begin{scope}[thin] % adim ' + (arrow === 'out' ? 'out' : 'in'),
+    `    % ag${id}o ${pt(g.o)}`,
+    `    \\coordinate (ag${id}a) at ${pt(g.a)};`,
+    `    \\coordinate (ag${id}b) at ${pt(g.b)};`,
+    `    \\coordinate (ag${id}u) at ${pt(g.u)};`,
+    `    \\coordinate (ag${id}v) at ${pt(g.v)};`,
+    `    \\coordinate (ag${id}m) at ${pt(angMid(g))};`,
+    `    \\coordinate (ag${id}t) at ${pt(g.t)};`
+  ];
+  if (vlen(vsub(g.u, g.a)) > 1e-4) lines.push(`    \\draw[thin, black!65] (ag${id}a) -- ($(ag${id}u)!-3pt!(ag${id}a)$);`);
+  if (vlen(vsub(g.v, g.b)) > 1e-4) lines.push(`    \\draw[thin, black!65] (ag${id}b) -- ($(ag${id}v)!-3pt!(ag${id}b)$);`);
+  const d = Math.min(18, Math.max(4, 0.35 / Math.max(g.R, 0.25) * 180 / Math.PI));
+  if (useZ) {
+    const x = vadd(g.o, g.e1), y = vadd(g.o, g.e2);
+    lines.push(`    \\begin{scope}[plane origin={${angBrace(g.o, true)}}, plane x={${angBrace(x, true)}}, plane y={${angBrace(y, true)}}, canvas is plane]`);
+    if (arrow === 'out') {
+      lines.push(`      \\draw[->, thin, black, ${tip}] ({${angNum(-d)}}:{${angNum(g.R)}}) ${angArcOp(-d, 0, g.R)};`);
+      lines.push(`      \\draw[thin, black] ({0}:{${angNum(g.R)}}) ${angArcOp(0, deg, g.R)};`);
+      lines.push(`      \\draw[->, thin, black, ${tip}] ({${angNum(deg + d)}}:{${angNum(g.R)}}) ${angArcOp(deg + d, deg, g.R)};`);
+    } else lines.push(`      \\draw[<->, thin, black, ${tip}] ({0}:{${angNum(g.R)}}) ${angArcOp(0, deg, g.R)};`);
+    lines.push('    \\end{scope}');
+  } else {
+    const pg = angPage(g);
+    if (arrow === 'out') {
+      lines.push(`    \\draw[->, thin, black, ${tip}] ${angBrace(angOnArc(g, -d), false)} ${angArcOp(pg.a0 - pg.sign * d, pg.a0, g.R)};`);
+      lines.push(`    \\draw[thin, black] (ag${id}u) ${angArcOp(pg.a0, pg.a1, g.R)};`);
+      lines.push(`    \\draw[->, thin, black, ${tip}] ${angBrace(angOnArc(g, deg + d), false)} ${angArcOp(pg.a1 + pg.sign * d, pg.a1, g.R)};`);
+    } else lines.push(`    \\draw[<->, thin, black, ${tip}] (ag${id}u) ${angArcOp(pg.a0, pg.a1, g.R)};`);
+  }
+  lines.push(`    \\node[fill=white, inner sep=1.5pt, font=\\small, transform shape=false, text=black] at (ag${id}t) {${label}};`);
+  lines.push('  \\end{scope}');
+  return lines.join('\n');
 }
 function tickList(from, to) {
   let a = Math.round(Number(from)), b = Math.round(Number(to));
@@ -443,6 +706,22 @@ function tickList(from, to) {
   const xs = [];
   for (let i = a; i <= b && xs.length < 40; i++) if (i !== 0) xs.push(i);
   return xs.length ? xs.join(',') : '1';
+}
+function planeAxesCode(v) {
+  const x0 = radNum(numOr(v.x0, -4)), x1 = radNum(numOr(v.x1, 5));
+  const y0 = radNum(numOr(v.y0, -3)), y1 = radNum(numOr(v.y1, 5));
+  const tx0 = numOr(v.tx0, -3), tx1 = numOr(v.tx1, 4);
+  const ty0 = numOr(v.ty0, -2), ty1 = numOr(v.ty1, 4);
+  return [
+    '\\begin{scope} % planeaxes',
+    `    \\draw[->, thick] (${x0},0) -- (${x1},0) node[right] {$x$};`,
+    `    \\draw[->, thick] (0,${y0}) -- (0,${y1}) node[above] {$y$};`,
+    `    \\foreach \\x in {${tickList(tx0, tx1)}}`,
+    '      \\draw (\\x, 0.05) -- (\\x, -0.05) node[below, font=\\small] {\\x};',
+    `    \\foreach \\y in {${tickList(ty0, ty1)}}`,
+    '      \\draw (0.05, \\y) -- (-0.05, \\y) node[left, font=\\small] {\\y};',
+    '  \\end{scope}'
+  ].join('\n');
 }
 const PLACE = {
   text: { name: '文字', btn: 'T 文字', n: 1, field: '文字', def: '标注', build: (p, a, rot) => `\\node[${withRot('font=\\small', rot)}] at ${P(p[0])} {${a}};` },
@@ -478,18 +757,22 @@ const PLACE = {
 Object.keys(PLACE).forEach(k => { if (!PLACE[k].panel) PLACE[k].panel = 'circuit'; });
 Object.assign(PLACE, {
   btext: { panel: 'block', name: '文字', btn: 'T 文字', n: 1, field: '文字', def: '说明', build: (p, a, rot) => `\\node[${withRot('font=\\small', rot)}] at ${P(p[0])} {${a}};` },
-  bbox: { panel: 'block', name: '方框', btn: '方框', n: 1, field: '文字', def: '模块', build: (p, a, rot) => `\\node[${withRot('draw, minimum width=1.8cm, minimum height=0.8cm', rot)}] at ${P(p[0])} {${a}};` },
+  bbox: { panel: 'block', name: '方框', btn: '方框', n: 1, field: '文字', def: '模块', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, minimum width=1.8cm, minimum height=0.8cm', p, a, rot, v.id) },
   barrow: { panel: 'block', name: '箭头', btn: '箭头', n: 2, build: p => `\\draw[->] ${P(p[0])} -- ${P(p[1])};` },
-  bround: { panel: 'block', name: '圆角', btn: '圆角', n: 1, field: '文字', def: '处理', build: (p, a, rot) => `\\node[${withRot('draw, rounded corners, minimum width=1.8cm, minimum height=0.8cm', rot)}] at ${P(p[0])} {${a}};` },
-  bdiamond: { panel: 'block', name: '判断', btn: '判断', n: 1, field: '文字', def: '条件', build: (p, a, rot) => `\\node[${withRot('draw, diamond, aspect=1.8, inner sep=1pt', rot)}] at ${P(p[0])} {${a}};` },
-  bellipse: { panel: 'block', name: '椭圆', btn: '椭圆', n: 1, field: '文字', def: '起止', build: (p, a, rot) => `\\node[${withRot('draw, ellipse', rot)}] at ${P(p[0])} {${a}};` },
+  bpoly: { panel: 'block', poly: true, name: '折线箭头', btn: '折线箭头', n: 2, rot: false, build: (p) => polyArrowCode(p) },
+  bround: { panel: 'block', name: '圆角', btn: '圆角', n: 1, field: '文字', def: '处理', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, rounded corners, minimum width=1.8cm, minimum height=0.8cm', p, a, rot, v.id) },
+  bdiamond: { panel: 'block', name: '判断', btn: '判断', n: 1, field: '文字', def: '条件', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, diamond, aspect=1.8, inner sep=1pt', p, a, rot, v.id) },
+  bellipse: { panel: 'block', name: '椭圆', btn: '椭圆', n: 1, field: '文字', def: '起止', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, ellipse', p, a, rot, v.id) },
   pfn: { panel: 'plot', name: '函数', btn: '函数', n: 0, inputs: [{ id: 'expr', label: '式', def: 'x', wide: true }, { id: 'a', label: '从', def: '0' }, { id: 'b', label: '到', def: '6' }], build: (p, a, rot, v) => `\\addplot[blue, thick, domain=${v.a}:${v.b}, samples=80] {${v.expr}};` },
   pmarks: { panel: 'plot', name: '散点', btn: '散点', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,1) (1,2) (2,1.5) (3,2.4)', wide: true }], build: (p, a, rot, v) => `\\addplot[only marks, mark=*] coordinates {${v.pts}};` },
   plabel: { panel: 'plot', name: '标注', btn: '标注', n: 0, inputs: [{ id: 't', label: '文字', def: '标注', wide: true }, { id: 'x', label: 'X', def: '2' }, { id: 'y', label: 'Y', def: '2' }], build: (p, a, rot, v) => `\\node[font=\\small, anchor=south west] at (axis cs:${v.x},${v.y}) {${v.t}};` },
   pbar: { panel: 'plot', name: '柱状', btn: '柱状', n: 0, inputs: [{ id: 'pts', label: '点', def: '(1,2) (2,3) (3,1.4)', wide: true }], build: (p, a, rot, v) => `\\addplot[ybar, bar width=8pt, fill=blue!35] coordinates {${v.pts}};` },
   pstep: { panel: 'plot', name: '阶梯', btn: '阶梯', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,0) (1,1) (2,1) (3,2)', wide: true }], build: (p, a, rot, v) => `\\addplot[const plot, thick] coordinates {${v.pts}};` },
   psmooth: { panel: 'plot', name: '平滑', btn: '平滑', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,0) (1,1.2) (2,0.4) (3,1.6)', wide: true }], build: (p, a, rot, v) => `\\addplot[smooth, thick] coordinates {${v.pts}};` },
-  parea: { panel: 'plot', name: '面积', btn: '面积', n: 0, inputs: [{ id: 'expr', label: '式', def: 'x', wide: true }, { id: 'a', label: '从', def: '0' }, { id: 'b', label: '到', def: '4' }], build: (p, a, rot, v) => `\\addplot[blue!30, fill, domain=${v.a}:${v.b}, samples=40] {${v.expr}} \\closedcycle;` },
+  parea: { panel: 'plot', name: '面积', btn: '面积', n: 0, inputs: [{ id: 'expr', label: '式', def: 'x', wide: true }, { id: 'a', label: '从', def: '0' }, { id: 'b', label: '到', def: '4' }, { id: 'op', label: '不透明度', def: '0.35' }], build: (p, a, rot, v) => {
+    const op = Math.max(0.05, Math.min(1, parseFloat(v.op) || 0.35));
+    return `\\addplot[blue!50, fill, fill opacity=${radNum(op)}, draw=none, domain=${v.a}:${v.b}, samples=40] {${v.expr}} \\closedcycle;`;
+  } },
   pvline: { panel: 'plot', name: '竖线', btn: '竖线', n: 0, inputs: [{ id: 'x', label: 'X', def: '3' }], build: (p, a, rot, v) => `\\draw[dashed] (axis cs:${v.x},\\pgfkeysvalueof{/pgfplots/ymin}) -- (axis cs:${v.x},\\pgfkeysvalueof{/pgfplots/ymax});` },
   pline: { panel: 'plot', name: '折线', btn: '折线', n: 0, inputs: [{ id: 'pts', label: '点', def: '(0,0) (1,1) (2,0.4) (3,1.2)', wide: true }], build: (p, a, rot, v) => `\\addplot[thick] coordinates {${v.pts}};` },
   gline: { panel: 'any', hideOn: ['circuit'], name: '直线', btn: '直线', n: 2, build: p => `\\draw ${P(p[0])} -- ${P(p[1])};` },
@@ -499,49 +782,74 @@ Object.assign(PLACE, {
   gdash: { panel: 'any', name: '虚线', btn: '虚线', n: 2, build: p => `\\draw[dashed] ${P(p[0])} -- ${P(p[1])};` },
   gthick: { panel: 'any', name: '粗线', btn: '粗线', n: 2, build: p => `\\draw[thick] ${P(p[0])} -- ${P(p[1])};` },
   gbend: { panel: 'any', name: '弯曲', btn: '弯曲', n: 2, build: p => `\\draw ${P(p[0])} to[bend left=25] ${P(p[1])};` },
-  grect: { panel: 'any', name: '矩形', btn: '矩形', n: 2, build: p => `\\draw ${P(p[0])} rectangle ${P(p[1])};` },
-  gfill: { panel: 'any', name: '填充', btn: '填充', n: 2, build: p => `\\fill[blue!20] ${P(p[0])} rectangle ${P(p[1])};` },
+  grect: { panel: 'any', rect: true, name: '矩形', btn: '矩形', n: 2, build: p => `\\draw ${P(p[0])} rectangle ${P(p[1])};` },
+  gfill: { panel: 'any', rect: true, name: '填充', btn: '填充', n: 2, build: p => `\\fill[blue!20, fill opacity=0.25] ${P(p[0])} rectangle ${P(p[1])};` },
   ggrid: { panel: 'any', name: '网格', btn: '网格', n: 2, build: p => `\\draw[step=0.5cm, gray!55] ${P(p[0])} grid ${P(p[1])};` },
   gbrace: { panel: 'any', name: '花括号', btn: '花括号', n: 2, build: p => `\\draw[decorate,decoration={brace,amplitude=5pt}] ${P(p[0])} -- ${P(p[1])};` },
-  gcirc: { panel: 'any', name: '圆', btn: '圆', n: 1, rot: false, inputs: [{ id: 'r', label: '半径', def: '0.4' }], build: (p, a, rot, v) => `\\draw ${P(p[0])} circle (${v.r});` },
+  gcirc: { panel: 'any', circ: true, name: '圆', btn: '圆', n: 1, rot: false, inputs: [{ id: 'r', label: '半径', def: '' }], build: (p, a, rot, v) => `\\draw ${P(p[0])} circle (${v.r});` },
   gfillc: { panel: 'any', name: '实心圆', btn: '实心圆', n: 1, rot: false, inputs: [{ id: 'r', label: '半径', def: '0.15' }], build: (p, a, rot, v) => `\\fill ${P(p[0])} circle (${v.r});` },
-  gell: { panel: 'any', name: '椭圆', btn: '椭圆', n: 1, rot: false, inputs: [{ id: 'x', label: '横', def: '0.6' }, { id: 'y', label: '纵', def: '0.35' }], build: (p, a, rot, v) => `\\draw ${P(p[0])} ellipse (${v.x} and ${v.y});` },
-  garc: { panel: 'any', name: '弧', btn: '弧', n: 1, rot: false, inputs: [{ id: 'a', label: '起', def: '0' }, { id: 'b', label: '终', def: '90' }, { id: 'r', label: '半径', def: '0.6' }], build: (p, a, rot, v) => `\\draw ${P(p[0])} arc (${v.a}:${v.b}:${v.r});` },
+  gell: { panel: 'any', ell: true, optOn: ['block'], name: '椭圆线', btn: '椭圆线', n: 3, rot: false, build: (p, a, rot, v) => ellDimCode(p[0], v.rx, v.ry, v.ang) },
+  garc: { panel: 'any', arc: true, name: '弧', btn: '弧', n: 3, rot: false, build: (p, a, rot, v) => arcDimCode(p[0], v.a0, v.a1, v.r) },
   gcoord: { panel: 'any', name: '坐标', btn: '坐标', n: 1, rot: false, field: '名称', def: 'p', build: (p, a) => `\\coordinate (${a || 'p'}) at ${P(p[0])};` },
-  bcyl: { panel: 'block', name: '圆柱', btn: '圆柱', n: 1, field: '文字', def: '', build: (p, a, rot) => `\\node[${withRot('draw, cylinder, shape border rotate=90, minimum height=1.1cm, minimum width=0.7cm', rot)}] at ${P(p[0])} {${a}};` },
-  btrap: { panel: 'block', name: '梯形', btn: '梯形', n: 1, field: '文字', def: '', build: (p, a, rot) => `\\node[${withRot('draw, trapezium, trapezium stretches=true, minimum width=1.6cm, minimum height=0.8cm', rot)}] at ${P(p[0])} {${a}};` },
+  bcyl: { panel: 'block', name: '圆柱', btn: '圆柱', n: 1, field: '文字', def: '', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, cylinder, shape border rotate=90, minimum height=1.1cm, minimum width=0.7cm', p, a, rot, v.id) },
+  btrap: { panel: 'block', name: '梯形', btn: '梯形', n: 1, field: '文字', def: '', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, trapezium, trapezium stretches=true, minimum width=1.6cm, minimum height=0.8cm', p, a, rot, v.id) },
   meter: { panel: 'circuit', name: '电流表', btn: '电流表', n: 2, field: '标注', def: 'A', build: (p, a) => `\\draw ${P(p[0])} to[rmeter, t=${a || 'A'}] ${P(p[1])};` },
   open: { panel: 'circuit', name: '开路', btn: '开路', n: 2, build: p => `\\draw ${P(p[0])} to[open] ${P(p[1])};` },
   xpt: { panel: 'plane', name: '点', btn: '点', n: 1, rot: false, field: '文字', def: '$A$', build: planePoint },
   xseg: { panel: 'plane', name: '线段', btn: '线段', n: 2, field: '标注', def: '线段', build: (p, a) => `\\draw[blue, thick] ${P(p[0])} -- ${P(p[1])}${a ? ` node[midway, above left] {${a}}` : ''};` },
   xfn: { panel: 'plane', name: '函数', btn: '函数', n: 0, inputs: [{ id: 'expr', label: '式', def: '0.5*\\x*\\x - 1', wide: true }, { id: 'a', label: '从', def: '-2.8' }, { id: 'b', label: '到', def: '2.8' }], build: (p, a, rot, v) => `\\draw[domain=${v.a}:${v.b}, smooth, variable=\\x, red, thick] plot ({\\x}, {${v.expr}});` },
-  xaxes: { panel: 'plane', name: '坐标轴', btn: '坐标轴', n: 0, inputs: [{ id: 'x0', label: 'x起', def: '-4' }, { id: 'x1', label: 'x止', def: '5' }, { id: 'y0', label: 'y起', def: '-3' }, { id: 'y1', label: 'y止', def: '5' }], build: (p, a, rot, v) => `\\draw[->, thick] (${v.x0},0) -- (${v.x1},0) node[right] {$x$};\n  \\draw[->, thick] (0,${v.y0}) -- (0,${v.y1}) node[above] {$y$};` },
-  xticks: { panel: 'plane', name: '刻度', btn: '刻度', n: 0, inputs: [{ id: 'x0', label: 'x起', def: '-3' }, { id: 'x1', label: 'x止', def: '4' }, { id: 'y0', label: 'y起', def: '-2' }, { id: 'y1', label: 'y止', def: '4' }], build: (p, a, rot, v) => `\\foreach \\x in {${tickList(v.x0, v.x1)}}\n    \\draw (\\x, 0.05) -- (\\x, -0.05) node[below, font=\\small] {\\x};\n  \\foreach \\y in {${tickList(v.y0, v.y1)}}\n    \\draw (0.05, \\y) -- (-0.05, \\y) node[left, font=\\small] {\\y};` },
-  rot2: { panel: 'any', name: '二维回转箭头', btn: '二维回转', n: 1, rot: false, field: '标注', def: '$\\omega$', inputs: [{ id: 'a', label: '起', def: '40' }, { id: 'b', label: '终', def: '320' }, { id: 'r', label: '半径', def: '0.7' }], build: (p, a, rot, v) => turnArrow(p[0], a, numOr(v.a, 40), numOr(v.b, 320), numOr(v.r, 0.7)) },
-  rot3: { panel: 'any', name: '三维回转箭头', btn: '三维回转', n: 2, field: '标注', def: '$\\omega$', inputs: [{ id: 'a', label: '起', def: '40' }, { id: 'b', label: '终', def: '320' }, { id: 'rx', label: '垂直', def: '0.8' }, { id: 'ry', label: '轴向', def: '0.32' }], build: (p, a, rot, v) => turnAxis(p[0], p[1], a, numOr(v.a, 40), numOr(v.b, 320), numOr(v.rx, 0.8), numOr(v.ry, 0.32)) },
-  ax2: { panel: 'any', name: '二维坐标系', btn: '二维坐标', n: 1, inputs: [{ id: 'lx', label: 'x长', def: '1.6' }, { id: 'ly', label: 'y长', def: '1.6' }], build: (p, a, rot, v) => relAxes(p[0], rot, [`\\draw[->,thick] __at__ --++ (${numOr(v.lx, 1.6)},0) node[anchor=west,xshift=1pt] {$x$};`, `\\draw[->,thick] __at__ --++ (0,${numOr(v.ly, 1.6)}) node[anchor=south,yshift=1pt] {$y$};`]) },
-  ax3: { panel: 'any', name: '三维坐标系', btn: '三维坐标', n: 1, inputs: [{ id: 'lx', label: 'x长', def: '1.2' }, { id: 'ly', label: 'y长', def: '1.6' }, { id: 'lz', label: 'z长', def: '1.6' }], build: (p, a, rot, v) => relAxes(p[0], rot, [`\\draw[->,thick] __at__ --++ (${numOr(v.lx, 1.2)},0,0) node[anchor=north,yshift=-3pt] {$x$};`, `\\draw[->,thick] __at__ --++ (0,${numOr(v.ly, 1.6)},0) node[anchor=south,yshift=1pt] {$y$};`, `\\draw[->,thick] __at__ --++ (0,0,${numOr(v.lz, 1.6)}) node[anchor=north,yshift=-4pt] {$z$};`]) },
+  xaxes: { panel: 'plane', name: '坐标轴', btn: '坐标轴', n: 0, inputs: [
+    { id: 'x0', label: '轴x起', def: '-4' }, { id: 'x1', label: '轴x止', def: '5' },
+    { id: 'y0', label: '轴y起', def: '-3' }, { id: 'y1', label: '轴y止', def: '5' },
+    { id: 'tx0', label: '刻x起', def: '-3' }, { id: 'tx1', label: '刻x止', def: '4' },
+    { id: 'ty0', label: '刻y起', def: '-2' }, { id: 'ty1', label: '刻y止', def: '4' }
+  ], build: (p, a, rot, v) => planeAxesCode(v) },
+  xticks: { panel: 'plane', name: '刻度', btn: '刻度', n: 0, hideOn: ['circuit', 'block', 'plot', 'plane', 'space'], inputs: [
+    { id: 'x0', label: '轴x起', def: '-4' }, { id: 'x1', label: '轴x止', def: '5' },
+    { id: 'y0', label: '轴y起', def: '-3' }, { id: 'y1', label: '轴y止', def: '5' },
+    { id: 'tx0', label: '刻x起', def: '-3' }, { id: 'tx1', label: '刻x止', def: '4' },
+    { id: 'ty0', label: '刻y起', def: '-2' }, { id: 'ty1', label: '刻y止', def: '4' }
+  ], build: (p, a, rot, v) => planeAxesCode({ x0: v.x0, x1: v.x1, y0: v.y0, y1: v.y1, tx0: v.tx0 || v.x0, tx1: v.tx1 || v.x1, ty0: v.ty0 || v.y0, ty1: v.ty1 || v.y1 }) },
+  rot2: { panel: 'any', name: '二维回转箭头', btn: '二维回转', n: 1, rot: false, field: '标注', def: '$\\omega$', inputs: [{ id: 'a', label: '起', def: '40' }, { id: 'b', label: '终', def: '320' }, { id: 'r', label: '半径', def: '0.5' }], build: (p, a, rot, v) => turnArrow(p[0], a, numOr(v.a, 40), numOr(v.b, 320), numOr(v.r, 0.5)) },
+  rot3: { panel: 'any', name: '三维回转箭头', btn: '三维回转', n: 2, field: '标注', def: '$\\omega$', inputs: [{ id: 'a', label: '起', def: '40' }, { id: 'b', label: '终', def: '320' }, { id: 'rx', label: '垂直', def: '0.55' }, { id: 'ry', label: '轴向', def: '0.22' }], build: (p, a, rot, v) => turnAxis(p[0], p[1], a, numOr(v.a, 40), numOr(v.b, 320), numOr(v.rx, 0.55), numOr(v.ry, 0.22)) },
+  ax2: { panel: 'any', name: '二维坐标系', btn: '二维坐标', n: 1, inputs: [{ id: 'lx', label: 'x长', def: '1.35' }, { id: 'ly', label: 'y长', def: '1.35' }], build: (p, a, rot, v) => relAxes(p[0], rot, [`\\draw[->,thick] __at__ --++ (${numOr(v.lx, 1.35)},0) node[anchor=west,xshift=-2pt] {$x$};`, `\\draw[->,thick] __at__ --++ (0,${numOr(v.ly, 1.35)}) node[anchor=south,yshift=-2pt] {$y$};`], 'ax2') },
+  ax3: { panel: 'any', name: '三维坐标系', btn: '三维坐标', n: 1, inputs: [{ id: 'lx', label: 'x长', def: '1.2' }, { id: 'ly', label: 'y长', def: '1.25' }, { id: 'lz', label: 'z长', def: '1.35' }], build: (p, a, rot, v) => relAxes(p[0], rot, [`\\draw[->,thick] __at__ --++ (${numOr(v.lx, 1.2)},0,0) node[anchor=north,yshift=0pt] {$x$};`, `\\draw[->,thick] __at__ --++ (0,${numOr(v.ly, 1.25)},0) node[anchor=south,yshift=-2pt] {$y$};`, `\\draw[->,thick] __at__ --++ (0,0,${numOr(v.lz, 1.35)}) node[anchor=north,xshift=1pt,yshift=1pt] {$z$};`], 'ax3') },
   sline: { panel: 'space', name: '三维线段', btn: '三维线段', n: 0, inputs: [{ id: 'pts', label: '坐标', def: '(0,0,0) -- (1,1,1)', wide: 'path' }], build: (p, a, rot, v) => `\\draw[thick] ${spacePath(v.pts)};` },
   sarrow: { panel: 'space', name: '三维箭头', btn: '三维箭头', n: 0, inputs: [{ id: 'pts', label: '坐标', def: '(0,0,0) -- (1,1,1)', wide: 'path' }], build: (p, a, rot, v) => `\\draw[->,thick] ${spacePath(v.pts)};` },
   scirc: { panel: 'space', name: '三维圆', btn: '三维圆', n: 0, inputs: [{ id: 'c', label: '圆心', def: '(0,0,0)', wide: true }, { id: 'r', label: '半径', def: '0.5' }, { id: 'plane', label: '平面', def: 'xy', wide: 'path' }, { id: 'tip', label: '线', def: '' }], build: (p, a, rot, v) => arc3(v, true) },
   sarc: { panel: 'space', name: '三维弧', btn: '三维弧', n: 0, inputs: [{ id: 'c', label: '圆心', def: '(0,0,0)', wide: true }, { id: 'r', label: '半径', def: '0.5' }, { id: 'a', label: '起', def: '20' }, { id: 'b', label: '终', def: '200' }, { id: 'plane', label: '平面', def: 'xy', wide: 'path' }, { id: 'tip', label: '线', def: '->' }], build: (p, a, rot, v) => arc3(v, false) },
-  dim: { panel: 'any', dim: true, name: '尺寸', btn: '尺寸', n: 3, field: '文字', def: '', build: (p, a, rot, v) => dimCode(p, a, v) }
+  dim: { panel: 'any', dim: true, name: '尺寸', btn: '尺寸', n: 3, field: '文字', def: '', build: (p, a, rot, v) => dimCode(p, a, v) },
+  rdim: { panel: 'any', rdim: true, name: '半径', btn: '半径', n: 1, field: '文字', def: '', build: (p, a, rot, v) => radDimCode(v.curve, p[0], a, v.id) },
+  ddim: { panel: 'any', ddim: true, name: '直径', btn: '直径', n: 1, field: '文字', def: '', build: (p, a, rot, v) => diaDimCode(v.curve, p[0], a, v.id) },
+  adim: { panel: 'any', adim: true, name: '角度', btn: '角度', n: 1, field: '文字', def: '', build: (p, a, rot, v) => angDimCode(v.geom, a, v.id, v.arrow) }
 });
 const FIXED = ['rot2', 'rot3', 'ax2', 'ax3'];
 const SHOWN_COMMON = ['gline', 'gtext', 'garrow', 'grect', 'gcirc', 'gfill', 'gell', 'garc', 'gdash', 'ggrid'];
+const BLOCK_OPT_OFF = ['dim', 'rdim', 'ddim', 'adim', 'rot2', 'rot3', 'ax2', 'ax3', 'gell', 'gfill', 'bcyl', 'btrap'];
 const PANELS = {
-  circuit: { title: '电路', core: ['text', 'wire', 'R', 'C', 'L', 'V', 'I', 'sw', 'dim'], lib: ['D', 'nmos', 'npn', 'xfmr', 'opamp', 'gnd', 'dot', 'box', 'spring', 'damper', 'mass', 'wall', 'force'] },
-  block: { title: '框图', core: ['btext', 'bbox', 'barrow', 'dim'], lib: ['bround', 'bdiamond', 'bellipse'] },
-  plot: { title: '曲线', core: ['pfn', 'pmarks', 'plabel', 'dim'], lib: ['pbar', 'pstep', 'psmooth', 'parea', 'pvline'] },
-  plane: { title: '二维', core: ['xpt', 'xseg', 'xfn', 'dim'], lib: ['xaxes', 'xticks'] },
-  space: { title: '三维', core: ['sline', 'sarrow', 'scirc', 'sarc', 'dim'], lib: [] }
+  circuit: { title: '电路', core: ['text', 'wire', 'R', 'C', 'L', 'V', 'I', 'sw', 'dim', 'rdim', 'ddim', 'adim'], lib: ['D', 'nmos', 'npn', 'xfmr', 'opamp', 'gnd', 'dot', 'box', 'spring', 'damper', 'mass', 'wall', 'force'] },
+  block: { title: '框图', core: ['btext', 'bbox', 'bround', 'bellipse', 'bcyl', 'btrap', 'bdiamond', 'barrow', 'bpoly', 'gfill'], lib: [] },
+  plot: { title: '曲线', core: ['pfn', 'pmarks', 'plabel', 'dim', 'rdim', 'ddim', 'adim'], lib: ['pbar', 'pstep', 'psmooth', 'parea', 'pvline'] },
+  plane: { title: '二维', core: ['xpt', 'xseg', 'xfn', 'dim', 'rdim', 'ddim', 'adim'], lib: ['xaxes'] },
+  space: { title: '三维', core: ['sline', 'sarrow', 'scirc', 'sarc', 'dim', 'rdim', 'ddim', 'adim'], lib: [] }
 };
+function fixedKeys(name) {
+  return name === 'block' ? [] : FIXED.slice();
+}
 function visibleCommon(name) {
-  return SHOWN_COMMON.filter(k => !((PLACE[k].hideOn || []).includes(name)));
+  const core = (PANELS[name] && PANELS[name].core) || [];
+  return SHOWN_COMMON.filter(k => {
+    const p = PLACE[k];
+    if (!p) return false;
+    if ((p.hideOn || []).includes(name)) return false;
+    if ((p.optOn || []).includes(name)) return false;
+    if (core.includes(k)) return false;
+    return true;
+  });
 }
 function inPanel(k, name) {
   const p = PLACE[k];
-  if (!p || FIXED.includes(k) || PANELS[name].core.includes(k) || (p.hideOn || []).includes(name)) return false;
+  if (!p || fixedKeys(name).includes(k) || PANELS[name].core.includes(k) || (p.hideOn || []).includes(name)) return false;
   return p.panel === name || p.panel === 'any';
 }
 function pictureKind(code) {
@@ -551,7 +859,7 @@ function pictureKind(code) {
   if (/\\tdplotsetmaincoords|tdplot_main_coords|\\tdplotsetcoord/.test(s)) return 'space';
   if (/\\begin\s*\{tikzpicture\}/.test(s)) {
     if (/node\s*\[[^\]]*\]\s*\{\s*\$[xy]\$\s*\}/.test(s) || /plot\s*\(\s*\{\s*\\x\s*\}/.test(s) || /plot\s*\(\s*\\x\b/.test(s) || /\\foreach\s+\\[xy]\b/.test(s)) return 'plane';
-    return 'block';
+    if (/\\node\s*\[[^\]]*\bdraw\b/.test(s)) return 'block';
   }
   return '';
 }
