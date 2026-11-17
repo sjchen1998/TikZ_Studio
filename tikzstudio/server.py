@@ -89,6 +89,7 @@ PREAMBLE = (
     "\\usepackage{tikz-3dplot}\n"
     "\\usepackage[outline]{contour}\n"
     "\\usepackage[siunitx]{circuitikz}\n"
+    "\\usepackage{stanli}\n"
     "\\usepackage{pgfplots}\n"
     "\\pgfplotsset{compat=1.18}\n"
     "\\usepgfplotslibrary{fillbetween}\n"
@@ -725,6 +726,14 @@ def prep(raw, probes=None):
     body = text.strip()
     return body if is_doc else PREAMBLE + body + "\n\\end{document}\n"
 
+def _tex_env():
+    """Prefer project-bundled sty files (texmf/tex/latex/local) before the system tree."""
+    env = os.environ.copy()
+    local = os.path.join(_ROOT, "texmf", "tex", "latex", "local").replace("\\", "/")
+    sep = ";" if os.name == "nt" else ":"
+    env["TEXINPUTS"] = local + "//" + sep + env.get("TEXINPUTS", "")
+    return env
+
 def build_pdf(tex_str, compiler):
     d = os.path.join(_ROOT, ".tikz_cache"); os.makedirs(d, exist_ok=True)
     tf, pf = os.path.join(d, "m.tex"), os.path.join(d, "m.pdf")
@@ -734,7 +743,7 @@ def build_pdf(tex_str, compiler):
     with open(tf, "w", encoding="utf-8") as f: f.write(tex_str)
     comp = compiler if compiler in ("xelatex", "pdflatex") else "xelatex"
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    p = subprocess.run([comp, "-interaction=nonstopmode", "-halt-on-error", "m.tex"], cwd=d, capture_output=True, text=True, creationflags=flags)
+    p = subprocess.run([comp, "-interaction=nonstopmode", "-halt-on-error", "m.tex"], cwd=d, env=_tex_env(), capture_output=True, text=True, creationflags=flags)
     if not os.path.exists(pf):
         errs = [x for x in p.stdout.splitlines() if x.startswith('!') or 'Error' in x]
         return None, ("\n".join(errs[-10:]) or p.stdout[-800:])

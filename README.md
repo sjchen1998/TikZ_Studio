@@ -20,7 +20,7 @@
 | 平面图 | 二维 | 点、线段、函数，以及尺寸类标注 |
 | 含 tikz-3dplot 的图 | 三维 | 线段、箭头、圆、圆弧，以及尺寸类标注 |
 
-内置模板有 RC 滤波、Buck、运放、框图、曲线、二维坐标、CMS 三维、高斯分布和频率响应。
+内置模板有 RC 滤波、Buck、运放、框图、2D/3D 结构分析、曲线、二维坐标、CMS 三维、高斯分布和频率响应。2D/3D 结构分析宏包不在标准 TeX Live 中，已放在工程 `texmf/tex/latex/local/`（编译时通过 `TEXINPUTS` 自动找到）。
 
 框图里的方框、圆角、椭圆、圆柱、梯形、判断要填**代号**；代号重复时会提示「代号已存在」。带代号的节点编译后会显示吸附点，画箭头或折线箭头时可吸附到端口。折线箭头支持多转折点，接近水平或竖直时会正交吸附；右键或「确认」结束。尺寸、半径、直径、角度、回转与坐标轴等可从「＋」按需加入。
 
@@ -82,7 +82,7 @@ Open a template, or keep adding to the current figure. The panel follows the kin
 | Plane figure | 2D | Point, segment, function, plus dimension tools |
 | Picture using tikz-3dplot | 3D | Segment, arrow, circle, arc, plus dimension tools |
 
-Built-in templates: RC filter, Buck converter, op-amp, block diagram, plot, 2D axes, CMS in 3D, Gaussian, and frequency response.
+Built-in templates: RC filter, Buck converter, op-amp, block diagram, 2D/3D SA, plot, 2D axes, CMS in 3D, Gaussian, and frequency response. 2D/3D SA packages are not in stock TeX Live; they ship in `texmf/tex/latex/local/` and are found via `TEXINPUTS` at compile time.
 
 Block shapes that carry text need an **ID**. A duplicate ID shows “ID already exists”. Named nodes expose snap ports after compile, so arrows and polyline arrows can latch onto them. A polyline arrow accepts multiple corners, snaps near horizontal or vertical while placing or dragging, and finishes with right-click or Confirm. Dimension tools, turns, and axis helpers can be added from **＋** when needed.
 

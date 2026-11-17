@@ -3214,7 +3214,7 @@ window.onload = () => {
     if (!key) return;
     endPlace();
     $('code').value = TPLS[key];
-    const forced = { rc: 'circuit', buck: 'circuit', opamp: 'circuit', block: 'block', plot: 'plot', plane: 'plane', cms: 'space', gauss: 'plot' }[key];
+    const forced = { rc: 'circuit', buck: 'circuit', opamp: 'circuit', block: 'block', struct2d: 'plane', struct3d: 'space', plot: 'plot', plane: 'plane', cms: 'space', gauss: 'plot' }[key];
     if (forced && forced !== panel) { $('libbox').style.display = 'none'; panel = forced; renderBar(); }
     syncPanel($('code').value);
     e.target.value = '';

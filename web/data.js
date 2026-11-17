@@ -40,6 +40,97 @@ const TPLS = {
   buck: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) node[ground]{} to[V, l=$V_{in}$] (0,3) to[nos, l=$Q_1$] (2.5,3) to[L, l=$L_1$] (5.5,3) -- (7,3) node[right]{$V_{out}$};\n  \\draw (2.5,0) node[ground]{} to[D*, l=$D_1$] (2.5,3);\n  \\draw (5.5,3) to[C, l=$C_o$] (5.5,0) node[ground]{};\n\\end{circuitikz}",
   opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.35,2.49) -- (1.35,3.5) to[R, l=$R_f$] (4.2,3.5) -| (op.out);\n  \\draw (1.35,3.5) to[R, l=$R_1$] (-0.55,3.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n  \\node[circ] at (1.35,3.5) {};\n  \\node[circ] at (4.19,3.5) {};\n  \\node[circ] at (op.east) {};\n\\end{circuitikz}",
   block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {Sensor};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
+  struct2d: String.raw`\begin{tikzpicture}
+  \sa2scaling{.65};
+  \sa2point{a}{0}{1};
+  \sa2point{b}{3}{1};
+  \sa2point{c}{11}{3};
+  \sa2point{d}{19}{1};
+  \sa2point{e}{22}{1};
+  \sa2point{f}{3}{0};
+  \sa2point{g}{11}{-2};
+  \sa2point{h}{19}{0};
+  \sa2beam{1}{a}{b}[0][1];
+  \sa2beam{1}{b}{c}[1][1];
+  \sa2beam{1}{c}{d}[1][1];
+  \sa2beam{1}{d}{e}[1][0];
+  \sa2beam{1}{f}{b};
+  \sa2beam{1}{d}{h};
+  \sa2beam{2}{f}{g};
+  \sa2beam{2}{g}{h};
+  \sa2beam{2}{g}{c};
+  \sa2support{1}{f};
+  \sa2support{2}{h};
+  \sa2hinge{1}{f};
+  \sa2hinge{1}{h};
+  \sa2hinge{1}{g};
+  \sa2hinge{2}{c}[b][d];
+  \sa2lineload{2}{a}{b}[1][1][.5];
+  \sa2lineload{2}{b}{c};
+  \sa2dimensioning{1}{a}{b}{-2.5}[$3,0$];
+  \sa2dimensioning{1}{b}{c}{-2.5}[$8,0$];
+  \sa2dimensioning{1}{c}{d}{-2.5}[$8,0$];
+  \sa2dimensioning{1}{d}{e}{-2.5}[$3,0$];
+  \sa2dimensioning{2}{f}{a}{-1}[$1,0$];
+  \sa2dimensioning{2}{g}{f}{-1}[$2,0$];
+  \sa2dimensioning{2}{a}{c}{-1}[$2,0$];
+  \sa2influenceline{a}{e}{3}[.3];
+  \sa2notation{1}{a}{$1$}[left];
+  \sa2notation{1}{b}{$2$}[below right=2mm];
+  \sa2notation{1}{c}{$3$};
+  \sa2notation{1}{d}{$4$}[above];
+  \sa2notation{1}{e}{$5$}[above];
+  \sa2notation{1}{f}{$6$}[left=2mm];
+  \sa2notation{1}{g}{$7$}[below=2mm];
+  \sa2notation{1}{h}{$8$}[right=2mm];
+  \sa2notation{4}{f}{g}[$S$];
+\end{tikzpicture}`,
+  struct3d: String.raw`\sa3setcoords{-25}{10}[1][1.2]
+%\sa3showpoint
+\begin{tikzpicture}[sa3Coords]
+  \sa3setaxis{2}
+  \sa3point{a}{0}{0}{0};
+  \sa3point{b}{3}{0}{0};
+  \sa3point{c}{6}{0}{0};
+  \sa3point{d}{9}{0}{0};
+  \sa3point{e}{12}{0}{0};
+  \sa3point{f}{0}{3}{0};
+  \sa3point{g}{3}{3}{0};
+  \sa3point{h}{6}{3}{0};
+  \sa3point{i}{9}{3}{0};
+  \sa3point{j}{12}{3}{0};
+  \sa3axis{1}{a};
+  \sa3beam{1}{f}{b};
+  \sa3beam{1}{b}{h};
+  \sa3beam{1}{h}{d};
+  \sa3beam{1}{d}{j};
+  \sa3beam{3}{a}{e};
+  \sa3beam{3}{f}{j};
+  \sa3beam{3}{a}{f};
+  \sa3beam{3}{b}{g};
+  \sa3beam{3}{c}{h};
+  \sa3beam{3}{d}{i};
+  \sa3beam{3}{e}{j};
+  \sa3support{1}{b};
+  \sa3support{1}{h}[0][0];
+  \sa3support{1}{d}[0];
+  \sa3hinge{2}{b}[f][h][1];
+  \sa3hinge{2}{h}[b][d][1];
+  \sa3hinge{2}{d}[h][j][1];
+  \sa3lineload{5}{0}{f}{b}[.5][.5][.11];
+  \sa3lineload{5}{0}{b}{h}[.5][.5][.11];
+  \sa3lineload{5}{0}{h}{d}[.5][.5][.11];
+  \sa3lineload{5}{0}{d}{j}[.5][.5][.11];
+  \sa3dimensioning{xy}{f}{g}{4.5}[$3~m$];
+  \sa3dimensioning{xy}{g}{h}{4.5}[$3~m$];
+  \sa3dimensioning{xy}{h}{i}{4.5}[$3~m$];
+  \sa3dimensioning{xy}{i}{j}{4.5}[$3~m$];
+  \sa3dimensioning{yx}{e}{j}{13}[$3~m$];
+  \sa3notation{1}{f}{$q=10~kN/m$}[above left=3mm];
+  \sa3notation{1}{b}{$A$}[below left];
+  \sa3notation{1}{h}{$C$}[right=2mm];
+  \sa3notation{1}{d}{$B$}[below left];
+\end{tikzpicture}`,
   plot: String.raw`\begin{tikzpicture}
     \begin{axis}[
         axis lines=middle,
