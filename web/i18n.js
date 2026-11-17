@@ -43,6 +43,8 @@ const EN = {
   '联动': 'Link',
   '✋ 整体平移': '✋ Move all',
   '吸附': 'Snap',
+  '正交吸附': 'Ortho snap',
+  '折线接近水平/竖直时对齐': 'Snap near-horizontal or near-vertical polyline segments',
   '自由': 'Free',
   '全选': 'All',
   '选中全部可平移、缩放的坐标': 'Select every coordinate that can move or scale',

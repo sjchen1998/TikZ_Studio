@@ -38,7 +38,7 @@ const INIT_CODE = String.raw`\begin{circuitikz}[font=\small, european]
 const TPLS = {
   rc: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) to[V, l=$V_{in}$] (0,3) to[R, l=$R_1$] (3,3) to[C, l=$C_1$] (3,0) -- (0,0);\n  \\node[circ] at (3,3) {};\n  \\draw (3,3) -- (4.5,3) node[right] {$V_{out}$};\n\\end{circuitikz}",
   buck: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) node[ground]{} to[V, l=$V_{in}$] (0,3) to[nos, l=$Q_1$] (2.5,3) to[L, l=$L_1$] (5.5,3) -- (7,3) node[right]{$V_{out}$};\n  \\draw (2.5,0) node[ground]{} to[D*, l=$D_1$] (2.5,3);\n  \\draw (5.5,3) to[C, l=$C_o$] (5.5,0) node[ground]{};\n\\end{circuitikz}",
-  opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.8,2.5) -- (1.8,3.6) to[R, l=$R_f$] (4.2,3.6) -| (op.out);\n  \\draw (1.8,2.5) to[R, l=$R_1$] (1.8,0.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n\\end{circuitikz}",
+  opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.35,2.49) -- (1.35,3.5) to[R, l=$R_f$] (4.2,3.5) -| (op.out);\n  \\draw (1.35,3.5) to[R, l=$R_1$] (-0.55,3.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n  \\node[circ] at (1.35,3.5) {};\n  \\node[circ] at (4.19,3.5) {};\n  \\node[circ] at (op.east) {};\n\\end{circuitikz}",
   block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {Sensor};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
   plot: String.raw`\begin{tikzpicture}
     \begin{axis}[
@@ -759,7 +759,7 @@ Object.assign(PLACE, {
   btext: { panel: 'block', name: '文字', btn: 'T 文字', n: 1, field: '文字', def: '说明', build: (p, a, rot) => `\\node[${withRot('font=\\small', rot)}] at ${P(p[0])} {${a}};` },
   bbox: { panel: 'block', name: '方框', btn: '方框', n: 1, field: '文字', def: '模块', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, minimum width=1.8cm, minimum height=0.8cm', p, a, rot, v.id) },
   barrow: { panel: 'block', name: '箭头', btn: '箭头', n: 2, build: p => `\\draw[->] ${P(p[0])} -- ${P(p[1])};` },
-  bpoly: { panel: 'block', poly: true, name: '折线箭头', btn: '折线箭头', n: 2, rot: false, build: (p) => polyArrowCode(p) },
+  bpoly: { panel: 'any', poly: true, name: '折线箭头', btn: '折线箭头', n: 2, rot: false, build: (p) => polyArrowCode(p) },
   bround: { panel: 'block', name: '圆角', btn: '圆角', n: 1, field: '文字', def: '处理', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, rounded corners, minimum width=1.8cm, minimum height=0.8cm', p, a, rot, v.id) },
   bdiamond: { panel: 'block', name: '判断', btn: '判断', n: 1, field: '文字', def: '条件', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, diamond, aspect=1.8, inner sep=1pt', p, a, rot, v.id) },
   bellipse: { panel: 'block', name: '椭圆', btn: '椭圆', n: 1, field: '文字', def: '起止', idField: true, inputs: [{ id: 'id', label: '代号', def: '' }], build: (p, a, rot, v) => blockNamedNode('draw, ellipse', p, a, rot, v.id) },
@@ -824,7 +824,7 @@ Object.assign(PLACE, {
   adim: { panel: 'any', adim: true, name: '角度', btn: '角度', n: 1, field: '文字', def: '', build: (p, a, rot, v) => angDimCode(v.geom, a, v.id, v.arrow) }
 });
 const FIXED = ['rot2', 'rot3', 'ax2', 'ax3'];
-const SHOWN_COMMON = ['gline', 'gtext', 'garrow', 'grect', 'gcirc', 'gfill', 'gell', 'garc', 'gdash', 'ggrid'];
+const SHOWN_COMMON = ['gline', 'gtext', 'garrow', 'bpoly', 'grect', 'gcirc', 'gfill', 'gell', 'garc', 'gdash', 'ggrid'];
 const BLOCK_OPT_OFF = ['dim', 'rdim', 'ddim', 'adim', 'rot2', 'rot3', 'ax2', 'ax3', 'gell', 'gfill', 'bcyl', 'btrap'];
 const PANELS = {
   circuit: { title: '电路', core: ['text', 'wire', 'R', 'C', 'L', 'V', 'I', 'sw', 'dim', 'rdim', 'ddim', 'adim'], lib: ['D', 'nmos', 'npn', 'xfmr', 'opamp', 'gnd', 'dot', 'box', 'spring', 'damper', 'mass', 'wall', 'force'] },

@@ -78,7 +78,7 @@ function setStatus(kind, extra) {
 
 function insText() { startPlace('text'); }
 function insComp(k) { startPlace(k); }
-const LIB_STORE = 'tikzStudioLib', LIB_VER = 6;
+const LIB_STORE = 'tikzStudioLib', LIB_VER = 7;
 let panel = 'circuit', libs = {};
 function slot() { return libs[panel]; }
 function installCustom(c, which) {
@@ -726,20 +726,20 @@ function findLineAt(idx) {
   if (!segs.length) return null;
   return { idx, segs };
 }
-function polyArrowStmtAt(pos) {
+function drawOrthoStmtAt(pos) {
   const text = $('code').value;
   let st = text.lastIndexOf('\n', Math.max(0, pos - 1));
   st = st < 0 ? 0 : st + 1;
   let ed = text.indexOf(';', pos);
   if (ed < 0) ed = text.length; else ed++;
   const raw = text.slice(st, ed);
-  if (!/\\draw\b/.test(raw) || !/->/.test(raw) || !/--/.test(raw)) return null;
+  if (!/\\draw\b/.test(raw) || !/--/.test(raw)) return null;
   return { st, ed, raw };
 }
-function findPolyArrowAt(idx) {
+function findOrthoPolyAt(idx) {
   const c = pts[idx];
   if (!c || c.s == null || c.wx == null || (c.kind !== 'abs' && c.kind !== 'xyz')) return null;
-  const span = polyArrowStmtAt(c.s);
+  const span = drawOrthoStmtAt(c.s);
   if (!span) return null;
   const segs = straightSegs().filter(s => {
     if (s.i0 !== idx && s.i1 !== idx) return false;
@@ -753,7 +753,13 @@ function findPolyArrowAt(idx) {
   });
   return { span, segs, neighbors, idx };
 }
+function findPolyArrowAt(idx) { return findOrthoPolyAt(idx); }
+function orthoSnapEnabled() {
+  const el = $('ortho-sn');
+  return !el || !!el.checked;
+}
 function orthoSnapPoly(wx, wy, neighbors, degTol) {
+  if (!orthoSnapEnabled()) return { x: wx, y: wy };
   const tol = degTol == null ? 12 : degTol;
   let hx = null, hy = null, hScore = Infinity, vScore = Infinity;
   (neighbors || []).forEach(n => {
@@ -771,7 +777,7 @@ function orthoSnapPoly(wx, wy, neighbors, degTol) {
   return { x: hx != null ? hx : wx, y: hy != null ? hy : wy };
 }
 function snapPolyPlacePoint(x, y, ref) {
-  if (!place || !place.poly || ref) return { x: +Number(x).toFixed(3), y: +Number(y).toFixed(3), ref: ref || '' };
+  if (!place || !place.poly || ref || !orthoSnapEnabled()) return { x: +Number(x).toFixed(3), y: +Number(y).toFixed(3), ref: ref || '' };
   const prev = [...place.pts].reverse().find(Boolean);
   if (!prev) return { x: +Number(x).toFixed(3), y: +Number(y).toFixed(3), ref: '' };
   const sn = orthoSnapPoly(+x, +y, [{ wx: prev[0], wy: prev[1] }]);
@@ -2940,12 +2946,15 @@ function draw() {
       const rectInfo0 = ax2Origin ? null : findRectAt(i);
       const rectOrigin = rectInfo0 ? { awx: rectInfo0.a.wx, awy: rectInfo0.a.wy, bwx: rectInfo0.b.wx, bwy: rectInfo0.b.wy, aIdx: rectInfo0.aIdx, bIdx: rectInfo0.bIdx, role: rectInfo0.role, info: rectInfo0 } : null;
       const lineInfo0 = (ax2Origin || rectOrigin) ? null : findLineAt(i);
-      const polyArrow0 = lineInfo0 ? findPolyArrowAt(i) : null;
+      const orthoPoly0 = lineInfo0 ? findOrthoPolyAt(i) : null;
       const lineOrigin = lineInfo0 ? {
         idx: i,
-        poly: polyArrow0,
-        neighbors: polyArrow0 ? polyArrow0.neighbors.map(n => ({ i: n.i, wx: n.wx, wy: n.wy })) : null,
-        segs: lineInfo0.segs.map(s => ({ i0: s.i0, i1: s.i1, w0: [s.w0[0], s.w0[1]], w1: [s.w1[0], s.w1[1]] }))
+        poly: orthoPoly0,
+        neighbors: (orthoPoly0 ? orthoPoly0.neighbors : lineInfo0.segs.map(s => {
+          const j = s.i0 === i ? s.i1 : s.i0, o = pts[j];
+          return o && o.wx != null ? { i: j, wx: o.wx, wy: o.wy } : null;
+        }).filter(Boolean)).map(n => ({ i: n.i, wx: n.wx, wy: n.wy })),
+        segs: (orthoPoly0 ? orthoPoly0.segs : lineInfo0.segs).map(s => ({ i0: s.i0, i1: s.i1, w0: [s.w0[0], s.w0[1]], w1: [s.w1[0], s.w1[1]] }))
       } : null;
       const mv = v => {
         if (Math.abs(v.clientX - sx) < 2 && Math.abs(v.clientY - sy) < 2) return; mv0 = true;
