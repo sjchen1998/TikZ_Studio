@@ -23,7 +23,8 @@
   <button id="lib-add-custom" type="button" data-i18n="添加自定义">添加自定义</button><span id="lib-msg"></span>
 </div><div id="ed"><div id="hl"></div><textarea id="code"></textarea></div></div>
 <div id="R"><div id="zbar">
-  <label><span data-i18n="缩放">缩放</span> <input id="zm" type="range" min="0.5" max="4" step="0.25" value="2.0"></label>
+  <label><span data-i18n="缩放">缩放</span> <input id="zm" type="range" min="0.05" max="8" step="0.05" value="1" title="也可在预览区用滚轮缩放（以光标为中心）"><span id="zm-val" style="min-width:2.8em;font:12px monospace">100%</span></label>
+  <label style="font-weight:bold" title="关闭后不解析、不绘制任何可拖点（红/蓝/紫），可加快大图编译"><input id="pick-pts" type="checkbox" checked> <span data-i18n="点识别">点识别</span></label>
   <label style="color:#c1121f;font-weight:bold"><input id="sh-r" type="checkbox" checked> <span data-i18n="红点">红点</span></label>
   <label style="color:#0077b6;font-weight:bold"><input id="sh-b" type="checkbox" checked> <span data-i18n="蓝点">蓝点</span></label>
   <label style="color:#7b2cbf;font-weight:bold"><input id="sh-p" type="checkbox" checked> <span data-i18n="紫点">紫点</span></label>

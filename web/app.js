@@ -177,8 +177,26 @@ function addCustomLib() {
   slot().custom.push(c); installCustom(c, panel); slot().keys.push(c.id); saveLib(); renderBar(); fillLibPick();
   $('lib-name').value = ''; $('lib-tpl').value = ''; $('lib-msg').textContent = tf('已添加到' + PANELS[panel].title, 'Added to ' + t(PANELS[panel].title));
 }
+function pickPointsOn() {
+  const el = $('pick-pts');
+  return !el || !!el.checked;
+}
+function syncPickUi() {
+  const on = pickPointsOn();
+  ['sh-r', 'sh-b', 'sh-p'].forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    el.disabled = !on;
+    if (el.parentElement) el.parentElement.style.opacity = on ? '' : '0.45';
+  });
+}
+function setPickPoints(on) {
+  const el = $('pick-pts');
+  if (el) el.checked = !!on;
+  syncPickUi();
+}
 function pointShown(p) {
-  if (p.wx == null) return false;
+  if (!pickPointsOn() || p.wx == null) return false;
   if (p.kind === 'abs' || p.kind === 'xyz') return $('sh-r').checked;
   if (p.kind === 'lerp' || p.kind === 'mid') return $('sh-p').checked;
   return $('sh-b').checked;
@@ -2875,7 +2893,7 @@ async function go(rb = false) {
   if (upgraded !== $('code').value) $('code').value = upgraded;
   const cur = $('code').value; syncPanel(cur); setStatus('compiling');
   const seq = ++goSeq;
-  const r = await fetch('/api/compile', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code:cur, compiler:$('comp').value})});
+  const r = await fetch('/api/compile', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code:cur, compiler:$('comp').value, pick: pickPointsOn()})});
   const d = await r.json();
   if (seq !== goSeq) return;
   if (!d.ok) { $('toast').style.display = 'block'; if (rb && lastGood && lastGood !== cur) { $('code').value = lastGood; $('toast').textContent = t('⚠️ 已回退：') + '\n' + d.err; setStatus('revert'); draw(); } else { $('toast').textContent = t('❌ 编译错误：') + '\n' + d.err; setStatus('fail'); } return; }
@@ -2885,8 +2903,57 @@ async function go(rb = false) {
   const i = pts.findIndex(p => cur.slice(cur.lastIndexOf('\n', p.s) + 1, p.s).includes('\\coordinate (' + keep + ')'));
   if (i >= 0) selectPt(i);
 }
+function zoomLabel(z) {
+  const el = $('zm-val');
+  if (el) el.textContent = Math.round(z * 100) + '%';
+}
+function clampViewZoom(z) {
+  const zm = $('zm'), lo = +zm.min, hi = +zm.max, step = +zm.step || 0.05;
+  const clamped = Math.min(hi, Math.max(lo, z));
+  // Snap relative to min so 0.05 + k*step stays exact (avoid float drift).
+  const k = Math.round((clamped - lo) / step);
+  return +(lo + k * step).toFixed(4);
+}
+/** Center stage in wrap when it fits; clear margins when it overflows (needed for cursor-zoom). */
+function layoutStage() {
+  const wrap = $('wrap'), stage = $('stage');
+  if (!wrap || !stage) return;
+  const pad = 24;
+  const extraX = Math.max(0, wrap.clientWidth - stage.offsetWidth - pad * 2);
+  const extraY = Math.max(0, wrap.clientHeight - stage.offsetHeight - pad * 2);
+  stage.style.marginLeft = (extraX / 2) + 'px';
+  stage.style.marginTop = (extraY / 2) + 'px';
+}
+/** Redraw while keeping the stage point under (clientX, clientY) fixed on screen. */
+function redrawKeepPoint(clientX, clientY) {
+  const wrap = $('wrap'), stage = $('stage');
+  if (!stage) { draw(); return; }
+  const sr = stage.getBoundingClientRect();
+  const fx = (clientX - sr.left) / (sr.width || 1);
+  const fy = (clientY - sr.top) / (sr.height || 1);
+  draw();
+  const desiredLeft = clientX - fx * stage.getBoundingClientRect().width;
+  const desiredTop = clientY - fy * stage.getBoundingClientRect().height;
+  const sr2 = stage.getBoundingClientRect();
+  wrap.scrollLeft += sr2.left - desiredLeft;
+  wrap.scrollTop += sr2.top - desiredTop;
+}
+/** Zoom preview so the content under (clientX, clientY) stays fixed. */
+function zoomAtCursor(clientX, clientY, nextZ) {
+  const zm = $('zm'), step = +zm.step || 0.05;
+  const oldZ = +zm.value;
+  let z = clampViewZoom(nextZ);
+  // From min/max, a small ×1.12 change can round back to the same step — force ±1 step.
+  if (nextZ > oldZ && z <= oldZ + 1e-12) z = clampViewZoom(oldZ + step);
+  if (nextZ < oldZ && z >= oldZ - 1e-12) z = clampViewZoom(oldZ - step);
+  if (Math.abs(z - oldZ) < 1e-9) return;
+  zm.value = String(z);
+  redrawKeepPoint(clientX, clientY);
+}
 function draw() {
   const z = +$('zm').value, s = $('svg').querySelector('svg'); if (s && W) { s.style.width = (W * z) + 'px'; s.style.height = (H * z) + 'px'; }
+  zoomLabel(z);
+  layoutStage();
   $('ov').innerHTML = ''; if (!cal) return;
   const order = pts.map((_, n) => n).sort((a, b) => (pts[a].kind === 'abs' || pts[a].kind === 'xyz') - (pts[b].kind === 'abs' || pts[b].kind === 'xyz'));
   order.forEach(i0 => {
@@ -3214,6 +3281,7 @@ window.onload = () => {
     if (!key) return;
     endPlace();
     $('code').value = TPLS[key];
+    setPickPoints(key !== 'struct3d');
     const forced = { rc: 'circuit', buck: 'circuit', opamp: 'circuit', block: 'block', struct2d: 'plane', struct3d: 'space', plot: 'plot', plane: 'plane', cms: 'space', gauss: 'plot' }[key];
     if (forced && forced !== panel) { $('libbox').style.display = 'none'; panel = forced; renderBar(); }
     syncPanel($('code').value);
@@ -3355,7 +3423,19 @@ window.onload = () => {
     const el = $(id); if (el) el.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('apply').click(); } };
   });
   $('undo').onclick = () => { if (history.length > 1) { history.pop(); $('code').value = history.at(-1); go(false); } };
-  $('run').onclick = () => go(false); $('zm').oninput = draw; $('sh-r').onchange = $('sh-b').onchange = $('sh-p').onchange = draw;
+  $('run').onclick = () => go(false);
+  $('zm').oninput = () => {
+    const wr = $('wrap').getBoundingClientRect();
+    redrawKeepPoint(wr.left + wr.width / 2, wr.top + wr.height / 2);
+  };
+  $('wrap').addEventListener('wheel', e => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    zoomAtCursor(e.clientX, e.clientY, +$('zm').value * factor);
+  }, { passive: false });
+  $('sh-r').onchange = $('sh-b').onchange = $('sh-p').onchange = draw;
+  $('pick-pts').onchange = () => { syncPickUi(); go(false); };
+  syncPickUi();
   $('code').onkeydown = e => {
     if (e.key === 'Tab') {
       e.preventDefault();

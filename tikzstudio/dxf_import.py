@@ -9,26 +9,43 @@ from ezdxf.colors import aci2rgb
 from ezdxf.path import Command, from_hatch, make_path
 
 # DXF $INSUNITS → 厘米。TikZ 默认单位就是厘米。
+# 0 = 未标明：按 AutoCAD 常用习惯当作毫米。
 _TO_CM = {
-    1: 2.54, 2: 30.48, 3: 160934.4, 4: 0.1, 5: 1.0, 6: 100.0, 7: 100000.0,
+    0: 0.1, 1: 2.54, 2: 30.48, 3: 160934.4, 4: 0.1, 5: 1.0, 6: 100.0, 7: 100000.0,
     8: 2.54e-6, 9: 0.00254, 10: 91.44, 13: 1e-4, 14: 10.0, 15: 1000.0, 16: 10000.0,
 }
 _UNIT_NAME = {
-    0: "未标明单位，数值按厘米",
+    0: "未标明单位，数值按毫米",
     1: "英寸", 2: "英尺", 3: "英里", 4: "毫米", 5: "厘米", 6: "米", 7: "千米",
     10: "码", 14: "分米",
 }
 _NAMED = {1: "red", 2: "yellow", 3: "green", 4: "cyan", 5: "blue", 6: "magenta", 7: "black"}
-_MAX = 8000
-_FIT = 16.0
+_MAX = 80000
+# ISO A0（cm）。超出时按工程制图常用比例缩小，取能装下的最大比例。
+_A0 = (84.1, 118.9)
+_SCALE_N = (1, 2, 4, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+
+
+def _sheet_scale(span_x, span_y):
+    """Return (sc, N) for drawing scale 1:N. Prefer largest scale that fits A0."""
+    sx = max(float(span_x), 1e-9)
+    sy = max(float(span_y), 1e-9)
+    aw, ah = _A0
+    for n in _SCALE_N:
+        sc = 1.0 / n
+        w, h = sx * sc, sy * sc
+        if (w <= aw + 1e-9 and h <= ah + 1e-9) or (w <= ah + 1e-9 and h <= aw + 1e-9):
+            return sc, n
+    n = _SCALE_N[-1]
+    return 1.0 / n, n
 
 
 def dxf_to_tikz(data: bytes, name: str = "drawing.dxf", lang: str = "zh"):
     if not data:
         raise ValueError("文件是空的")
     doc = _read(data)
-    unit = _TO_CM.get(int(doc.header.get("$INSUNITS", 0) or 0), 1.0)
     ins = int(doc.header.get("$INSUNITS", 0) or 0)
+    unit = _TO_CM.get(ins, 0.1)
     items, skipped, truncated = [], {}, False
     for e in _walk(doc.modelspace()):
         if len(items) >= _MAX:
@@ -175,15 +192,17 @@ def _emit(items, skipped, truncated, ins, name, lang="zh"):
     minx = min(p[0] for p in pts)
     miny = min(p[1] for p in pts)
     minz = min(p[2] for p in pts)
-    span = max(max(p[0] for p in pts) - minx, max(p[1] for p in pts) - miny, 1e-9)
-    sc = _FIT / span if span > 20 else 1.0
+    span_x = max(p[0] for p in pts) - minx
+    span_y = max(p[1] for p in pts) - miny
+    span = max(span_x, span_y, 1e-9)
+    sc, scale_n = _sheet_scale(span_x, span_y)
     zspan = (max(p[2] for p in pts) - minz) * sc
     zmode = zspan > 0.02
 
     def T(p):
         return ((p[0] - minx) * sc, (p[1] - miny) * sc, (p[2] - minz) * sc)
 
-    note = _note(ins, minx, miny, minz, span, sc, lang)
+    note = _note(ins, minx, miny, minz, span, sc, scale_n, lang)
     if lang == "en":
         lines = ["% imported from " + name, "% " + note]
         if truncated:
@@ -315,30 +334,36 @@ def _counts(items, lang="zh"):
 
 
 _UNIT_EN = {
-    0: "unit not set, numbers treated as centimeters",
+    0: "unit not set, numbers treated as millimeters",
     1: "inches", 2: "feet", 3: "miles", 4: "millimeters", 5: "centimeters", 6: "meters", 7: "kilometers",
     10: "yards", 14: "decimeters",
 }
 
 
-def _note(ins, minx, miny, minz, span, sc, lang="zh"):
+def _note(ins, minx, miny, minz, span, sc, scale_n, lang="zh"):
     moved = abs(minx) > 1e-4 or abs(miny) > 1e-4 or abs(minz) > 1e-4
     if lang == "en":
         parts = ["Unit: " + _UNIT_EN.get(ins, "another unit")]
         if moved:
             parts.append("lower-left moved to the origin")
-        if sc != 1:
-            parts.append("longest side " + _f(span) + " cm, scaled to " + _f(span * sc) + " cm")
+        if scale_n == 1:
+            parts.append("drawing scale 1:1, fits on A0")
         else:
-            parts.append("sizes placed in centimeters")
+            parts.append(
+                "drawing scale 1:" + str(scale_n)
+                + " (longest side " + _f(span) + " cm → " + _f(span * sc) + " cm on A0)"
+            )
         return ". ".join(parts) + "."
     parts = ["单位：" + _UNIT_NAME.get(ins, "其他单位")]
     if moved:
         parts.append("左下角已移到原点")
-    if sc != 1:
-        parts.append("最大边 " + _f(span) + " cm，已缩放到 " + _f(span * sc) + " cm")
+    if scale_n == 1:
+        parts.append("出图比例 1:1，可放入 A0")
     else:
-        parts.append("尺寸按厘米放入图中")
+        parts.append(
+            "出图比例 1:" + str(scale_n)
+            + "（最大边 " + _f(span) + " cm → " + _f(span * sc) + " cm，按 A0 取能装下的最大比例）"
+        )
     return "。".join(parts) + "。"
 
 

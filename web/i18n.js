@@ -39,6 +39,8 @@ const EN = {
   '{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。': '{{1}} and {{2}} are points, {{文字}} is the text or label, and {{角度}} is the rotation.',
   '添加自定义': 'Add custom',
   '缩放': 'Zoom',
+  '点识别': 'Pick points',
+  '关闭后不解析、不绘制任何可拖点（红/蓝/紫），可加快大图编译': 'When off, no points are parsed or drawn (faster on large figures)',
   '红点': 'Red',
   '蓝点': 'Blue',
   '紫点': 'Purple',

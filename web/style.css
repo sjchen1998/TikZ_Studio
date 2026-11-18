@@ -27,8 +27,9 @@ textarea::selection{background:rgba(255,196,64,.7);color:#1e1e1e}
 #ebar{background:#2d2d30;color:#eee}
 #ebar input{width:56px;background:#1e1e1e;color:#4fc1ff;padding:3px 5px;border:1px solid #555;border-radius:3px;font-family:monospace}
 #toast{background:#5a1d1d;color:#ffb4a9;padding:8px 12px;font:12px monospace;white-space:pre-wrap;display:none}
-#wrap{flex:1;display:flex;justify-content:center;align-items:center;overflow:auto;padding:24px}
-#stage{position:relative;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.2)}
+/* flex-start：大图滚轮缩放时左右都能以光标为中心（居中+overflow 会导致左侧 scrollLeft 无法为负） */
+#wrap{flex:1;display:flex;justify-content:flex-start;align-items:flex-start;overflow:auto;padding:24px}
+#stage{position:relative;background:#fff;box-shadow:0 4px 16px rgba(0,0,0,.2);flex:0 0 auto;margin:0}
 #ov{position:absolute;inset:0;pointer-events:none}
 .dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;background:rgba(230,57,70,.45);border:1px solid rgba(255,255,255,.65);border-radius:50%;cursor:grab;pointer-events:auto;z-index:3}
 .dot.locked{cursor:pointer;background:rgba(108,117,125,.4)}

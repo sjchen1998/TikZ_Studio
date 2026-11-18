@@ -82,6 +82,7 @@ class Req(BaseModel):
     code: str
     compiler: str = "xelatex"
     fmt: str = "pdf"
+    pick: bool = True  # False: skip all coordinate probes (FEA / large drawings)
 
 PREAMBLE = (
     "\\documentclass[border=4mm]{standalone}\n"
@@ -704,7 +705,7 @@ def _env_body_empty(code):
         kept.append(line[:cut])
     return not "".join(kept).strip()
 
-def prep(raw, probes=None):
+def prep(raw, probes=None, with_cal=True):
     is_doc = (r"\documentclass" in raw or r"\begin{document}" in raw)
     buckets = {}
     for pid, expr, at in (probes or []):
@@ -715,11 +716,12 @@ def prep(raw, probes=None):
     if end < len(raw):
         if _env_body_empty(raw):
             buckets.setdefault(end, []).append("\\path (-4,-3) rectangle (5,5);\n")
-        cal = ("\\definecolor{ca}{RGB}{254,1,253}\\definecolor{cb}{RGB}{1,254,252}"
-               "\\definecolor{cc}{RGB}{254,80,1}\\definecolor{cd}{RGB}{1,80,254}"
-               "\\fill[ca,opacity=0.05](0,0)circle(0.5pt);\\fill[cb,opacity=0.05](1,1)circle(0.5pt);"
-               "\\fill[cc,opacity=0.05](1,0)circle(0.5pt);\\fill[cd,opacity=0.05](0,1)circle(0.5pt);\n")
-        buckets.setdefault(end, []).append(cal)
+        if with_cal:
+            cal = ("\\definecolor{ca}{RGB}{254,1,253}\\definecolor{cb}{RGB}{1,254,252}"
+                   "\\definecolor{cc}{RGB}{254,80,1}\\definecolor{cd}{RGB}{1,80,254}"
+                   "\\fill[ca,opacity=0.05](0,0)circle(0.5pt);\\fill[cb,opacity=0.05](1,1)circle(0.5pt);"
+                   "\\fill[cc,opacity=0.05](1,0)circle(0.5pt);\\fill[cd,opacity=0.05](0,1)circle(0.5pt);\n")
+            buckets.setdefault(end, []).append(cal)
     text = raw
     for pos in sorted(buckets, reverse=True):
         text = text[:pos] + "".join(buckets[pos]) + text[pos:]
@@ -799,11 +801,18 @@ async def import_dxf(file: UploadFile = File(...), lang: str = Form("zh")):
 
 @app.post("/api/compile")
 def run_tex(req: Req):
-    pts, probes, ports = parse_points(req.code)
-    pb, err = build_pdf(prep(req.code, probes), req.compiler)
+    if req.pick:
+        pts, probes, ports = parse_points(req.code)
+    else:
+        pts, probes, ports = [], [], []
+    pb, err = build_pdf(prep(req.code, probes if req.pick else None, with_cal=req.pick), req.compiler)
     if err: return {"ok": False, "err": err}
     doc = pymupdf.open(stream=pb, filetype="pdf"); pg = next(iter(doc))
-    cal, pm = extract_pos(pg); svg, r = pg.get_svg_image(matrix=pymupdf.Identity), pg.rect; doc.close()
+    svg, r = pg.get_svg_image(matrix=pymupdf.Identity), pg.rect
+    if not req.pick:
+        doc.close()
+        return {"ok": True, "svg": svg, "w": r.width, "h": r.height, "coords": [], "ports": [], "cal": None}
+    cal, pm = extract_pos(pg); doc.close()
     if cal:
         for pt in pts:
             if pt.get("pid", -1) == -1:
