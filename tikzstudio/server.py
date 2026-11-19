@@ -833,16 +833,33 @@ def extract_pos(pg):
     return cal, pm
 
 @app.post("/api/dxf")
-async def import_dxf(file: UploadFile = File(...), lang: str = Form("zh")):
+async def import_dxf(
+    file: UploadFile = File(...),
+    lang: str = Form("zh"),
+    mode: str = Form("geom"),
+):
+    """mode: struct2d | struct3d | geom (default).
+    struct* → satopdf with BC/loads; geom → lines/arcs/splines only (skip CAE VIS).
+    """
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
         return {"ok": False, "err": "文件超过 20MB"}
+    name = file.filename or "drawing.dxf"
+    loc = "en" if lang == "en" else "zh"
+    mode = (mode or "geom").strip().lower()
     try:
-        from .dxf_import import dxf_to_tikz
-        code, note = dxf_to_tikz(data, file.filename or "drawing.dxf", "en" if lang == "en" else "zh")
+        if mode == "struct2d":
+            from .dxf_to_satopdf2d import dxf_to_satopdf2d
+            code, note = dxf_to_satopdf2d(data, name=name)
+        elif mode == "struct3d":
+            from .dxf_to_satopdf3d import dxf_to_satopdf3d
+            code, note = dxf_to_satopdf3d(data, name=name, fragment=True)
+        else:
+            from .dxf_import import dxf_to_tikz
+            code, note = dxf_to_tikz(data, name, loc, skip_cae=True)
     except Exception as ex:
         return {"ok": False, "err": str(ex) or "无法读取这个 DXF"}
-    return {"ok": True, "code": code, "note": note}
+    return {"ok": True, "code": code, "note": note, "mode": mode}
 
 @app.post("/api/compile")
 def run_tex(req: Req):

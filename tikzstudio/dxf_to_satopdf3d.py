@@ -4,9 +4,11 @@ from __future__ import annotations
 import math
 import re
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import ezdxf
+from ezdxf import recover
 
 
 def _k(p, tol=1e-6):
@@ -15,6 +17,16 @@ def _k(p, tol=1e-6):
         round(float(p[1]) / tol) * tol,
         round(float(p[2]) / tol) * tol,
     )
+
+
+def _read(data: bytes | None = None, path: str | Path | None = None):
+    if path is not None:
+        return ezdxf.readfile(str(path))
+    try:
+        return ezdxf.read(BytesIO(data))
+    except Exception:
+        doc, _ = recover.read(BytesIO(data or b""))
+        return doc
 
 
 def _is_axis_aligned(a, b, tol=1e-6):
@@ -87,22 +99,27 @@ def _split_at_nodes(members, nodes):
 
 
 def dxf_to_satopdf3d(
-    path: str | Path,
+    data: bytes | None = None,
     *,
+    path: str | Path | None = None,
+    name: str = "drawing.dxf",
     scale: float = 0.001,
     coords: tuple = (-25, 10, 1, 1.2),
     load_count: int = 6,
     load_shaft: float = 0.55,
-) -> str:
-    doc = ezdxf.readfile(str(path))
+    fragment: bool = True,
+) -> tuple[str, str]:
+    doc = _read(data, path)
     msp = doc.modelspace()
+    src = Path(path).name if path else name
 
     nodes: dict[tuple, tuple] = {}
     raw_members: list[tuple] = []
     for e in msp:
         if e.dxftype() != "LINE":
             continue
-        if (e.dxf.layer or "").upper().startswith("CAE_VIS"):
+        layer = (e.dxf.layer or "").upper()
+        if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
             continue
         a, b = _k(e.dxf.start), _k(e.dxf.end)
         nodes[a] = a
@@ -129,6 +146,13 @@ def dxf_to_satopdf3d(
             mask = None
             for t in texts:
                 mask = _parse_bc_text(t) or mask
+            if not mask:
+                # also accept BC[…]:MODE[mask]
+                for t in texts:
+                    m = re.search(r"\[([01]{6})\]", t or "")
+                    if m:
+                        mask = m.group(1)
+                        break
             if mask:
                 bcs.append((origin, mask))
                 nodes[origin] = origin
@@ -160,15 +184,22 @@ def dxf_to_satopdf3d(
 
     members = _split_at_nodes(raw_members, nodes.keys())
     ordered = sorted(nodes.keys(), key=lambda t: (t[1], t[0], t[2]))
+    if not ordered:
+        raise ValueError("没有可转换的结构线段")
     nid = {p: f"N{i}" for i, p in enumerate(ordered)}
 
     ang_x, ang_y, dx, dy = coords
     L: list[str] = []
+    if not fragment:
+        L += [
+            f"% Auto-generated from {src}",
+            "\\documentclass[border=10pt]{standalone}",
+            "\\usepackage{satopdf}",
+            "\\begin{document}",
+        ]
+    else:
+        L.append(f"% Auto-generated from {src}")
     L += [
-        f"% Auto-generated from {Path(path).name}",
-        "\\documentclass[border=10pt]{standalone}",
-        "\\usepackage{satopdf}",
-        "\\begin{document}",
         f"\\stpDsetCoords{{{ang_x}}}{{{ang_y}}}[{dx}][{dy}]",
         "\\stpDsetAxis{xyz}",
         f"\\renewcommand{{\\stpDscale}}{{{scale:g}}}",
@@ -221,8 +252,11 @@ def dxf_to_satopdf3d(
                 f"  \\node[stpLabel, {pos}=1.5mm] at ({nid[xyz]}) {{${lab}$}};"
             )
 
-    L += ["\\end{tikzpicture}", "\\end{document}", ""]
-    return "\n".join(L)
+    L.append("\\end{tikzpicture}")
+    if not fragment:
+        L += ["\\end{document}", ""]
+    note = f"satopdf 3D: {len(ordered)} nodes, {len(members)} members"
+    return "\n".join(L) + "\n", note
 
 
 if __name__ == "__main__":
@@ -233,7 +267,6 @@ if __name__ == "__main__":
         if len(sys.argv) > 2
         else root / "texmf" / "tex" / "latex" / "local" / "satopdf-SA3D.tex"
     )
-    tex = dxf_to_satopdf3d(src)
+    tex, note = dxf_to_satopdf3d(path=src, fragment=False)
     dst.write_text(tex, encoding="utf-8")
-    print("wrote", dst)
-    print("nodes/members preview: lines", tex.count("\\stpDpoint"), tex.count("\\stpDmember"))
+    print("wrote", dst, note)

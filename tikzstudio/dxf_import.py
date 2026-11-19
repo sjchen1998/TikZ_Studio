@@ -40,18 +40,29 @@ def _sheet_scale(span_x, span_y):
     return 1.0 / n, n
 
 
-def dxf_to_tikz(data: bytes, name: str = "drawing.dxf", lang: str = "zh"):
+def _is_cae_vis_layer(layer: str) -> bool:
+    u = (layer or "").upper()
+    return u.startswith("CAE_VIS") or u.startswith("CAE_LOAD_VIS") or u == "CAE_LOAD_VIS"
+
+
+def dxf_to_tikz(data: bytes, name: str = "drawing.dxf", lang: str = "zh", *, skip_cae: bool = True):
+    """Geometry import (line / arc / spline / …). skip_cae drops CAE_VIS_* BC/load blocks."""
     if not data:
         raise ValueError("文件是空的")
     doc = _read(data)
     ins = int(doc.header.get("$INSUNITS", 0) or 0)
     unit = _TO_CM.get(ins, 0.1)
     items, skipped, truncated = [], {}, False
-    for e in _walk(doc.modelspace()):
+    skipped_cae = 0
+    for e in _walk(doc.modelspace(), skip_cae=skip_cae):
         if len(items) >= _MAX:
             truncated = True
             break
         if e.dxf.hasattr("invisible") and e.dxf.invisible:
+            continue
+        layer = e.dxf.layer if e.dxf.hasattr("layer") else "0"
+        if skip_cae and _is_cae_vis_layer(layer):
+            skipped_cae += 1
             continue
         kind = e.dxftype()
         try:
@@ -63,8 +74,14 @@ def dxf_to_tikz(data: bytes, name: str = "drawing.dxf", lang: str = "zh"):
         elif kind not in ("INSERT",):
             skipped[kind] = skipped.get(kind, 0) + 1
     if not items:
-        raise ValueError("没有可转换的直线、圆、弧或文字")
-    return _emit(items, skipped, truncated, ins, _safe_name(name), "en" if lang == "en" else "zh")
+        raise ValueError("没有可转换的直线、圆、弧、样条或文字")
+    code, note = _emit(items, skipped, truncated, ins, _safe_name(name), "en" if lang == "en" else "zh")
+    if skipped_cae:
+        if lang == "en":
+            note += f"; skipped {skipped_cae} CAE VIS entities"
+        else:
+            note += f"；已跳过 {skipped_cae} 个载荷/约束图元"
+    return code, note
 
 
 def _read(data):
@@ -78,11 +95,15 @@ def _read(data):
             raise ValueError("无法读取这个 DXF") from ex
 
 
-def _walk(entities, depth=0):
+def _walk(entities, depth=0, skip_cae=True):
     for e in entities:
+        layer = e.dxf.layer if e.dxf.hasattr("layer") else "0"
+        if skip_cae and _is_cae_vis_layer(layer):
+            # Do not explode CAE VIS inserts into decorative lines/circles/text
+            continue
         if e.dxftype() == "INSERT" and depth < 6:
             try:
-                yield from _walk(e.virtual_entities(), depth + 1)
+                yield from _walk(e.virtual_entities(), depth + 1, skip_cae=skip_cae)
                 continue
             except Exception:
                 pass

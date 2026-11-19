@@ -286,6 +286,8 @@ function planDrag(c, dwx, dwy, sn) {
   return { fx, fy, nwx: c.wx + vx, nwy: c.wy + vy };
 }
 function pointText(c, fx, fy) {
+  if (c.stp === 'node') return `${+Number(fx).toFixed(4)},${+Number(fy).toFixed(4)}`;
+  if (c.stp === 'point') return `${+Number(fx).toFixed(4)}}{${+Number(fy).toFixed(4)}`;
   if (c.kind === 'anchor') return `($(${c.base})+(${fx},${fy})$)`;
   if (c.kind === 'lerp') return `!${fx}!`;
   if (c.kind === 'polar') return `(${+Number(fx).toFixed(2)}:${fmtNum(fy, c.uy)})`;
@@ -2748,7 +2750,7 @@ function applyEdit(idx, fx, fy, moveStmt = false) {
   if (radAnchorRole(idx) === 't' && (writeRadMove(idx, fx, fy) || writeDiaMove(idx, fx, fy))) return;
   if ((radAnchorRole(idx) === 'u' || radAnchorRole(idx) === 'v' || radAnchorRole(idx) === 't' || radAnchorRole(idx) === 'm') && readAdimAt(idx)) { writeAngMove(idx, fx, fy); return; }
   if ((c.kind === 'abs' || c.kind === 'xyz') && writeDimLayout(idx, fx, fy)) return;
-  if (moveStmt && (c.kind === 'abs' || c.kind === 'xyz')) {
+  if (moveStmt && (c.kind === 'abs' || c.kind === 'xyz') && !c.stp) {
     const dx = (fx - c.x) * (c.xs || 1), dy = (fy - c.y) * (c.ys || 1);
     let st = t.lastIndexOf('\n', c.s); st = st === -1 ? 0 : st + 1; let ed = t.indexOf(';', c.e); ed = ed === -1 ? t.length : ed + 1;
     const stmt = t.slice(st, ed), ms = [...stmt.matchAll(/\(\s*([-+]?\d*\.?\d+)\s*(cm|mm|pt|in|em|ex)?\s*,\s*([-+]?\d*\.?\d+)\s*(cm|mm|pt|in|em|ex)?\s*\)/g)]; let out = stmt;
@@ -2758,7 +2760,7 @@ function applyEdit(idx, fx, fy, moveStmt = false) {
   }
   const rep = pointText(c, fx, fy);
   const edits = [{s: c.s, e: c.e, txt: rep}];
-  if ($('lk').checked && c.kind === 'abs') pts.forEach((o, j) => { if (j !== idx && o.kind === 'abs' && (o.ux || '') === (c.ux || '') && (o.uy || '') === (c.uy || '') && Math.abs(o.x - c.x) < 1e-4 && Math.abs(o.y - c.y) < 1e-4) edits.push({s: o.s, e: o.e, txt: rep}); });
+  if ($('lk').checked && c.kind === 'abs') pts.forEach((o, j) => { if (j !== idx && o.kind === 'abs' && (o.stp || '') === (c.stp || '') && (o.ux || '') === (c.ux || '') && (o.uy || '') === (c.uy || '') && Math.abs(o.x - c.x) < 1e-4 && Math.abs(o.y - c.y) < 1e-4) edits.push({s: o.s, e: o.e, txt: rep}); });
   edits.sort((a, b) => b.s - a.s).forEach(ed => { t = t.slice(0, ed.s) + ed.txt + t.slice(ed.e); }); $('code').value = t; go(true);
 }
 function movablePoint(c) { return !!(c && (c.kind === 'abs' || c.kind === 'xyz')); }
@@ -2832,9 +2834,18 @@ function applyMultiMove(dx, dy) {
   });
   const uniq = new Map(); edits.forEach(ed => uniq.set(ed.s, ed)); [...uniq.values()].sort((a, b) => b.s - a.s).forEach(ed => { t = t.slice(0, ed.s) + ed.txt + t.slice(ed.e); }); $('code').value = t; go(true);
 }
+let activeTpl = '';
+function dxfImportMode() {
+  if (activeTpl === 'struct2d' || activeTpl === 'struct3d') return activeTpl;
+  const c = $('code').value || '';
+  if (/\\stpDsetCoords|\\stpDpoint|stpDCoords/.test(c)) return 'struct3d';
+  if (/\\stpNode\{|\\stpMember\{|\\stpSupport/.test(c)) return 'struct2d';
+  return 'geom';
+}
 async function importDxfFile(f) {
   setStatus('importing');
-  const fd = new FormData(); fd.append('file', f); fd.append('lang', lang);
+  const mode = dxfImportMode();
+  const fd = new FormData(); fd.append('file', f); fd.append('lang', lang); fd.append('mode', mode);
   let d;
   try {
     const r = await fetch('/api/dxf', {method:'POST', body: fd});
@@ -2843,7 +2854,11 @@ async function importDxfFile(f) {
     $('toast').style.display = 'block'; $('toast').textContent = t('❌ 导入失败：') + '\n' + err; setStatus('fail'); return;
   }
   if (!d.ok) { $('toast').style.display = 'block'; $('toast').textContent = t('❌ 导入失败：') + '\n' + t(d.err); setStatus('fail'); return; }
-  $('toast').style.display = 'none'; $('code').value = d.code; await go(false);
+  $('toast').style.display = 'none'; $('code').value = d.code;
+  setPickPoints(mode !== 'struct3d');
+  if (mode === 'struct2d' && panel !== 'plane') { $('libbox').style.display = 'none'; panel = 'plane'; renderBar(); }
+  if (mode === 'struct3d' && panel !== 'space') { $('libbox').style.display = 'none'; panel = 'space'; renderBar(); }
+  await go(false);
   if (statusNow.kind === 'ok') setStatus('note', { note: d.note });
 }
 function rebuildAdim(raw) {
@@ -3280,6 +3295,7 @@ window.onload = () => {
     const key = e.target.value;
     if (!key) return;
     endPlace();
+    activeTpl = key;
     $('code').value = TPLS[key];
     setPickPoints(key !== 'struct3d');
     const forced = { rc: 'circuit', buck: 'circuit', opamp: 'circuit', block: 'block', struct2d: 'plane', struct3d: 'space', plot: 'plot', plane: 'plane', cms: 'space', gauss: 'plot' }[key];

@@ -26,7 +26,7 @@
 
 每个面板还能加直线、矩形、圆、弧、椭圆线、虚线、网格等通用图形（具体项随面板略有不同）。元件库里没有的符号，可以用 `{{1}}`、`{{2}}`、`{{文字}}`、`{{角度}}` 做成自己的按钮。
 
-工具栏的「导入 DXF」读取直线、多段线、圆、圆弧、椭圆、样条和文字，转成 TikZ 再编译。单位按 DXF 里的记录换算成厘米；图太大时缩到大约 16cm，并把左下角移到原点。源码开头的注释写着单位和比例。
+工具栏的「导入 DXF」按当前模板分流：在 **2D/3D 结构分析** 下生成 `satopdf` 图（含约束与载荷）；其它模板只导入直线、多段线、圆、圆弧、椭圆、样条和文字等几何，忽略 `CAE_VIS_*` 载荷/约束块。单位按 DXF 记录换算；普通几何导入会缩到大约 16cm 并把左下角移到原点。
 
 三维圆和圆弧写在指定平面上。平面可以是 `xy`、`xz`、`yz`，也可以写一个法向，或写两个方向。第一个方向是 0°。圆心可以用 `(0,0,1.55)`，也可以用图里已有的名字，例如 `(O)`。
 
@@ -88,7 +88,7 @@ Block shapes that carry text need an **ID**. A duplicate ID shows “ID already 
 
 Every panel can also add shared graphics such as a line, rectangle, circle, arc, ellipse line, dashed line, or grid (exact items vary by panel). A symbol that is not in the library can become your own button with `{{1}}`, `{{2}}`, `{{文字}}`, and `{{角度}}`.
 
-**Import DXF** on the toolbar reads lines, polylines, circles, arcs, ellipses, splines, and text, turns them into TikZ, and compiles. Units recorded in the DXF become centimeters. A figure larger than about 16 cm is scaled down, and its lower-left corner moves to the origin. A comment at the top of the source records the unit and the scale.
+**Import DXF** follows the active template: under **2D/3D SA** it builds a `satopdf` figure (supports and loads included); otherwise it imports geometry only (lines, polylines, circles, arcs, ellipses, splines, text) and skips `CAE_VIS_*` load/BC blocks. Geometry imports scale large drawings to about 16 cm and shift the lower-left corner to the origin.
 
 A 3D circle or arc lies on a chosen plane. The plane can be `xy`, `xz`, or `yz`, one normal, or two directions. The first direction is 0°. The center can be `(0,0,1.55)`, or a name already in the figure, such as `(O)`.
 
