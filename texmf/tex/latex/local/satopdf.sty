@@ -863,19 +863,22 @@
       at ($ (stp@lout)!-\stpLineLabelGap!(stp@lin)$) {#1};%
   \fi
 }
+% #1 = nominal spacing fraction along AB (e.g. 0.2).
+% Convert to arrow count and place uniformly at t = k/(N-1), including both ends
+% (avoids uneven end gaps from float foreach 0.12,0.24,...,0.88).
 \newcommand{\stp@drawLineLoadArrows}[1]{%
-  \draw[stpLoad] (stp@la2) -- (stp@la1);%
-  \draw[stpLoad] (stp@lb2) -- (stp@lb1);%
   \draw[stpLoadRail] (stp@la1) -- (stp@lb1);%
   \draw[stpLoadRail] (stp@la2) -- (stp@lb2);%
+  \pgfmathsetmacro{\stp@h}{max(#1,1e-3)}%
+  \pgfmathtruncatemacro{\stp@ln}{max(2, round(1/\stp@h)+1)}%
+  \pgfmathtruncatemacro{\stp@lm}{\stp@ln-1}%
+  \foreach \stp@k in {0,...,\stp@lm} {%
+    \pgfmathsetmacro{\stp@t}{\stp@k/\stp@lm}%
+    \draw[stpLoad]
+      ($ (stp@la2)!\stp@t!(stp@lb2)$) -- ($ (stp@la1)!\stp@t!(stp@lb1)$);%
+  }%
   \fill[color=\stpClrLoad] (stp@la2) circle (\stpTinyLW/2);%
   \fill[color=\stpClrLoad] (stp@lb2) circle (\stpTinyLW/2);%
-  \pgfmathsetmacro{\stp@ib}{#1}%
-  \pgfmathsetmacro{\stp@is}{#1*2}%
-  \pgfmathsetmacro{\stp@ie}{1-#1}%
-  \foreach \stp@i in {\stp@ib,\stp@is,...,\stp@ie}{%
-    \draw[stpLoad] ($ (stp@la2)!\stp@i!(stp@lb2)$) -- ($ (stp@la1)!\stp@i!(stp@lb1)$);%
-  }%
 }
 
 \NewDocumentCommand{\stpLineLoadCAE}{m m m O{} O{}}{%

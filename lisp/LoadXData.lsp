@@ -2,7 +2,7 @@
 ;;; LoadXData.lsp — AutoCAD 梁 + 板壳：截面/属性 / 载荷 / 约束 XData + 可视化
 ;;; 图层：CAE_VIS_LOAD / CAE_VIS_BC / CAE_VIS_SEC
 ;;; 语言：*CAE_LANG* ("ZH"|"EN") + SETLANG
-;;; 默认单位：分布力 N/mm、集中力 N、面压 MPa；弹性支撑线刚度 N/mm、转动刚度 Nmm/rad
+;;; 默认单位：分布力/线载荷 N-mm、集中力 N、面压 MPa；线刚度 N-mm、角刚度 Nmm/rad
 ;;; ====================================================================
 
 ;;; ---------- 全局显示比例 ----------
@@ -13,7 +13,7 @@
 ;;; ---------- 语言：*CAE_LANG* = "ZH" | "EN"；命令 SETLANG 一键切换 ----------
 (if (not *CAE_LANG*) (setq *CAE_LANG* "ZH"))
 
-;;; (_T 中文提示 英文提示) — 中文界面仍保留必要英文单位，如 (N/mm)
+;;; (_T 中文提示 英文提示) — 中文界面仍保留必要英文单位
 (defun _T (zh en)
   (if (= (strcase (if *CAE_LANG* *CAE_LANG* "ZH")) "EN") en zh)
 )
@@ -34,13 +34,24 @@
   (princ)
 )
 
-;;; 载荷单位：默认 N/mm、N；可显式选 kN/m、kN
+;;; 分布/线载荷单位：N-mm（即 N/mm）、kN-m（即 kN/m）；[] 内不能写 /
 (defun ask-dist-unit (/ u)
-  (initget "Nmm kNm")
-  (setq u (getkword (_T "\n单位 Nmm=N/mm, kNm=kN/m [Nmm/kNm] <Nmm>: "
-                        "\nUnit Nmm=N/mm, kNm=kN/m [Nmm/kNm] <Nmm>: ")))
-  (if (not u) (setq u "Nmm"))
-  (if (= u "kNm") "kN/m" "N/mm")
+  (initget "N-mm kN-m")
+  (setq u (getkword (_T "\n单位 [N-mm/kN-m] <N-mm>: "
+                        "\nUnit [N-mm/kN-m] <N-mm>: ")))
+  (if (not u) (setq u "N-mm"))
+  u
+)
+
+;;; 旧单位串规范化：N/mm、Nmm → N-mm；kN/m → kN-m
+(defun normalize-dist-unit (unitStr)
+  (cond
+    ((or (not unitStr) (/= (type unitStr) 'STR) (= unitStr "")
+         (= unitStr "N/mm") (= unitStr "Nmm")) "N-mm")
+    ((= unitStr "kN/m") "kN-m")
+    ((= unitStr "kNm") "kN-m")
+    (T unitStr)
+  )
 )
 
 (defun ask-force-unit (/ u)
@@ -48,6 +59,15 @@
   (setq u (getkword (_T "\n单位 [N/kN] <N>: "
                         "\nUnit [N/kN] <N>: ")))
   (if (not u) (setq u "N"))
+  u
+)
+
+;;; 集中弯矩单位：Nmm (=N·mm)、Nm、kNm；[] 内不能写 ·
+(defun ask-moment-unit (/ u)
+  (initget "Nmm Nm kNm")
+  (setq u (getkword (_T "\n单位 [Nmm/Nm/kNm] <Nmm>: "
+                        "\nUnit [Nmm/Nm/kNm] <Nmm>: ")))
+  (if (not u) (setq u "Nmm"))
   u
 )
 
@@ -59,14 +79,16 @@
   u
 )
 
-;;; 线刚度默认 N/mm；转动刚度默认 Nmm/rad（菜单用 Nmm-rad/Nm-rad，因 [] 内不能含 /）
+;;; 线刚度单位：N-mm（即 N/mm）、kN-m（即 kN/m）；[] 内不能写 /
 (defun ask-trans-k-unit (/ u)
-  (initget "Nmm kNm")
-  (setq u (getkword (_T "\n单位 [Nmm/kNm] <Nmm>: " "\nUnit [Nmm/kNm] <Nmm>: ")))
-  (if (not u) (setq u "Nmm"))
-  (if (= u "kNm") "kN/m" "N/mm")
+  (initget "N-mm kN-m")
+  (setq u (getkword (_T "\n单位 [N-mm/kN-m] <N-mm>: "
+                        "\nUnit [N-mm/kN-m] <N-mm>: ")))
+  (if (not u) (setq u "N-mm"))
+  u
 )
 
+;;; 角刚度单位：Nmm/rad、Nm/rad（菜单用 Nmm-rad/Nm-rad）
 (defun ask-rot-k-unit (/ u)
   (initget "Nmm-rad Nm-rad")
   (setq u (getkword (_T "\n单位 [Nmm-rad/Nm-rad] <Nmm-rad>: "
@@ -80,7 +102,7 @@
   (if (not (tblsearch "APPID" name)) (regapp name))
 )
 (defun register-all-cae-apps ()
-  (foreach a '("MY_CAE_LOAD" "MY_CAE_POINT_LOAD" "MY_CAE_BC"
+  (foreach a '("MY_CAE_LOAD" "MY_CAE_POINT_LOAD" "MY_CAE_MOMENT" "MY_CAE_BC"
                "MY_CAE_COMP_BC" "MY_CAE_SPRING" "MY_CAE_SEC"
                "MY_CAE_SHELL_LOAD" "MY_CAE_SHELL_PROP"
                "MY_CAE_SHELL_GEOM" "MY_CAE_SHELL_BC")
@@ -99,13 +121,14 @@
 
 
 ;;; ---------- 图层（三图层 + 兼容旧 CAE_LOAD_VIS）----------
+;;; CAE_VIS_LOAD=红(1) / CAE_VIS_BC=青(4) / CAE_VIS_SEC=品红(6)；每次锁定都校正颜色
 (defun lock-vis-layer (/ layInfo)
   (setq layInfo '(("CAE_VIS_LOAD" . "1") ("CAE_VIS_BC" . "4") ("CAE_VIS_SEC" . "6")))
   (foreach item layInfo
     (if (not (tblsearch "LAYER" (car item)))
-      (command "_.-LAYER" "_N" (car item) "_C" (cdr item) (car item) "")
+      (command "_.-LAYER" "_N" (car item) "")
     )
-    (command "_.-LAYER" "_LO" (car item) "")
+    (command "_.-LAYER" "_C" (cdr item) (car item) "_LO" (car item) "")
   )
 )
 (defun unlock-vis-layer ()
@@ -237,7 +260,9 @@
 ;;; ====================================================================
 ;;; 分布载荷  MY_CAE_LOAD
 ;;; ====================================================================
-(defun create-load-block (ent loadMag unitVec unitStr / entData p1 p2 beamVec beamLen arrowLen numArrows i tRatio ptOnBeam ptTail ptTail1 ptTail2 labelPt labelStr blkDefName blkRef)
+(defun create-load-block (ent loadMag unitVec unitStr / entData p1 p2 beamVec beamLen arrowLen tipR
+                               numArrows i tRatio ptOnBeam tip ptTail ptTail1 ptTail2
+                               labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
   (setq entData (entget ent))
   (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
@@ -245,26 +270,29 @@
   (setq arrowLen (* beamLen 0.12))
   (if (< arrowLen 100.0) (setq arrowLen 100.0))
   (setq arrowLen (* arrowLen *CAE_SCALE_LOAD*))
+  (setq tipR (* arrowLen 0.08))
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
+  ;; 与 K/KR/BC 相同：沿载荷方向缩回一圆半径，尖端落在圆周，不压梁
   (setq ptTail1 (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec arrowLen)))
   (setq ptTail2 (vec-sub beamVec (vec-scale unitVec arrowLen)))
-  (entmake (list '(0 . "LINE") '(8 . "0") (cons 10 ptTail1) (cons 11 ptTail2)))
+  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 ptTail1) (cons 11 ptTail2)))
   (setq numArrows 5 i 0)
   (while (< i numArrows)
     (setq tRatio (/ (float i) (float (1- numArrows))))
     (setq ptOnBeam (vec-scale beamVec tRatio))
+    (setq tip (vec-sub ptOnBeam (vec-scale unitVec tipR)))
     (setq ptTail (vec-sub ptOnBeam (vec-scale unitVec arrowLen)))
-    (entmake (list '(0 . "LINE") '(8 . "0") (cons 10 ptTail) (cons 11 ptOnBeam)))
-    (entmake (list '(0 . "CIRCLE") '(8 . "0") (cons 10 ptOnBeam) (cons 40 (* arrowLen 0.08))))
+    (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 1) (cons 10 ptOnBeam) (cons 40 tipR)))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 ptTail) (cons 11 tip)))
     (setq i (1+ i))
   )
   (setq labelPt (vec-sub (vec-scale beamVec 0.5) (vec-scale unitVec (* arrowLen 1.25))))
-  (if (or (not unitStr) (= unitStr "")) (setq unitStr "N/mm"))
+  (setq unitStr (normalize-dist-unit unitStr))
   (setq labelStr (strcat "q=" (rtos loadMag 2 1) " " unitStr " ("
                          (rtos (car unitVec) 2 2) ","
                          (rtos (cadr unitVec) 2 2) ","
                          (rtos (caddr unitVec) 2 2) ")"))
-  (entmake (list '(0 . "TEXT") '(8 . "0") (cons 10 labelPt) (cons 40 (* arrowLen 0.25)) (cons 1 labelStr)))
+  (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 1) (cons 10 labelPt) (cons 40 (* arrowLen 0.25)) (cons 1 labelStr)))
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_LOAD") (cons 2 blkDefName) (cons 10 p1))))
   (lock-vis-layer)
@@ -387,15 +415,21 @@
 ;;; ====================================================================
 ;;; 集中力  MY_CAE_POINT_LOAD
 ;;; ====================================================================
-(defun create-ptload-block (ptNode beamLen forceMag unitVec endTag unitStr / arrowLen ptTail ptConeBase perp1 perp2 pWing1 pWing2 labelPt labelStr blkDefName blkRef)
+(defun create-ptload-block (ptNode beamLen forceMag unitVec endTag unitStr /
+                            arrowLen r tip ptTail ptConeBase perp1 perp2 pWing1 pWing2
+                            labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
   (setq arrowLen (* beamLen 0.18))
   (if (< arrowLen 150.0) (setq arrowLen 150.0))
   (setq arrowLen (* arrowLen *CAE_SCALE_LOAD*))
+  (setq r (* arrowLen 0.08))
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  (setq ptTail (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec arrowLen)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 ptTail) '(11 0.0 0.0 0.0)))
-  (setq ptConeBase (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec (* arrowLen 0.25))))
+  ;; 端点用小圆标记；箭头落在圆周上，不压住端点
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 3) '(10 0.0 0.0 0.0) (cons 40 r)))
+  (setq tip (vec-scale unitVec (- r)))
+  (setq ptTail (vec-sub tip (vec-scale unitVec arrowLen)))
+  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 ptTail) (cons 11 tip)))
+  (setq ptConeBase (vec-sub tip (vec-scale unitVec (* arrowLen 0.25))))
   (if (< (abs (car unitVec)) 0.9)
     (setq perp1 (vec-unit (list 0.0 (- (caddr unitVec)) (cadr unitVec))))
     (setq perp1 (vec-unit (list (- (caddr unitVec)) 0.0 (car unitVec))))
@@ -404,10 +438,10 @@
   (foreach p (list perp1 perp2)
     (setq pWing1 (vec-add ptConeBase (vec-scale p (* arrowLen 0.09))))
     (setq pWing2 (vec-sub ptConeBase (vec-scale p (* arrowLen 0.09))))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 pWing1) '(11 0.0 0.0 0.0)))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 pWing2) '(11 0.0 0.0 0.0)))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 pWing1) (cons 11 tip)))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 pWing2) (cons 11 tip)))
   )
-  (setq labelPt (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec (* arrowLen 1.15))))
+  (setq labelPt (vec-add ptTail (list 0.0 0.0 (- (* arrowLen 0.15)))))
   (if (or (not unitStr) (= unitStr "")) (setq unitStr "N"))
   (setq labelStr (strcat "F[" endTag "]=" (rtos forceMag 2 1) unitStr))
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 3) (cons 10 labelPt) (cons 40 (* arrowLen 0.2)) (cons 1 labelStr)))
@@ -452,7 +486,7 @@
       (if endInfo
         (progn
           (setq ptNode (car endInfo) endTag (cadr endInfo))
-          (setq forceMag (getreal (strcat (_T "\n[" "\n[") endTag (_T "] 集中力数值 <50.0>: " "] Point force magnitude <50.0>: "))))
+          (setq forceMag (getreal (strcat (_T "\n" "\n") endTag (_T " 集中力 <50.0>: " " force <50.0>: "))))
           (if (not forceMag) (setq forceMag 50.0))
           (setq unitStr (ask-force-unit))
           (setq unitVec (ask-unit-vec))
@@ -550,33 +584,254 @@
 )
 
 ;;; ====================================================================
-;;; 简单端点约束  MY_CAE_BC（Mask / Plane / Slide / RotAxis）
+;;; 集中弯矩  MY_CAE_MOMENT
+;;; XData 每端 5 项: endTag | Mag | axis(1013) | visHandle | unit
+;;; 可视化: 端点小圆 + 绕轴圆弧(半径>圆，不压端点) + 弧端小箭头
 ;;; ====================================================================
-(defun create-bc-block (ptNode beamLen bcMode maskStr e1 e2 e3 endTag / sz pA pB pC pD axEnd labelPt labelStr blkDefName blkRef)
+(defun create-moment-block (ptNode beamLen momMag axisVec endTag unitStr sense /
+                            sz r R basis e1 e2 e3 nSeg i a0 a1 ang0 ang1
+                            pA pB pTip tang wing nWing pW1 pW2
+                            labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
-  (setq sz (* beamLen 0.10))
-  (if (< sz 90.0) (setq sz 90.0))
-  (setq sz (* sz *CAE_SCALE_BC*))
+  (setq sz (* beamLen 0.18))
+  (if (< sz 150.0) (setq sz 150.0))
+  (setq sz (* sz *CAE_SCALE_LOAD*))
+  (setq r (* sz 0.08) R (* sz 0.38))
+  (setq e1 (vec-unit axisVec))
+  (if (not e1) (setq e1 '(0.0 0.0 1.0)))
+  (setq basis (make-local-basis e1) e2 (cadr basis) e3 (caddr basis))
+  ;; sense: "CW" 取反 e3 → 弧反向
+  (if (= sense "CW") (setq e3 (vec-scale e3 -1.0)))
+  (setq ang0 (* pi 0.20) ang1 (+ ang0 (* pi (/ 200.0 180.0))) nSeg 18)
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  (setq pA (list (- sz) (- sz) (- sz)) pB (list sz (- sz) (- sz)))
-  (setq pC (list sz sz (- sz)) pD (list (- sz) sz (- sz)))
-  (foreach pt (list pA pB pC pD)
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) '(10 0.0 0.0 0.0) (cons 11 pt)))
+  ;; 端点圆（与集中力一致，不压选点）
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 1) '(10 0.0 0.0 0.0) (cons 40 r)
+                 (cons 210 e1)))
+  (setq i 0 pB nil)
+  (while (< i nSeg)
+    (setq a0 (+ ang0 (* (/ (float i) (float nSeg)) (- ang1 ang0))))
+    (setq a1 (+ ang0 (* (/ (float (1+ i)) (float nSeg)) (- ang1 ang0))))
+    (setq pA (vec-add (vec-scale e2 (* R (cos a0))) (vec-scale e3 (* R (sin a0)))))
+    (setq pB (vec-add (vec-scale e2 (* R (cos a1))) (vec-scale e3 (* R (sin a1)))))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 pA) (cons 11 pB)))
+    (setq i (1+ i))
   )
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pA) (cons 11 pB)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pB) (cons 11 pC)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pC) (cons 11 pD)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pD) (cons 11 pA)))
-  (if (/= bcMode "GLOBAL")
+  ;; 弧末端小箭头（细翼，贴切线）
+  (setq tang (vec-unit (vec-add (vec-scale e2 (* -1.0 R (sin ang1)))
+                                (vec-scale e3 (* R (cos ang1))))))
+  (setq pTip pB)
+  (setq wing (vec-scale tang (* R -0.22)))
+  (setq nWing (vec-scale e1 (* R 0.10)))
+  (setq pW1 (vec-add (vec-add pTip wing) nWing))
+  (setq pW2 (vec-sub (vec-add pTip wing) nWing))
+  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 pW1) (cons 11 pTip)))
+  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 pW2) (cons 11 pTip)))
+  (setq labelPt (vec-add (vec-scale e2 (* R 0.15)) (vec-scale e3 (* R 1.15))))
+  (if (or (not unitStr) (= unitStr "")) (setq unitStr "Nmm"))
+  (setq labelStr (strcat "M[" endTag "]=" (rtos momMag 2 1) " " unitStr))
+  (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 1) (cons 10 labelPt)
+                 (cons 40 (* sz 0.18)) (cons 1 labelStr)))
+  (setq blkDefName (entmake '((0 . "ENDBLK"))))
+  (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_LOAD")
+                               (cons 2 blkDefName) (cons 10 ptNode))))
+  (lock-vis-layer)
+  blkRef
+)
+
+(defun remove-old-moment-visual (beamEnt targetEndTag / entData xdata appData i handle oldBlk)
+  (setq entData (entget beamEnt '("MY_CAE_MOMENT")))
+  (setq xdata (assoc -3 entData))
+  (if xdata
     (progn
-      (setq axEnd (vec-scale e1 (* sz 1.8)))
-      (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 2) '(10 0.0 0.0 0.0) (cons 11 axEnd)))
-      (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 2) (cons 10 axEnd) (cons 40 (* sz 0.15))))
+      (setq appData (cdr (cadr xdata)) i 0)
+      (while (< i (length appData))
+        (if (= (cdr (nth i appData)) targetEndTag)
+          (progn
+            (setq handle (cdr (nth (+ i 3) appData)))
+            (if (and handle (setq oldBlk (handent handle)))
+              (if (entget oldBlk)
+                (progn (unlock-vis-layer) (entdel oldBlk) (lock-vis-layer))
+              )
+            )
+          )
+        )
+        (setq i (+ i 5))
+      )
     )
   )
-  (setq labelPt (list (* sz 1.1) (* sz -1.1) (* sz -1.2)))
+)
+
+(defun c:SETMOMENT (/ ent entData beamHandle p1 p2 beamLen endInfo ptNode endTag
+                      momMag unitStr axisMode axisVec axA axB sense visBlkEnt visHandle
+                      oldXdata newRecords)
+  (register-all-cae-apps)
+  (setq ent (car (entsel (_T "\n[第1步] 选择梁直线 (LINE): " "\n[Step 1] Select a beam line (LINE): "))))
+  (if (and ent (= (cdr (assoc 0 (setq entData (entget ent)))) "LINE"))
+    (progn
+      (setq beamHandle (cdr (assoc 5 entData)))
+      (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
+      (setq beamLen (distance p1 p2))
+      (setq endInfo (pick-beam-end ent))
+      (if endInfo
+        (progn
+          (setq ptNode (car endInfo) endTag (cadr endInfo))
+          (setq momMag (getreal (strcat (_T "\n" "\n") endTag (_T " 弯矩 <1000.0>: " " moment <1000.0>: "))))
+          (if (not momMag) (setq momMag 1000.0))
+          (setq unitStr (ask-moment-unit))
+          (initget "BeamAxis Vector Pick")
+          (setq axisMode (getkword (_T "\n弯矩轴 [BeamAxis/Vector/Pick] <BeamAxis>: "
+                                       "\nMoment axis [BeamAxis/Vector/Pick] <BeamAxis>: ")))
+          (if (not axisMode) (setq axisMode "BeamAxis"))
+          (setq axisVec
+            (cond
+              ((= axisMode "BeamAxis") (vec-unit (vec-sub p2 p1)))
+              ((= axisMode "Vector")
+               (progn
+                 (setq axA (getpoint (_T "\n轴向量 X,Y,Z <0,0,1>: "
+                                         "\nAxis vector X,Y,Z <0,0,1>: ")))
+                 (if (not axA) (setq axA '(0.0 0.0 1.0)))
+                 (vec-unit axA)
+               )
+              )
+              (T
+               (progn
+                 (setq axA (getpoint (_T "\n轴起点: " "\nAxis start: ")))
+                 (if axA (setq axB (getpoint axA (_T "\n轴终点: " "\nAxis end: "))))
+                 (if (and axA axB)
+                   (vec-unit (mapcar '- (trans axB 1 0) (trans axA 1 0)))
+                   nil
+                 )
+               )
+              )
+            )
+          )
+          (initget "CCW CW")
+          (setq sense (getkword (_T "\n转向 [CCW/CW] <CCW>: "
+                                    "\nSense [CCW/CW] <CCW>: ")))
+          (if (not sense) (setq sense "CCW"))
+          (if axisVec
+            (progn
+              (remove-old-moment-visual ent endTag)
+              (setq visBlkEnt (create-moment-block ptNode beamLen momMag axisVec endTag unitStr sense))
+              (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
+              ;; 存右手系：CW 时轴取反，刷新一律按轴画（sense=CCW）
+              (if (= sense "CW") (setq axisVec (vec-scale axisVec -1.0)))
+              (setq oldXdata (assoc -3 (entget ent '("MY_CAE_MOMENT"))))
+              (setq newRecords nil)
+              (if oldXdata
+                (setq newRecords (xdata-drop-end (cdr (cadr oldXdata)) endTag 5))
+              )
+              (setq newRecords (append newRecords (list
+                (cons 1000 endTag) (cons 1040 momMag)
+                (cons 1013 axisVec) (cons 1005 visHandle)
+                (cons 1000 unitStr))))
+              (entmod (append (entget ent) (list (list -3 (cons "MY_CAE_MOMENT" newRecords)))))
+              (entupd ent)
+              (entmod (append (entget visBlkEnt)
+                              (list (list -3 (list "MY_CAE_MOMENT"
+                                (cons 1005 beamHandle) (cons 1000 endTag))))))
+              (princ (strcat (_T "\n[成功] [" "\n[OK] [") endTag "] M="
+                             (rtos momMag 2 2) " " unitStr))
+            )
+            (princ (_T "\n[错误] 弯矩轴无效。" "\n[Error] Invalid moment axis."))
+          )
+        )
+        (princ (_T "\n[取消] 未捕捉端点。" "\n[Cancel] No endpoint picked."))
+      )
+    )
+    (princ (_T "\n[错误] 请选择 LINE。" "\n[Error] Select a LINE."))
+  )
+  (princ)
+)
+
+(defun c:DELMOMENT (/ ss i ent entData entType xdata appData j handle oldBlk
+                      targetEnt targetEndTag oldXdata newRecords)
+  (unlock-vis-layer)
+  (princ (_T "\n请选择【梁】或【弯矩符号】: " "\nSelect beam(s) or moment symbol(s): "))
+  (setq ss (ssget '((0 . "LINE,INSERT"))))
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i))
+        (setq entData (entget ent '("MY_CAE_MOMENT")))
+        (setq entType (cdr (assoc 0 entData)))
+        (setq xdata (assoc -3 entData))
+        (if xdata
+          (progn
+            (setq appData (cdr (cadr xdata)))
+            (cond
+              ((= entType "LINE")
+               (setq j 0)
+               (while (< j (length appData))
+                 (setq handle (cdr (nth (+ j 3) appData)))
+                 (if (and handle (setq oldBlk (handent handle)))
+                   (if (entget oldBlk) (entdel oldBlk))
+                 )
+                 (setq j (+ j 5))
+               )
+               (entmod (append (entget ent) (list (list -3 (list "MY_CAE_MOMENT")))))
+               (entupd ent)
+              )
+              ((= entType "INSERT")
+               (setq targetEnt (handent (cdr (nth 0 appData))))
+               (setq targetEndTag (cdr (nth 1 appData)))
+               (if (and targetEnt (entget targetEnt))
+                 (progn
+                   (setq oldXdata (assoc -3 (entget targetEnt '("MY_CAE_MOMENT"))))
+                   (setq newRecords nil)
+                   (if oldXdata
+                     (setq newRecords (xdata-drop-end (cdr (cadr oldXdata)) targetEndTag 5))
+                   )
+                   (if newRecords
+                     (entmod (append (entget targetEnt) (list (list -3 (cons "MY_CAE_MOMENT" newRecords)))))
+                     (entmod (append (entget targetEnt) (list (list -3 (list "MY_CAE_MOMENT")))))
+                   )
+                   (entupd targetEnt)
+                 )
+               )
+               (entdel ent)
+              )
+            )
+          )
+        )
+        (setq i (1+ i))
+      )
+      (princ (_T "\n[清除完成] 弯矩已双向删除。" "\n[Done] Moment load removed."))
+    )
+  )
+  (lock-vis-layer)
+  (princ)
+)
+
+;;; ====================================================================
+;;; 简单端点约束  MY_CAE_BC
+;;; 对齐 K：端点小圆(XY) + 沿 -Z；两圆同面，连线在圆周 (r,0,z)
+;;; ====================================================================
+(defun create-bc-block (ptNode beamLen bcMode maskStr e1 e2 e3 endTag /
+                        sz r gap stem c2 pL1 pL2 axEnd labelPt labelStr blkDefName blkRef)
+  (unlock-vis-layer)
+  (setq sz (* beamLen 0.12))
+  (if (< sz 100.0) (setq sz 100.0))
+  (setq sz (* sz *CAE_SCALE_BC*))
+  (setq r (* sz 0.10) gap (* sz 0.08) stem (* sz 0.70))
+  ;; 远端圆心：两圆之间留 gap+stem，连线只接相对外缘，不穿心
+  (setq c2 (list 0.0 0.0 (- (+ r gap stem r))))
+  (setq pL1 (list 0.0 0.0 (- r))
+        pL2 (list 0.0 0.0 (+ (caddr c2) r)))
+  (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 4) '(10 0.0 0.0 0.0) (cons 40 r) '(210 0.0 0.0 1.0)))
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 4) (cons 10 c2) (cons 40 r) '(210 0.0 0.0 1.0)))
+  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pL1) (cons 11 pL2)))
+  (if (and (/= bcMode "GLOBAL") e1)
+    (progn
+      (setq axEnd (vec-add c2 (vec-scale e1 (* sz 0.55))))
+      (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 2) (cons 10 c2) (cons 11 axEnd)))
+    )
+  )
+  (setq labelPt (list (* sz 0.05) (* sz 0.05) (- (+ r gap stem r (* sz 0.15)))))
   (setq labelStr (strcat "BC[" endTag "]:" bcMode "[" maskStr "]"))
-  (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 4) (cons 10 labelPt) (cons 40 (* sz 0.28)) (cons 1 labelStr)))
+  (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 4) (cons 10 labelPt) (cons 40 (* sz 0.20)) (cons 1 labelStr)))
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_BC") (cons 2 blkDefName) (cons 10 ptNode))))
   (lock-vis-layer)
@@ -619,7 +874,7 @@
         (progn
           (setq ptNode (car endInfo) endTag (cadr endInfo))
           (initget "Mask Plane Slide RotAxis")
-          (setq bcChoice (getkword (strcat (_T "\n[" "\n[") endTag (_T "] 约束类型 [Mask/Plane/Slide/RotAxis] <Mask>: " "] BC type [Mask/Plane/Slide/RotAxis] <Mask>: "))))
+          (setq bcChoice (getkword (strcat (_T "\n" "\n") endTag (_T " 约束类型 [Mask/Plane/Slide/RotAxis] <Mask>: " " BC type [Mask/Plane/Slide/RotAxis] <Mask>: "))))
           (if (not bcChoice) (setq bcChoice "Mask"))
           (setq e1 nil)
           (cond
@@ -810,89 +1065,82 @@
   )
 )
 
-;;; 线刚度：折线弹簧 + 引出标注（全局 X/Y/Z）
+;;; 线刚度 K：端点小圆，沿 -Z 折线弹簧
 (defun create-trans-spring-block (ptNode beamLen kx ky kz unitStr endTag /
-                                  sz axis perp i t0 t1 pA pB zig amp labelPt labelStr blkDefName blkRef)
+                                  sz r gap amp i z0 z1 pA pB zig labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
   (setq sz (* beamLen 0.12))
   (if (< sz 100.0) (setq sz 100.0))
   (setq sz (* sz *CAE_SCALE_BC*))
-  (setq axis '(0.75 0.55 0.20))
-  (if (not (setq axis (vec-unit axis))) (setq axis '(1.0 0.0 0.0)))
-  (setq perp (cadr (make-local-basis axis)))
-  (setq amp (* sz 0.22))
+  (setq r (* sz 0.10) gap (* sz 0.08) amp (* sz 0.18))
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  ;; 引出短线到弹簧起点
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 3) '(10 0.0 0.0 0.0) (cons 40 r) '(210 0.0 0.0 1.0)))
   (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3)
-                 '(10 0.0 0.0 0.0) (cons 11 (vec-scale axis (* sz 0.35)))))
+                 (cons 10 (list 0.0 0.0 (- r)))
+                 (cons 11 (list 0.0 0.0 (- (+ r gap))))))
   (setq i 0)
   (while (< i 6)
-    (setq t0 (+ 0.35 (* (/ (float i) 6.0) 0.60)))
-    (setq t1 (+ 0.35 (* (/ (float (1+ i)) 6.0) 0.60)))
-    (setq pA (vec-add (vec-scale axis (* sz t0))
-                      (vec-scale perp (if (= (rem i 2) 0) amp (- amp)))))
-    (setq pB (vec-add (vec-scale axis (* sz t1))
-                      (vec-scale perp (if (= (rem i 2) 0) (- amp) amp))))
-    (if (= i 0) (setq pA (vec-scale axis (* sz 0.35))))
-    (if (= i 5) (setq pB (vec-scale axis (* sz 0.95))))
+    (setq z0 (- (+ r gap (* (/ (float i) 6.0) (* sz 0.70)))))
+    (setq z1 (- (+ r gap (* (/ (float (1+ i)) 6.0) (* sz 0.70)))))
+    (setq pA (list (if (= (rem i 2) 0) amp (- amp)) 0.0 z0))
+    (setq pB (list (if (= (rem i 2) 0) (- amp) amp) 0.0 z1))
+    (if (= i 0) (setq pA (list 0.0 0.0 (- (+ r gap)))))
+    (if (= i 5) (setq pB (list 0.0 0.0 (- (+ r gap (* sz 0.70))))))
     (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3) (cons 10 pA) (cons 11 pB)))
     (setq i (1+ i))
   )
-  ;; 远端支承小横杠
-  (setq zig (vec-scale axis (* sz 0.95)))
+  (setq zig (list 0.0 0.0 (- (+ r gap (* sz 0.70)))))
   (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 3)
-                 (cons 10 (vec-add zig (vec-scale perp (* sz 0.18))))
-                 (cons 11 (vec-sub zig (vec-scale perp (* sz 0.18))))))
-  (setq labelPt (vec-add (vec-scale axis (* sz 1.05)) (vec-scale perp (* sz 0.35))))
-  (if (or (not unitStr) (= unitStr "")) (setq unitStr "N/mm"))
+                 (cons 10 (list (* sz 0.16) 0.0 (caddr zig)))
+                 (cons 11 (list (- (* sz 0.16)) 0.0 (caddr zig)))))
+  (setq labelPt (list (* sz 0.05) (* sz 0.05) (- (+ r gap (* sz 0.85)))))
+  (if (or (not unitStr) (= unitStr "") (= unitStr "N/mm") (= unitStr "Nmm"))
+    (setq unitStr "N-mm")
+  )
+  (if (= unitStr "kN/m") (setq unitStr "kN-m"))
   (setq labelStr (strcat "K[" endTag "]="
                          (rtos kx 2 2) "," (rtos ky 2 2) "," (rtos kz 2 2)
                          " " unitStr))
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 3) (cons 10 labelPt)
-                 (cons 40 (* sz 0.22)) (cons 1 labelStr)))
+                 (cons 40 (* sz 0.20)) (cons 1 labelStr)))
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_BC") (cons 2 blkDefName) (cons 10 ptNode))))
   (lock-vis-layer)
   blkRef
 )
 
-;;; 转动/弯曲刚度：平面螺线扭转弹簧 + 引出标注（全局 RX/RY/RZ）
+;;; 角刚度 KR：端点小圆，沿 -Z 螺线
 (defun create-rot-spring-block (ptNode beamLen krx kry krz unitStr endTag /
-                                sz e1 e2 e3 i ang r p0 p1 lead labelPt labelStr blkDefName blkRef)
+                                sz r gap lead i ang rr p0 p1 labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
   (setq sz (* beamLen 0.12))
   (if (< sz 100.0) (setq sz 100.0))
   (setq sz (* sz *CAE_SCALE_BC*))
-  (setq e1 '(0.20 -0.75 0.55))
-  (if (not (setq e1 (vec-unit e1))) (setq e1 '(0.0 1.0 0.0)))
-  (setq e3 (make-local-basis e1)
-        e2 (cadr e3)
-        e3 (caddr e3))
+  (setq r (* sz 0.10) gap (* sz 0.08))
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  ;; 引出到螺线中心附近
-  (setq lead (vec-scale e1 (* sz 0.40)))
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 6) '(10 0.0 0.0 0.0) (cons 40 r) '(210 0.0 0.0 1.0)))
+  (setq lead (list 0.0 0.0 (- (+ r gap (* sz 0.35)))))
   (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 6)
-                 '(10 0.0 0.0 0.0) (cons 11 lead)))
+                 (cons 10 (list 0.0 0.0 (- r))) (cons 11 lead)))
   (setq i 0 p0 nil)
-  (while (<= i 24)
-    (setq ang (* (/ (float i) 24.0) (* 2.5 pi)))
-    (setq r (* sz (+ 0.12 (* (/ (float i) 24.0) 0.28))))
-    (setq p1 (vec-add lead
-                      (vec-add (vec-scale e2 (* r (cos ang)))
-                               (vec-scale e3 (* r (sin ang))))))
+  (while (<= i 20)
+    (setq ang (* (/ (float i) 20.0) (* 2.2 pi)))
+    (setq rr (* sz (+ 0.10 (* (/ (float i) 20.0) 0.22))))
+    (setq p1 (list (* rr (cos ang))
+                   (* rr (sin ang))
+                   (- (+ r gap (* sz 0.35) (* (/ (float i) 20.0) (* sz 0.35))))))
     (if p0
       (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 6) (cons 10 p0) (cons 11 p1)))
     )
     (setq p0 p1 i (1+ i))
   )
-  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 6) (cons 10 p0) (cons 40 (* sz 0.05))))
-  (setq labelPt (vec-add lead (vec-scale e2 (* sz 0.55))))
+  (setq labelPt (list (* sz 0.05) (* sz 0.05) (- (+ r gap (* sz 0.85)))))
   (if (or (not unitStr) (= unitStr "")) (setq unitStr "Nmm/rad"))
   (setq labelStr (strcat "KR[" endTag "]="
                          (rtos krx 2 2) "," (rtos kry 2 2) "," (rtos krz 2 2)
                          " " unitStr))
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 6) (cons 10 labelPt)
-                 (cons 40 (* sz 0.22)) (cons 1 labelStr)))
+                 (cons 40 (* sz 0.20)) (cons 1 labelStr)))
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_BC") (cons 2 blkDefName) (cons 10 ptNode))))
   (lock-vis-layer)
@@ -1119,33 +1367,32 @@
   (list e1 e2 e3 mask)
 )
 
-(defun create-comp-bc-block (ptNode beamLen uVecs rVecs uMask rMask endTag / sz pA pB pC pD axEnd labelPt labelStr blkDefName blkRef)
+;;; 复合约束：同简单 BC
+(defun create-comp-bc-block (ptNode beamLen uVecs rVecs uMask rMask endTag /
+                             sz r gap stem c2 pL1 pL2 axEnd labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
-  (setq sz (* beamLen 0.10))
-  (if (< sz 90.0) (setq sz 90.0))
+  (setq sz (* beamLen 0.12))
+  (if (< sz 100.0) (setq sz 100.0))
   (setq sz (* sz *CAE_SCALE_BC*))
+  (setq r (* sz 0.10) gap (* sz 0.08) stem (* sz 0.70))
+  (setq c2 (list 0.0 0.0 (- (+ r gap stem r))))
+  (setq pL1 (list 0.0 0.0 (- r))
+        pL2 (list 0.0 0.0 (+ (caddr c2) r)))
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  (setq pA (list (- sz) (- sz) (- sz)) pB (list sz (- sz) (- sz)))
-  (setq pC (list sz sz (- sz)) pD (list (- sz) sz (- sz)))
-  (foreach pt (list pA pB pC pD)
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) '(10 0.0 0.0 0.0) (cons 11 pt)))
-  )
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pA) (cons 11 pB)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pB) (cons 11 pC)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pC) (cons 11 pD)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pD) (cons 11 pA)))
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 4) '(10 0.0 0.0 0.0) (cons 40 r) '(210 0.0 0.0 1.0)))
+  (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 4) (cons 10 c2) (cons 40 r) '(210 0.0 0.0 1.0)))
+  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 pL1) (cons 11 pL2)))
   (foreach u uVecs
-    (setq axEnd (vec-scale u (* sz 1.8)))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 6) '(10 0.0 0.0 0.0) (cons 11 axEnd)))
+    (setq axEnd (vec-add c2 (vec-scale u (* sz 0.55))))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 6) (cons 10 c2) (cons 11 axEnd)))
   )
-  (foreach r rVecs
-    (setq axEnd (vec-scale r (* sz 2.1)))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 2) '(10 0.0 0.0 0.0) (cons 11 axEnd)))
-    (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 2) (cons 10 axEnd) (cons 40 (* sz 0.16))))
+  (foreach rr rVecs
+    (setq axEnd (vec-add c2 (vec-scale rr (* sz 0.70))))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 2) (cons 10 c2) (cons 11 axEnd)))
   )
-  (setq labelPt (list (* sz 1.1) (* sz -1.1) (* sz -1.2)))
+  (setq labelPt (list (* sz 0.05) (* sz 0.05) (- (+ r gap stem r (* sz 0.15)))))
   (setq labelStr (strcat "BC[" endTag "] U:" uMask " R:" rMask))
-  (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 4) (cons 10 labelPt) (cons 40 (* sz 0.28)) (cons 1 labelStr)))
+  (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 4) (cons 10 labelPt) (cons 40 (* sz 0.20)) (cons 1 labelStr)))
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_BC") (cons 2 blkDefName) (cons 10 ptNode))))
   (lock-vis-layer)
@@ -1196,10 +1443,10 @@
           (setq existing (get-existing-comp-bc ent endTag))
           (setq uVecs (car existing) rVecs (cadr existing) oldHandle (caddr existing))
           (initget "Plane Slide RotAxis FixAll")
-          (setq addType (getkword (strcat (_T "\n[" "\n[") endTag "] U:" (itoa (length uVecs))
+          (setq addType (getkword (strcat (_T "\n" "\n") endTag " U:" (itoa (length uVecs))
                                           " R:" (itoa (length rVecs))
-                                          (_T " 叠加 Plane/Slide/RotAxis/FixAll [Plane/Slide/RotAxis/FixAll] <Plane>: "
-                                              " Add [Plane/Slide/RotAxis/FixAll] <Plane>: "))))
+                                          (_T " [Plane/Slide/RotAxis/FixAll] <Plane>: "
+                                              " [Plane/Slide/RotAxis/FixAll] <Plane>: "))))
           (if (not addType) (setq addType "Plane"))
           (cond
             ((= addType "Plane")
@@ -1493,7 +1740,7 @@
             (setq loadMag (cdr (nth 1 appData))
                   unitStr (cdr (nth 2 appData))
                   unitVec (cdr (nth 3 appData)))
-            (if (or (not unitStr) (/= (type unitStr) 'STR)) (setq unitStr "N/mm"))
+            (setq unitStr (normalize-dist-unit unitStr))
             (setq visBlkEnt (create-load-block ent loadMag unitVec unitStr))
             (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
             (entmod (append (entget ent) (list (list -3 (list "MY_CAE_LOAD"
@@ -1542,6 +1789,49 @@
               (setq count (1+ count) j (+ j stride))
             )
             (entmod (append (entget ent) (list (list -3 (cons "MY_CAE_POINT_LOAD" newRecords)))))
+            (entupd ent)
+          )
+        )
+        (setq i (1+ i))
+      )
+    )
+  )
+  count
+)
+
+(defun refresh-moment-loads (/ ss i ent entData beamHandle p1 p2 beamLen xdata appData j
+                               endTag momMag axisVec unitStr ptNode visBlkEnt visHandle
+                               newRecords count)
+  (setq count 0 ss (ssget "_X" '((0 . "LINE") (-3 ("MY_CAE_MOMENT")))))
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i) entData (entget ent '("MY_CAE_MOMENT")))
+        (setq beamHandle (cdr (assoc 5 entData)))
+        (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)) beamLen (distance p1 p2))
+        (setq xdata (assoc -3 entData))
+        (if xdata
+          (progn
+            (setq appData (cdr (cadr xdata)) newRecords nil j 0)
+            (while (< j (length appData))
+              (setq endTag (cdr (nth j appData))
+                    momMag (cdr (nth (+ j 1) appData))
+                    axisVec (cdr (nth (+ j 2) appData))
+                    unitStr (cdr (nth (+ j 4) appData))
+                    ptNode (if (= endTag "START") p1 p2))
+              (if (or (not unitStr) (/= (type unitStr) 'STR)) (setq unitStr "Nmm"))
+              ;; 轴已含转向符号，统一按 CCW 绘制
+              (setq visBlkEnt (create-moment-block ptNode beamLen momMag axisVec endTag unitStr "CCW"))
+              (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
+              (entmod (append (entget visBlkEnt) (list (list -3 (list "MY_CAE_MOMENT"
+                (cons 1005 beamHandle) (cons 1000 endTag))))))
+              (setq newRecords (append newRecords (list
+                (cons 1000 endTag) (cons 1040 momMag) (cons 1013 axisVec)
+                (cons 1005 visHandle) (cons 1000 unitStr))))
+              (setq count (1+ count) j (+ j 5))
+            )
+            (entmod (append (entget ent) (list (list -3 (cons "MY_CAE_MOMENT" newRecords)))))
             (entupd ent)
           )
         )
@@ -1707,7 +1997,7 @@
                         numPts (cdr (nth (+ idx 5) appData))
                         headLen 6
                         unitStr (cond
-                                  ((= loadType "EDGE_LOAD") "N/mm")
+                                  ((= loadType "EDGE_LOAD") "N-mm")
                                   ((= loadType "FACE_TOTAL_FORCE") "N")
                                   (T "MPa")))
                 )
@@ -1930,11 +2220,17 @@
                     ptNode (if (= endTag "START") p1 p2))
               (cond
                 ((= kindTag "TRANS")
-                 (if (or (not unitStr) (/= (type unitStr) 'STR)) (setq unitStr "N/mm"))
+                 (if (or (not unitStr) (/= (type unitStr) 'STR) (= unitStr "N/mm") (= unitStr "Nmm"))
+                   (setq unitStr "N-mm")
+                 )
+                 (if (= unitStr "kN/m") (setq unitStr "kN-m"))
                  (setq visBlkEnt (create-trans-spring-block ptNode beamLen k1 k2 k3 unitStr endTag))
                 )
                 ((= kindTag "ROT")
-                 (if (or (not unitStr) (/= (type unitStr) 'STR)) (setq unitStr "Nmm/rad"))
+                 (if (or (not unitStr) (/= (type unitStr) 'STR) (= unitStr "N.mm/rad"))
+                   (setq unitStr "Nmm/rad")
+                 )
+                 (if (= unitStr "N.m/rad") (setq unitStr "Nm/rad"))
                  (setq visBlkEnt (create-rot-spring-block ptNode beamLen k1 k2 k3 unitStr endTag))
                 )
                 (T (setq visBlkEnt nil))
@@ -1969,7 +2265,7 @@
   count
 )
 
-(defun c:REFRESH_ALL (/ ssOld i cDist cPt cBc cComp cSec cSpring cShLoad cShBc cShProp)
+(defun c:REFRESH_ALL (/ ssOld i cDist cPt cMom cBc cComp cSec cSpring cShLoad cShBc cShProp)
   (vl-load-com)
   (unlock-vis-layer)
   (setq ssOld (ssget "_X" '((8 . "CAE_VIS_LOAD,CAE_VIS_BC,CAE_VIS_SEC,CAE_LOAD_VIS"))))
@@ -1984,6 +2280,7 @@
   )
   (setq cDist   (refresh-dist-loads)
         cPt     (refresh-point-loads)
+        cMom    (refresh-moment-loads)
         cBc     (refresh-simple-bcs)
         cComp   (refresh-comp-bcs)
         cSpring (refresh-springs)
@@ -1995,6 +2292,7 @@
   (princ (strcat (_T "\n[刷新] 梁截面=" "\n[Refresh] BeamSec=") (itoa cSec)
                  (_T " 分布=" " Dist=") (itoa cDist)
                  (_T " 集中=" " Point=") (itoa cPt)
+                 (_T " 弯矩=" " Moment=") (itoa cMom)
                  (_T " 约束=" " BC=") (itoa cBc)
                  (_T " 复合=" " Comp=") (itoa cComp)
                  (_T " 弹簧=" " Spring=") (itoa cSpring)))
@@ -2177,7 +2475,10 @@
 )
 
 ;;; 创建【不可分割的整体】板壳边界线载荷块 (*U) -> 放入 CAE_VIS_LOAD
-(defun create-shell-edgeload-block (ptsList loadMag unitVec unitStr / pOrigin totalLen i arrowLen locPts pEndRel ptOnEdge ptTail prevTail labelPt labelStr blkDefName blkRef)
+;;; 与 K/KR/BC 相同：沿载荷方向缩回一圆半径，尖端落在圆周
+(defun create-shell-edgeload-block (ptsList loadMag unitVec unitStr / pOrigin totalLen i tipR arrowLen
+                                           locPts pEndRel ptOnEdge tip ptTail prevTail
+                                           labelPt labelStr blkDefName blkRef)
   (unlock-vis-layer)
   (setq pOrigin (car ptsList))
   (setq totalLen 0.0 i 0)
@@ -2185,10 +2486,9 @@
     (setq totalLen (+ totalLen (distance (nth i ptsList) (nth (1+ i) ptsList))))
     (setq i (1+ i))
   )
-  
   (setq arrowLen (* (max (* totalLen 0.14) 80.0) *CAE_SCALE_LOAD*))
+  (setq tipR (* arrowLen 0.08))
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  
   (if (= (length ptsList) 2)
     (progn
       (setq pEndRel (vec-sub (cadr ptsList) pOrigin))
@@ -2200,23 +2500,21 @@
     )
     (setq locPts (mapcar '(lambda (p) (vec-sub p pOrigin)) ptsList))
   )
-  
   (setq prevTail nil)
   (foreach ptOnEdge locPts
+    (setq tip (vec-sub ptOnEdge (vec-scale unitVec tipR)))
     (setq ptTail (vec-sub ptOnEdge (vec-scale unitVec arrowLen)))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 ptTail) (cons 11 ptOnEdge)))
-    (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 1) (cons 10 ptOnEdge) (cons 40 (* arrowLen 0.08))))
+    (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 1) (cons 10 ptOnEdge) (cons 40 tipR)))
+    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 ptTail) (cons 11 tip)))
     (if prevTail
       (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 1) (cons 10 prevTail) (cons 11 ptTail)))
     )
     (setq prevTail ptTail)
   )
-  
   (setq labelPt (vec-sub (nth (/ (length locPts) 2) locPts) (vec-scale unitVec (* arrowLen 1.25))))
-  (if (or (not unitStr) (= unitStr "")) (setq unitStr "N/mm"))
+  (setq unitStr (normalize-dist-unit unitStr))
   (setq labelStr (strcat "q_edge=" (rtos loadMag 2 1) " " unitStr " (" (rtos (car unitVec) 2 2) "," (rtos (cadr unitVec) 2 2) "," (rtos (caddr unitVec) 2 2) ")"))
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 1) (cons 10 labelPt) (cons 40 (* arrowLen 0.24)) (cons 1 labelStr)))
-  
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_LOAD") (cons 2 blkDefName) (cons 10 pOrigin))))
   (lock-vis-layer)
@@ -2941,10 +3239,10 @@
 (vl-load-com)
 (register-all-cae-apps)
 (lock-vis-layer)
-(princ (_T "\n[CAE] 梁+板壳已加载。默认单位: N/mm、N、MPa、弹簧 N/mm 与 Nmm/rad。语言: SETLANG"
-           "\n[CAE] Beam+Shell loaded. Defaults: N/mm, N, MPa, spring N/mm & Nmm/rad. Lang: SETLANG"))
-(princ (_T "\n  梁载荷: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD | 梁约束: SETBC/DELBC/ADDBC | 弹性支撑: SETSPRING/DELSPRING"
-           "\n  Beam loads: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD | Beam BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING"))
+(princ (_T "\n[CAE] 梁+板壳已加载。默认单位: 线载荷 N-mm、N、MPa；线刚度 N-mm；角刚度 Nmm/rad。语言: SETLANG"
+           "\n[CAE] Beam+Shell loaded. Defaults: line load N-mm, N, MPa; K N-mm; KR Nmm/rad. Lang: SETLANG"))
+(princ (_T "\n  梁载荷: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT | 约束: SETBC/DELBC/ADDBC | 弹簧: SETSPRING/DELSPRING"
+           "\n  Beam loads: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT | BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING"))
 (princ (_T "\n  截面: SETSEC/DELSEC | 板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"
            "\n  Sec: SETSEC/DELSEC | Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"))
 (princ (_T "\n  显示(梁+板壳): REFRESH_ALL/SETSCALE/TOGGLELOAD/TOGGLEBC/TOGGLESEC"

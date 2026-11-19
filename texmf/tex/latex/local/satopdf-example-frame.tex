@@ -1,0 +1,53 @@
+% Minimal recreation of the clamped-frame demo (satopdf only)
+\documentclass[tikz]{standalone}
+\usepackage{satopdf}
+\usetikzlibrary{calc}
+
+\tikzset{stpFrame/.pic={
+  \stpPoint{A}{0}{3}\stpPoint{B}{3}{3}\stpPoint{C}{6}{3}\stpPoint{D}{9}{3}
+  \stpPoint{E}{3}{0}\stpPoint{F}{6}{0}
+  % 刚架：beam 固接（无铰圆）；墙式固支
+  \foreach \a/\b in {A/B,B/C,C/D,E/B,F/C}{\stpMember{beam}{\a}{\b}}
+  % 单梁端全固支墙：type=wall；angle = 外侧法向
+  \stpSupport{A}[type=wall, angle=-90]
+  \stpSupport{D}[type=wall, angle=90]
+  \stpSupport{E}[type=wall]
+  \stpSupport{F}[type=wall]
+  \foreach \n/\a in {A/below right,B/below right,C/below right,
+                     D/below left,E/above right,F/above right}
+    {\stpNotation{node}{\n}{\n}[\a]}
+}}
+
+\begin{document}
+\begin{tikzpicture}
+  \draw (0,0) node[below]{O};
+  \draw[<->] (0.5,0) node[right]{$x$}-|(0,0.5) node[left]{$y$};
+  \pic {stpFrame};
+
+  \begin{scope}[color=red]
+    \stpLoad{moment}{B}[30][200][0.3cm][$\overline{\mathrm{M}}$]
+  \end{scope}
+
+  \stpDimensioning{vert}{0,0}{A}{-0.75}[$L$]
+  \stpDimensioning{horiz}{0,0}{E}{-0.75}[$L$]
+  \stpDimensioning{horiz}{E}{F}{-0.75}[$L$]
+  \stpDimensioning{horiz}{F}{9,0}{-0.75}[$L$]
+  \draw (7.5,1) node[right,align=left]{$EJ$\\$EA\to\infty$}
+    to[out=180,in=0] (6,1.5)
+    (7.5,1) to[out=180,in=0] (7.5,3);
+
+  \begin{scope}[yshift=-5cm]
+    \pic {stpFrame};
+    \draw[gray]
+      (A) to[out=0,in=150] (B) to[out=-30,in=160] (C) to[out=-20,in=180] (D)
+      (E) to[out=90,in=240] (B) (F) to[out=90,in=250] (C);
+    \draw[blue,rotate=-30] ($(B)+(-0.75,0)$)--($(B)+(0.75,0)$);
+    \draw[-stealth,blue] (B)++(180:6mm) node[above left]{\small$\varphi_\mathrm{B}$}
+      arc[start angle=180,end angle=150,radius=6mm];
+    \draw[blue,rotate=-20] ($(C)+(-0.75,0)$)--($(C)+(0.75,0)$);
+    \draw[-stealth,blue] (C)++(180:6mm) node[above left]{\small$\varphi_\mathrm{C}$}
+      arc[start angle=180,end angle=160,radius=6mm];
+    \draw[|-stealth] (0,3.25)--+(0.5,0) node[above]{$s$};
+  \end{scope}
+\end{tikzpicture}
+\end{document}

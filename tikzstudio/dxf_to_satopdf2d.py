@@ -107,6 +107,83 @@ def _unit_scale(span: float) -> str:
     return "0.14mm"
 
 
+def _degree_map(members: list[tuple]) -> dict[tuple, list[tuple]]:
+    """node → list of other endpoints of incident members."""
+    adj: dict[tuple, list[tuple]] = {}
+    for a, b in members:
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    return adj
+
+
+def _mask_to_kind(mask: str) -> str | None:
+    """Map UXUYUZ RXRYRZ → satopdf support kind (before single/shared refine)."""
+    bits = [(c == "1") for c in (mask or "").ljust(6, "0")[:6]]
+    ux, uy, _uz, _rx, _ry, rz = bits
+    if ux and uy and rz:
+        return "fixed"
+    if ux and uy:
+        return "pin"
+    if uy and not ux:
+        return "roller"
+    if ux and not uy:
+        return "rollerX"
+    if rz:
+        return "slider"
+    if ux or uy:
+        return "fixed"
+    return None
+
+
+def _outward_angle(node: tuple, other: tuple) -> float:
+    """Rotate so local -Y points away from the member along the beam axis.
+
+    Wall/triangle hatch grows on local -Y; for a single-member end the glyph
+    sits on the beam extension opposite the member body.
+    """
+    alpha = math.degrees(math.atan2(other[1] - node[1], other[0] - node[0]))
+    return (alpha + 270.0) % 360.0
+
+
+def _fmt_ang(ang: float) -> str:
+    a = round(ang % 360.0, 1)
+    if abs(a - round(a)) < 1e-6:
+        return str(int(round(a)))
+    return f"{a:g}"
+
+
+def _emit_support(name: str, mask: str, node: tuple, adj: dict) -> str:
+    """Shared joint → fixed/pin triangle; single-member end → wall (+ beam angle)."""
+    kind = _mask_to_kind(mask)
+    if kind is None:
+        return f"  % skip BC [{mask}] at {name} (no 2D mapping)"
+    others = adj.get(node, [])
+    deg = len(others)
+    if deg == 1 and kind == "fixed":
+        # Single-member clamp: hatch wall on beam extension (away from member)
+        ang = _outward_angle(node, others[0])
+        return (
+            f"  \\stpSupport{{{name}}}[type=wall, angle={_fmt_ang(ang)}, size=12mm]"
+            f"  % single-member fixed [{mask}]"
+        )
+    if deg == 1 and kind in ("pin", "roller", "rollerX", "slider"):
+        ang = _outward_angle(node, others[0])
+        return (
+            f"  \\stpSupport{{{name}}}[type={kind}, angle={_fmt_ang(ang)}, size=12mm]"
+            f"  % single-member [{mask}]"
+        )
+    # Shared by ≥2 members (or floating BC): joint glyph, default ground angle
+    if kind == "fixed":
+        return (
+            f"  \\stpSupport{{{name}}}[type=fixed, angle=0, size=12mm]"
+            f"  % shared-node fixed [{mask}] deg={deg}"
+        )
+    return (
+        f"  \\stpSupport{{{name}}}[type={kind}, angle=0, size=12mm]"
+        f"  % shared-node [{mask}] deg={deg}"
+    )
+
+
 def dxf_to_satopdf2d(
     data: bytes | None = None,
     *,
@@ -229,24 +306,34 @@ def dxf_to_satopdf2d(
     for a, b in members:
         L.append(f"  \\stpMember{{beam}}{{{nid[a]}}}{{{nid[b]}}}")
 
+    adj = _degree_map(members)
     for p, mask in bcs:
-        name = nid[_nearest(ordered, p)]
-        L.append(f"  \\stpSupportFromMask{{{mask}}}{{{name}}}  % BC [{mask}]")
+        node = _nearest(ordered, p)
+        name = nid[node]
+        L.append(_emit_support(name, mask, node, adj))
 
     for p in springs:
-        name = nid[_nearest(ordered, p)]
-        L.append(f"  \\stpSupport{{{name}}}[type=spring, angle=0, label=$k$]")
+        node = _nearest(ordered, p)
+        name = nid[node]
+        others = adj.get(node, [])
+        ang = _outward_angle(node, others[0]) if len(others) == 1 else 0.0
+        L.append(
+            f"  \\stpSupport{{{name}}}[type=spring, angle={_fmt_ang(ang)}, label=$k$]"
+        )
 
     for ld in qloads:
         a = nid[_nearest(ordered, ld["a"])]
         b = nid[_nearest(ordered, ld["b"])]
         dx, dy, _dz = ld["dir"]
         lab = f"$q={ld['mag']:g}$"
+        # Nominal spacing ~1/6 of span → 7 uniformly spaced arrows (incl. ends)
         if abs(dx) < 1e-9 and dy < 0:
-            L.append(f"  \\stpLineLoad{{global}}{{{a}}}{{{b}}}[0.85][0.85][0.12][{lab}]")
+            L.append(
+                f"  \\stpLineLoad{{global}}{{{a}}}{{{b}}}[0.85][0.85][0.1667][{lab}]"
+            )
         else:
             L.append(
-                f"  \\stpLineLoadCAE{{{a}}}{{{b}}}{{{dx:g},{dy:g}}}[{lab}]"
+                f"  \\stpLineLoadCAE{{{a}}}{{{b}}}{{{dx:g},{dy:g}}}[{lab}][7]"
             )
 
     for p, mag in moments:
