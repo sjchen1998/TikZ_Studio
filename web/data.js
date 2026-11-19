@@ -40,96 +40,159 @@ const TPLS = {
   buck: "\\begin{circuitikz}[font=\\small, european]\n  \\draw (0,0) node[ground]{} to[V, l=$V_{in}$] (0,3) to[nos, l=$Q_1$] (2.5,3) to[L, l=$L_1$] (5.5,3) -- (7,3) node[right]{$V_{out}$};\n  \\draw (2.5,0) node[ground]{} to[D*, l=$D_1$] (2.5,3);\n  \\draw (5.5,3) to[C, l=$C_o$] (5.5,0) node[ground]{};\n\\end{circuitikz}",
   opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.35,2.49) -- (1.35,3.5) to[R, l=$R_f$] (4.2,3.5) -| (op.out);\n  \\draw (1.35,3.5) to[R, l=$R_1$] (-0.55,3.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n  \\node[circ] at (1.35,3.5) {};\n  \\node[circ] at (4.19,3.5) {};\n  \\node[circ] at (op.east) {};\n\\end{circuitikz}",
   block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {Sensor};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
-  struct2d: String.raw`\begin{tikzpicture}
-  \sa2scaling{.65};
-  \sa2point{a}{0}{1};
-  \sa2point{b}{3}{1};
-  \sa2point{c}{11}{3};
-  \sa2point{d}{19}{1};
-  \sa2point{e}{22}{1};
-  \sa2point{f}{3}{0};
-  \sa2point{g}{11}{-2};
-  \sa2point{h}{19}{0};
-  \sa2beam{1}{a}{b}[0][1];
-  \sa2beam{1}{b}{c}[1][1];
-  \sa2beam{1}{c}{d}[1][1];
-  \sa2beam{1}{d}{e}[1][0];
-  \sa2beam{1}{f}{b};
-  \sa2beam{1}{d}{h};
-  \sa2beam{2}{f}{g};
-  \sa2beam{2}{g}{h};
-  \sa2beam{2}{g}{c};
-  \sa2support{1}{f};
-  \sa2support{2}{h};
-  \sa2hinge{1}{f};
-  \sa2hinge{1}{h};
-  \sa2hinge{1}{g};
-  \sa2hinge{2}{c}[b][d];
-  \sa2lineload{2}{a}{b}[1][1][.5];
-  \sa2lineload{2}{b}{c};
-  \sa2dimensioning{1}{a}{b}{-2.5}[$3,0$];
-  \sa2dimensioning{1}{b}{c}{-2.5}[$8,0$];
-  \sa2dimensioning{1}{c}{d}{-2.5}[$8,0$];
-  \sa2dimensioning{1}{d}{e}{-2.5}[$3,0$];
-  \sa2dimensioning{2}{f}{a}{-1}[$1,0$];
-  \sa2dimensioning{2}{g}{f}{-1}[$2,0$];
-  \sa2dimensioning{2}{a}{c}{-1}[$2,0$];
-  \sa2influenceline{a}{e}{3}[.3];
-  \sa2notation{1}{a}{$1$}[left];
-  \sa2notation{1}{b}{$2$}[below right=2mm];
-  \sa2notation{1}{c}{$3$};
-  \sa2notation{1}{d}{$4$}[above];
-  \sa2notation{1}{e}{$5$}[above];
-  \sa2notation{1}{f}{$6$}[left=2mm];
-  \sa2notation{1}{g}{$7$}[below=2mm];
-  \sa2notation{1}{h}{$8$}[right=2mm];
-  \sa2notation{4}{f}{g}[$S$];
+  // satopdf frame demo (from satopdf-frame.tex / frame.dxf)
+  struct2d: String.raw`\begin{tikzpicture}[x=0.14mm,y=0.14mm]
+  % Edit: load glyph color / load label text color (or set either alone)
+  \stpset{
+    support size=12mm,
+    hinge radius=1.5mm,
+    load color=red!75!black,
+    load label color=red!75!black
+  }
+  \stpNode{N0}{900.0000,350.0000}
+  \stpNode{N1}{900.0000,0.0000}
+  \stpNode{N2}{1200.0000,180.0000}
+  \stpNode{N3}{1200.0000,0.0000}
+  \stpNode{N4}{600.0000,233.3333}
+  \stpNode{N5}{600.0000,0.0000}
+  \stpNode{N6}{300.0000,116.6667}
+  \stpNode{N7}{300.0000,0.0000}
+  \stpNode{N8}{0.0000,0.0000}
+  \stpNode{Htop}{0.0000,350.0000}
+  \stpMember{truss}{N0}{N1}[1][1]
+  \stpMember{beam}{N1}{N2}
+  \stpMember{beam}{N1}{N3}
+  \stpMember{beam}{N2}{N0}
+  \stpMember{beam}{N4}{N5}
+  \stpMember{beam}{N6}{N7}
+  \stpMember{beam}{N8}{N7}
+  \stpMember{beam}{N7}{N5}
+  \stpMember{beam}{N5}{N1}
+  \stpMember{beam}{N0}{N8}
+  \stpMember{beam}{N1}{N4}
+  \stpMember{beam}{N5}{N6}
+  \stpMember{beam}{N2}{N3}
+  \stpHinge{gap}{N0}[N8][N2][N1]
+  \stpHinge{full}{N1}
+  \stpSupport{N8}[type=fixed, angle=0, size=12mm]
+  \stpSupport{N3}[type=roller, angle=0, size=12mm]
+  % N5: Y-direction elastic support (spring along local -Y)
+  \stpSupport{N5}[type=spring, angle=0, label=$k$]
+  \stpLineLoad{global}{N0}{N8}[0.85][0.85][0.12][$q$]
+  \stpLoad{moment}{N2}[30][200][0][$M$]
+  \stpDimensioning{horiz}{N8}{N3}{-77.00}[$L$]
+  \stpDimensioning{vert}{N8}{Htop}{-120.00}[$H$]
+  \stpNotation{node}{N8}{A}[below left=2mm]
+  \stpNotation{node}{N3}{B}[below right=2mm]
+  \stpNotation{node}{N2}{C}[right=2mm]
 \end{tikzpicture}`,
-  struct3d: String.raw`\sa3setcoords{-25}{10}[1][1.2]
-%\sa3showpoint
-\begin{tikzpicture}[sa3Coords]
-  \sa3setaxis{2}
-  \sa3point{a}{0}{0}{0};
-  \sa3point{b}{3}{0}{0};
-  \sa3point{c}{6}{0}{0};
-  \sa3point{d}{9}{0}{0};
-  \sa3point{e}{12}{0}{0};
-  \sa3point{f}{0}{3}{0};
-  \sa3point{g}{3}{3}{0};
-  \sa3point{h}{6}{3}{0};
-  \sa3point{i}{9}{3}{0};
-  \sa3point{j}{12}{3}{0};
-  \sa3axis{1}{a};
-  \sa3beam{1}{f}{b};
-  \sa3beam{1}{b}{h};
-  \sa3beam{1}{h}{d};
-  \sa3beam{1}{d}{j};
-  \sa3beam{3}{a}{e};
-  \sa3beam{3}{f}{j};
-  \sa3beam{3}{a}{f};
-  \sa3beam{3}{b}{g};
-  \sa3beam{3}{c}{h};
-  \sa3beam{3}{d}{i};
-  \sa3beam{3}{e}{j};
-  \sa3support{1}{b};
-  \sa3support{1}{h}[0][0];
-  \sa3support{1}{d}[0];
-  \sa3hinge{2}{b}[f][h][1];
-  \sa3hinge{2}{h}[b][d][1];
-  \sa3hinge{2}{d}[h][j][1];
-  \sa3lineload{5}{0}{f}{b}[.5][.5][.11];
-  \sa3lineload{5}{0}{b}{h}[.5][.5][.11];
-  \sa3lineload{5}{0}{h}{d}[.5][.5][.11];
-  \sa3lineload{5}{0}{d}{j}[.5][.5][.11];
-  \sa3dimensioning{xy}{f}{g}{4.5}[$3~m$];
-  \sa3dimensioning{xy}{g}{h}{4.5}[$3~m$];
-  \sa3dimensioning{xy}{h}{i}{4.5}[$3~m$];
-  \sa3dimensioning{xy}{i}{j}{4.5}[$3~m$];
-  \sa3dimensioning{yx}{e}{j}{13}[$3~m$];
-  \sa3notation{1}{f}{$q=10~kN/m$}[above left=3mm];
-  \sa3notation{1}{b}{$A$}[below left];
-  \sa3notation{1}{h}{$C$}[right=2mm];
-  \sa3notation{1}{d}{$B$}[below left];
+  struct3d: String.raw`\stpDsetCoords{-25}{10}[1][1.2]
+\stpDsetAxis{xyz}
+\renewcommand{\stpDscale}{0.001}
+\renewcommand{\stpDsupLen}{0.35}
+\renewcommand{\stpDhingeR}{0.9mm}
+\renewcommand{\stpDaxLen}{1.2}
+\begin{tikzpicture}[stpDCoords]
+  \stpset{load color=red!75!black, load label color=red!75!black}
+  \stpDpoint{N0}{0.0000}{0.0000}{0.0000}
+  \stpDpoint{N1}{200.0000}{0.0000}{0.0000}
+  \stpDpoint{N2}{600.0000}{0.0000}{0.0000}
+  \stpDpoint{N3}{800.0000}{0.0000}{0.0000}
+  \stpDpoint{N4}{0.0000}{1000.0000}{0.0000}
+  \stpDpoint{N5}{0.0000}{1000.0000}{1200.0000}
+  \stpDpoint{N6}{800.0000}{1000.0000}{0.0000}
+  \stpDpoint{N7}{800.0000}{1000.0000}{1200.0000}
+  \stpDpoint{N8}{0.0000}{2000.0000}{0.0000}
+  \stpDpoint{N9}{0.0000}{2000.0000}{1200.0000}
+  \stpDpoint{N10}{800.0000}{2000.0000}{0.0000}
+  \stpDpoint{N11}{800.0000}{2000.0000}{1200.0000}
+  \stpDpoint{N12}{0.0000}{3000.0000}{0.0000}
+  \stpDpoint{N13}{0.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N14}{800.0000}{3000.0000}{0.0000}
+  \stpDpoint{N15}{800.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N16}{0.0000}{4000.0000}{0.0000}
+  \stpDpoint{N17}{0.0000}{4000.0000}{1200.0000}
+  \stpDpoint{N18}{800.0000}{4000.0000}{0.0000}
+  \stpDpoint{N19}{800.0000}{4000.0000}{1200.0000}
+  \stpDpoint{N20}{0.0000}{5000.0000}{0.0000}
+  \stpDpoint{N21}{0.0000}{5000.0000}{1200.0000}
+  \stpDpoint{N22}{800.0000}{5000.0000}{0.0000}
+  \stpDpoint{N23}{800.0000}{5000.0000}{1200.0000}
+  \stpDpoint{N24}{0.0000}{6000.0000}{0.0000}
+  \stpDpoint{N25}{200.0000}{6000.0000}{0.0000}
+  \stpDpoint{N26}{600.0000}{6000.0000}{0.0000}
+  \stpDpoint{N27}{800.0000}{6000.0000}{0.0000}
+  \stpDaxis{N0}
+  \stpDmember{beam}{N0}{N4}
+  \stpDmember{beam}{N4}{N8}
+  \stpDmember{beam}{N8}{N12}
+  \stpDmember{beam}{N12}{N16}
+  \stpDmember{beam}{N16}{N20}
+  \stpDmember{beam}{N20}{N24}
+  \stpDmember{beam}{N4}{N5}
+  \stpDmember{beam}{N8}{N9}
+  \stpDmember{beam}{N12}{N13}
+  \stpDmember{beam}{N16}{N17}
+  \stpDmember{beam}{N20}{N21}
+  \stpDmember{truss}{N0}{N5}[1][1]
+  \stpDmember{beam}{N9}{N13}
+  \stpDmember{beam}{N13}{N17}
+  \stpDmember{beam}{N17}{N21}
+  \stpDmember{truss}{N21}{N24}[1][1]
+  \stpDmember{beam}{N3}{N6}
+  \stpDmember{beam}{N6}{N10}
+  \stpDmember{beam}{N10}{N14}
+  \stpDmember{beam}{N14}{N18}
+  \stpDmember{beam}{N18}{N22}
+  \stpDmember{beam}{N22}{N27}
+  \stpDmember{beam}{N6}{N7}
+  \stpDmember{beam}{N10}{N11}
+  \stpDmember{beam}{N14}{N15}
+  \stpDmember{beam}{N18}{N19}
+  \stpDmember{beam}{N22}{N23}
+  \stpDmember{truss}{N3}{N7}[1][1]
+  \stpDmember{beam}{N11}{N15}
+  \stpDmember{beam}{N15}{N19}
+  \stpDmember{beam}{N19}{N23}
+  \stpDmember{truss}{N23}{N27}[1][1]
+  \stpDmember{beam}{N0}{N1}
+  \stpDmember{beam}{N1}{N2}
+  \stpDmember{beam}{N2}{N3}
+  \stpDmember{beam}{N4}{N6}
+  \stpDmember{beam}{N8}{N10}
+  \stpDmember{beam}{N12}{N14}
+  \stpDmember{beam}{N16}{N18}
+  \stpDmember{beam}{N21}{N23}
+  \stpDmember{beam}{N17}{N19}
+  \stpDmember{beam}{N20}{N22}
+  \stpDmember{beam}{N24}{N25}
+  \stpDmember{beam}{N25}{N26}
+  \stpDmember{beam}{N26}{N27}
+  \stpDmember{beam}{N13}{N15}
+  \stpDmember{truss}{N7}{N10}[1][1]
+  \stpDmember{truss}{N10}{N15}[1][1]
+  \stpDmember{truss}{N15}{N18}[1][1]
+  \stpDmember{truss}{N18}{N23}[1][1]
+  \stpDmember{truss}{N5}{N8}[1][1]
+  \stpDmember{truss}{N8}{N13}[1][1]
+  \stpDmember{truss}{N13}{N16}[1][1]
+  \stpDmember{truss}{N16}{N21}[1][1]
+  \stpDmember{beam}{N1}{N25}
+  \stpDmember{beam}{N2}{N26}
+  \stpDmember{beam}{N7}{N11}
+  \stpDmember{beam}{N11}{N9}
+  \stpDmember{beam}{N9}{N5}
+  \stpDmember{beam}{N5}{N7}
+  \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDsupport{pin}{N3}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDsupport{pin}{N24}[1][0][1][0][0][0]  % BC GLOBAL[101000]
+  \stpDsupport{pin}{N27}[1][0][1][0][0][0]  % BC GLOBAL[101000]
+  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
+  \node[stpLabel, below left=1.5mm] at (N0) {$A$};
+  \node[stpLabel, below right=1.5mm] at (N3) {$B$};
+  \node[stpLabel, above left=1.5mm] at (N24) {$D$};
+  \node[stpLabel, above right=1.5mm] at (N27) {$C$};
 \end{tikzpicture}`,
   plot: String.raw`\begin{tikzpicture}
     \begin{axis}[

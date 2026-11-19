@@ -90,7 +90,7 @@ PREAMBLE = (
     "\\usepackage{tikz-3dplot}\n"
     "\\usepackage[outline]{contour}\n"
     "\\usepackage[siunitx]{circuitikz}\n"
-    "\\usepackage{stanli}\n"
+    "\\usepackage{satopdf}\n"
     "\\usepackage{pgfplots}\n"
     "\\pgfplotsset{compat=1.18}\n"
     "\\usepgfplotslibrary{fillbetween}\n"
@@ -651,6 +651,38 @@ def parse_points(code):
             if m.group(6): pt["uz"], pt["zs"] = m.group(6), _uscale(m.group(6))
             pts.append(pt)
             for k in range(s, e): used.add(k)
+        # satopdf: \stpNode{name}{x,y}  — brace coords (CAE / mm models)
+        for m in re.finditer(
+            r'\\stpNode\s*\{([A-Za-z][A-Za-z0-9_]*)\}\s*\{\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\}',
+            line,
+        ):
+            xs, xe = m.start(2), m.end(3)
+            s, e = off + xs, off + xe
+            if s in used: continue
+            xv, yv = float(m.group(2)), float(m.group(3))
+            pid = len(probes)
+            probes.append((pid, f"{m.group(2).strip()},{m.group(3).strip()}", s))
+            pts.append({
+                "kind": "abs", "stp": "node", "label": m.group(1), "base": m.group(1),
+                "x": xv, "y": yv, "sx": sx_off, "sy": sy_off, "s": s, "e": e, "l": ln, "pid": pid,
+            })
+            for k in range(off + m.start(), off + m.end()): used.add(k)
+        # satopdf: \stpPoint{name}{x}{y}
+        for m in re.finditer(
+            r'\\stpPoint\s*\{([A-Za-z][A-Za-z0-9_]*)\}\s*\{\s*([-+]?\d*\.?\d+)\s*\}\s*\{\s*([-+]?\d*\.?\d+)\s*\}',
+            line,
+        ):
+            xs, xe = m.start(2), m.end(3)
+            s, e = off + xs, off + xe
+            if s in used: continue
+            xv, yv = float(m.group(2)), float(m.group(3))
+            pid = len(probes)
+            probes.append((pid, f"{m.group(2).strip()},{m.group(3).strip()}", s))
+            pts.append({
+                "kind": "abs", "stp": "point", "label": m.group(1), "base": m.group(1),
+                "x": xv, "y": yv, "sx": sx_off, "sy": sy_off, "s": s, "e": e, "l": ln, "pid": pid,
+            })
+            for k in range(off + m.start(), off + m.end()): used.add(k)
         for m in p_abs.finditer(line):
             lp = line.find('(', m.start(), m.end()); s, e = off + lp, off + m.end()
             if s in used: continue
@@ -705,22 +737,35 @@ def _env_body_empty(code):
         kept.append(line[:cut])
     return not "".join(kept).strip()
 
-def prep(raw, probes=None, with_cal=True):
+def _cal_span(pts):
+    """TikZ-unit span for calibration markers. Unit=1 fails when x=0.14mm (1 unit ≈ 0.4pt)."""
+    m = 0.0
+    for pt in pts or []:
+        if pt.get("kind") in ("abs", "xyz"):
+            m = max(m, abs(float(pt.get("x", 0) or 0)), abs(float(pt.get("y", 0) or 0)))
+            if pt.get("z") is not None:
+                m = max(m, abs(float(pt["z"] or 0)))
+    if m <= 20:
+        return 1.0
+    return float(max(50.0, round(m * 0.1, 1)))
+
+def prep(raw, probes=None, with_cal=True, cal_span=1.0):
     is_doc = (r"\documentclass" in raw or r"\begin{document}" in raw)
     buckets = {}
     for pid, expr, at in (probes or []):
         g, b = (pid // 200) + 10, (pid % 200) + 10
-        frag = f"\\definecolor{{cp{pid}}}{{RGB}}{{200,{g},{b}}}\\fill[cp{pid},opacity=0.05]({expr})circle(0.4pt);\n"
+        frag = f"\\definecolor{{cp{pid}}}{{RGB}}{{200,{g},{b}}}\\fill[cp{pid},opacity=0.05]({expr})circle(0.6pt);\n"
         buckets.setdefault(_inject_at(raw, at), []).append(frag)
     end = _picture_end(raw)
     if end < len(raw):
         if _env_body_empty(raw):
             buckets.setdefault(end, []).append("\\path (-4,-3) rectangle (5,5);\n")
         if with_cal:
+            s = f"{cal_span:g}"
             cal = ("\\definecolor{ca}{RGB}{254,1,253}\\definecolor{cb}{RGB}{1,254,252}"
                    "\\definecolor{cc}{RGB}{254,80,1}\\definecolor{cd}{RGB}{1,80,254}"
-                   "\\fill[ca,opacity=0.05](0,0)circle(0.5pt);\\fill[cb,opacity=0.05](1,1)circle(0.5pt);"
-                   "\\fill[cc,opacity=0.05](1,0)circle(0.5pt);\\fill[cd,opacity=0.05](0,1)circle(0.5pt);\n")
+                   f"\\fill[ca,opacity=0.05](0,0)circle(0.6pt);\\fill[cb,opacity=0.05]({s},{s})circle(0.6pt);"
+                   f"\\fill[cc,opacity=0.05]({s},0)circle(0.6pt);\\fill[cd,opacity=0.05](0,{s})circle(0.6pt);\n")
             buckets.setdefault(end, []).append(cal)
     text = raw
     for pos in sorted(buckets, reverse=True):
@@ -805,7 +850,8 @@ def run_tex(req: Req):
         pts, probes, ports = parse_points(req.code)
     else:
         pts, probes, ports = [], [], []
-    pb, err = build_pdf(prep(req.code, probes if req.pick else None, with_cal=req.pick), req.compiler)
+    span = _cal_span(pts) if req.pick else 1.0
+    pb, err = build_pdf(prep(req.code, probes if req.pick else None, with_cal=req.pick, cal_span=span), req.compiler)
     if err: return {"ok": False, "err": err}
     doc = pymupdf.open(stream=pb, filetype="pdf"); pg = next(iter(doc))
     svg, r = pg.get_svg_image(matrix=pymupdf.Identity), pg.rect
@@ -813,12 +859,19 @@ def run_tex(req: Req):
         doc.close()
         return {"ok": True, "svg": svg, "w": r.width, "h": r.height, "coords": [], "ports": [], "cal": None}
     cal, pm = extract_pos(pg); doc.close()
+    if cal and span != 1.0:
+        for k in ("xx", "xy", "yx", "yy"):
+            cal[k] /= span
     if cal:
         for pt in pts:
             if pt.get("pid", -1) == -1:
                 if "wx" not in pt: pt["wx"] = pt["x"] + pt.get("sx", 0.0); pt["wy"] = pt["y"] + pt.get("sy", 0.0)
             elif pt["pid"] in pm:
                 pt["wx"], pt["wy"] = _to_tikz(cal, *pm[pt["pid"]])
+            elif pt.get("kind") in ("abs", "xyz"):
+                # probe color missed — numeric TikZ coords still place the handle
+                pt["wx"] = pt["x"] + pt.get("sx", 0.0)
+                pt["wy"] = pt["y"] + pt.get("sy", 0.0)
             for key, pidk in (("c", "cpid"), ("b", "bpid")):
                 if pt.get(pidk) in pm:
                     pt[key + "x"], pt[key + "y"] = _to_tikz(cal, *pm[pt[pidk]])

@@ -1,0 +1,1568 @@
+%=============================================================================
+% satopdf.sty — Structural Analysis diagrams for CAE → PDF (TikZ)
+% Version: 0.3.0 (2026-11-19)
+%
+% Materials-mechanics 2D+3D library (stanli feature parity + CAE contracts).
+% Units: mm, N, N-mm (=N/mm), N·mm, K: N-mm, KR: Nmm/rad
+% Prefix: \stp… / stp…   (no clash with stanli \sa2/\sa3)
+% No digits in control-sequence names (TeX limitation).
+%
+% 2D: \begin{tikzpicture}[x=1mm,y=1mm]  or  \stpScaling{0.01}
+% 3D: \stpDsetCoords{…} then \begin{tikzpicture}[stpDCoords]
+%=============================================================================
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{satopdf}[2026/11/19 v0.3.0 CAE structural diagrams]
+
+\RequirePackage{ifthen}
+\RequirePackage{tikz}
+\RequirePackage{pgfkeys}
+\RequirePackage{pgffor}
+\usetikzlibrary{%
+  calc,arrows.meta,decorations.pathmorphing,decorations.pathreplacing,%
+  patterns,positioning,backgrounds,3d%
+}
+
+%=============================================================================
+% Parameters (tunable via \stpset / individual macros)
+%=============================================================================
+\newcommand{\stpHugeLW}{2.0pt}
+\newcommand{\stpBigLW}{1.5pt}
+\newcommand{\stpNormalLW}{1.0pt}
+\newcommand{\stpSmallLW}{0.7pt}
+\newcommand{\stpTinyLW}{0.35pt}
+
+\newcommand{\stpHingeR}{1.5mm}
+\newcommand{\stpHingeAxialL}{5mm}
+\newcommand{\stpHingeAxialH}{3mm}
+\newcommand{\stpHingeCornerL}{3mm}
+
+\newcommand{\stpHatchAngle}{45}
+\newcommand{\stpHatchAmp}{1.1cm}
+\newcommand{\stpHatchSeg}{1.5mm}
+
+% Spring height: 10mm minus 2 zigzag strokes (one round-trip)
+\newcommand{\stpSpringL}{\dimexpr10mm-9pt\relax}
+\newcommand{\stpSpringPre}{1.5mm}
+\newcommand{\stpSpringPost}{1.5pt}
+\newcommand{\stpSpringAmp}{2.4mm}
+\newcommand{\stpSpringSeg}{4.5pt}
+% Hatch under spring (shorter than pin/fixed BasicH)
+\newcommand{\stpSpringHatchH}{2mm}
+\newcommand{\stpCoilL}{\dimexpr10mm-9pt\relax}
+\newcommand{\stpCoilPre}{1.5mm}
+\newcommand{\stpCoilPost}{1pt}
+\newcommand{\stpCoilAmp}{2.4mm}
+\newcommand{\stpCoilSeg}{3pt}
+\newcommand{\stpTorR}{6mm}
+
+\newcommand{\stpSupGap}{1mm}
+\newcommand{\stpSupBasicL}{12mm}
+\newcommand{\stpSupBasicH}{3.5mm}
+\newcommand{\stpSupL}{8mm}
+\newcommand{\stpSupH}{5mm}
+\newcommand{\stpSupHatchL}{20mm}
+\newcommand{\stpSupHatchH}{5mm}
+
+\newcommand{\stpBarGap}{1.5mm}
+\newcommand{\stpBarAngle}{45}
+
+\newcommand{\stpForceDist}{1.5mm}
+\newcommand{\stpForceL}{10mm}
+% Default moment-arc radius = half pin-triangle width (tracks support size → \stpSupL)
+\newcommand{\stpMomentDist}{4mm}
+\newcommand{\stpMomentAng}{200}
+\newcommand{\stpLineDist}{3mm}
+\newcommand{\stpLineForce}{0.15}
+\newcommand{\stpLineInterval}{0.2}
+\newcommand{\stpTipR}{1.35mm}
+\newcommand{\stpLineCount}{5}
+\newcommand{\stpLineShaft}{11mm}
+
+\newcommand{\stpTempH}{6mm}
+\newcommand{\stpDimBar}{4mm}
+\def\stp@scale{1}
+
+\newcommand{\stpMomScale}{0.015}
+\newcommand{\stpMomSeg}{16}
+\newcommand{\stpMomTeeth}{4}
+\newcommand{\stpDefScale}{30}
+
+\newcommand{\stpClrMember}{black}
+\newcommand{\stpClrLoad}{red!75!black}
+\newcommand{\stpClrLoadLabel}{red!75!black} % load label text (may differ from glyph)
+\newcommand{\stpClrBC}{teal!70!black}
+\newcommand{\stpClrSpring}{green!45!black}
+\newcommand{\stpClrTor}{magenta!70!black}
+\newcommand{\stpClrMoment}{orange!75!black}
+\newcommand{\stpClrShear}{blue!60!black}
+\newcommand{\stpClrAxial}{brown!70!black}
+\newcommand{\stpClrDeform}{magenta!55!black}
+\newcommand{\stpClrHatch}{black!65}
+\newcommand{\stpClrGray}{gray}
+
+\newif\ifstpShowTip\stpShowTiptrue
+\newif\ifstpShowTeeth\stpShowTeethtrue
+\newif\ifstpShowMmax\stpShowMmaxtrue
+\newif\ifstpValidType
+
+\pgfkeys{
+  /stp/.is family, /stp/.cd,
+  scaling/.code={\def\stp@scale{#1}},
+  tip radius/.code={\renewcommand{\stpTipR}{#1}},
+  force length/.code={\renewcommand{\stpForceL}{#1}},
+  lineload length/.code={\renewcommand{\stpLineShaft}{#1}},
+  lineload count/.code={\renewcommand{\stpLineCount}{#1}},
+  % #1 = supportBasicLength; other dims scale with stanli default ratios
+  %   BasicL:L:H:BasicH:Gap:HatchL:HatchH = 12:8:5:3.5:1:20:5
+  support size/.code={%
+    \pgfmathsetmacro{\stp@ss}{#1/12mm}%
+    \renewcommand{\stpSupBasicL}{#1}%
+    \pgfmathsetlengthmacro{\stp@sx}{\stp@ss*8mm}\edef\stpSupL{\stp@sx}%
+    \pgfmathsetlengthmacro{\stp@sx}{\stp@ss*5mm}\edef\stpSupH{\stp@sx}%
+    \pgfmathsetlengthmacro{\stp@sx}{\stp@ss*3.5mm}\edef\stpSupBasicH{\stp@sx}%
+    \pgfmathsetlengthmacro{\stp@sx}{\stp@ss*1mm}\edef\stpSupGap{\stp@sx}%
+    \pgfmathsetlengthmacro{\stp@sx}{\stp@ss*20mm}\edef\stpSupHatchL{\stp@sx}%
+    \pgfmathsetlengthmacro{\stp@sx}{\stp@ss*5mm}\edef\stpSupHatchH{\stp@sx}%
+    \pgfmathsetlengthmacro{\stp@sx}{0.5*\stpSupL}\edef\stpMomentDist{\stp@sx}%
+  },
+  hinge radius/.code={\renewcommand{\stpHingeR}{#1}},
+  moment radius/.code={\renewcommand{\stpMomentDist}{#1}},
+  moment scale/.code={\renewcommand{\stpMomScale}{#1}},
+  moment segments/.code={\renewcommand{\stpMomSeg}{#1}},
+  moment teeth/.code={\renewcommand{\stpMomTeeth}{#1}},
+  deform scale/.code={\renewcommand{\stpDefScale}{#1}},
+  member color/.code={\renewcommand{\stpClrMember}{#1}},
+  % load color: sets glyph + label; use load label color to split them
+  load color/.code={%
+    \renewcommand{\stpClrLoad}{#1}%
+    \renewcommand{\stpClrLoadLabel}{#1}%
+  },
+  load label color/.code={\renewcommand{\stpClrLoadLabel}{#1}},
+  bc color/.code={\renewcommand{\stpClrBC}{#1}},
+  moment color/.code={\renewcommand{\stpClrMoment}{#1}},
+  show tip circle/.is if=stpShowTip,
+  show moment teeth/.is if=stpShowTeeth,
+  show max moment/.is if=stpShowMmax,
+}
+\newcommand{\stpset}[1]{\pgfkeys{/stp/.cd,#1}}
+
+%=============================================================================
+% Styles
+%=============================================================================
+\tikzset{
+  stpHuge/.style={line width=\stpHugeLW},
+  stpBig/.style={line width=\stpBigLW},
+  stpNormal/.style={line width=\stpNormalLW},
+  stpSmall/.style={line width=\stpSmallLW},
+  stpTiny/.style={line width=\stpTinyLW},
+  stpMember/.style={draw=\stpClrMember, line width=\stpHugeLW, line cap=round},
+  stpTruss/.style={draw=\stpClrMember, line width=\stpBigLW, line cap=round},
+  stpGhost/.style={draw=\stpClrMember, line width=\stpNormalLW, dashed},
+  stpFiber/.style={draw=\stpClrMember, line width=\stpSmallLW, dashed},
+  % Point / line / moment loads: thin stroke + classic tip arrows (same as moment arc)
+  stpLoad/.style={draw=\stpClrLoad, line width=\stpTinyLW, ->},
+  stpLoadRev/.style={draw=\stpClrLoad, line width=\stpTinyLW, <-},
+  stpLoadPlain/.style={draw=\stpClrLoad, line width=\stpTinyLW},
+  % Uniform-load rails (tip + head connectors)
+  stpLoadRail/.style={draw=\stpClrLoad, line width=\stpTinyLW},
+  stpMomentArc/.style={draw=\stpClrLoad, line width=\stpTinyLW, <-},
+  stpMomentArcCW/.style={draw=\stpClrLoad, line width=\stpTinyLW, ->},
+  stpBC/.style={draw=\stpClrBC, line width=\stpNormalLW},
+  stpSpringZig/.style={
+    draw=\stpClrSpring, line width=\stpNormalLW, decorate,
+    decoration={zigzag, amplitude=\stpSpringAmp, segment length=\stpSpringSeg,
+      pre length=\stpSpringPre, post length=\stpSpringPost}},
+  stpSpringCoil/.style={
+    draw=\stpClrSpring, line width=\stpNormalLW, decorate,
+    decoration={coil, amplitude=\stpCoilAmp, segment length=\stpCoilSeg,
+      pre length=\stpCoilPre, post length=\stpCoilPost}},
+  stpTor/.style={draw=\stpClrTor, line width=\stpNormalLW},
+  stpMoment/.style={draw=\stpClrMoment, line width=\stpNormalLW},
+  stpMomentThin/.style={draw=\stpClrMoment, line width=\stpTinyLW},
+  stpShear/.style={draw=\stpClrShear, line width=\stpBigLW},
+  stpAxial/.style={draw=\stpClrAxial, line width=\stpBigLW},
+  stpDeform/.style={draw=\stpClrDeform, line width=\stpHugeLW, densely dashed},
+  stpHatch/.style={
+    draw=\stpClrHatch, line width=\stpTinyLW, decorate,
+    decoration={border, angle=\stpHatchAngle, amplitude=\stpHatchAmp,
+      segment length=\stpHatchSeg}},
+  stpHatchSoft/.style={
+    draw=\stpClrHatch, line width=\stpTinyLW, decorate,
+    decoration={border, angle=\stpHatchAngle, amplitude=\stpHatchAmp/2,
+      segment length=\stpHatchSeg/2}},
+  stpLabel/.style={font=\footnotesize, inner sep=1pt},
+  stpLoadLabel/.style={stpLabel, text=\stpClrLoadLabel},
+  stpDim/.style={draw=\stpClrMember, line width=\stpSmallLW},
+}
+
+%=============================================================================
+% Helpers
+%=============================================================================
+\newcommand{\stp@empty}{}
+\def\stp@splitxy#1,#2\stp@end#3#4{\def#3{#1}\def#4{#2}}
+\newcommand{\stp@unitxy}[1]{%
+  \expandafter\stp@splitxy#1\stp@end\stp@rx\stp@ry
+  \pgfmathsetmacro{\stp@ulen}{veclen(\stp@rx,\stp@ry)}%
+  \pgfmathparse{\stp@ulen<1e-9?1:0}%
+  \ifnum\pgfmathresult=1\relax\PackageError{satopdf}{Zero direction}{}\fi
+  \pgfmathsetmacro{\stp@ux}{\stp@rx/\stp@ulen}%
+  \pgfmathsetmacro{\stp@uy}{\stp@ry/\stp@ulen}%
+}
+\newcommand{\stp@tipmark}[2]{%
+  \coordinate (#2) at ($ (#1)+({-\stpTipR*\stp@ux},{-\stpTipR*\stp@uy})$);%
+  \ifstpShowTip
+    \fill[white] (#1) circle[radius=\stpTipR];%
+    \draw[stpLoadPlain] (#1) circle[radius=\stpTipR];%
+  \fi
+}
+\newcommand{\stp@maskbit}[2]{%
+  \ifcase#2\relax0%
+  \or\stp@mb@i#1\stp@end\or\stp@mb@ii#1\stp@end\or\stp@mb@iii#1\stp@end
+  \or\stp@mb@iv#1\stp@end\or\stp@mb@v#1\stp@end\or\stp@mb@vi#1\stp@end
+  \else0\fi}
+\def\stp@mb@i#1#2\stp@end{#1}
+\def\stp@mb@ii#1#2#3\stp@end{#2}
+\def\stp@mb@iii#1#2#3#4\stp@end{#3}
+\def\stp@mb@iv#1#2#3#4#5\stp@end{#4}
+\def\stp@mb@v#1#2#3#4#5#6\stp@end{#5}
+\def\stp@mb@vi#1#2#3#4#5#6#7\stp@end{#6}
+
+\newcommand{\stp@typeerr}[2]{%
+  \PackageError{satopdf}{Bad #1 type: #2}{See satopdf documentation.}}
+
+%=============================================================================
+% Scaling & points
+% \stpScaling{factor}   — multiply subsequent point coords (stanli-compatible)
+% \stpPoint{name}{x}{y}
+% \stpNode{name}{x,y} — alias with comma form (CAE JSON style)
+%=============================================================================
+\newcommand{\stpScaling}[1]{\def\stp@scale{#1}}
+
+\NewDocumentCommand{\stpPoint}{m m m}{%
+  \pgfmathsetmacro{\stp@px}{#2*\stp@scale}%
+  \pgfmathsetmacro{\stp@py}{#3*\stp@scale}%
+  \coordinate (#1) at (\stp@px,\stp@py);%
+}
+\NewDocumentCommand{\stpNode}{m m}{%
+  \expandafter\stp@splitxy#2\stp@end\stp@nx\stp@ny
+  \stpPoint{#1}{\stp@nx}{\stp@ny}%
+}
+
+%=============================================================================
+% Members  \stpMember{type}{A}{B}[endA][endB]
+%   beam / fiber — bending member; rigid joints by default (no hinge dots);
+%                  optional solid end dots mark continuous-beam joints
+%   truss        — axial-only; hinged by default; hollow circles at both ends
+%                  (same as Example.pdf / sa2hinge)
+%   ghost        — dashed member
+%   endA/endB: beam/fiber → 1 = solid end dot;
+%              truss → 0 = draw hinge (default), nonzero = suppress that end
+%=============================================================================
+\newcommand{\stp@hingeHollow}[1]{%
+  \fill[white] (#1) circle[radius=\stpHingeR];%
+  \draw[stpNormal] (#1) circle[radius=\stpHingeR];%
+}
+
+\NewDocumentCommand{\stpMember}{m m m O{0} O{0}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@tf{fiber}\def\stp@tb{beam}\def\stp@tt{truss}\def\stp@tg{ghost}%
+  \ifx\stp@t\stp@tf
+    \draw[stpMember] (#2) -- (#3);%
+    \coordinate (stp@ba) at ($ (#2)!\stpBarGap!-\stpBarAngle:(#3)$);%
+    \coordinate (stp@bb) at ($ (#3)!\stpBarGap!\stpBarAngle:(#2)$);%
+    \draw[stpFiber] (stp@ba) -- (stp@bb);%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@tb
+    \draw[stpMember] (#2) -- (#3);%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@tt
+    \draw[stpTruss] (#2) -- (#3);%
+    % Hinged ends: white-filled hollow circles over member tips (stanli hinge/1)
+    \ifthenelse{\equal{#4}{0}}{\stp@hingeHollow{#2}}{}%
+    \ifthenelse{\equal{#5}{0}}{\stp@hingeHollow{#3}}{}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@tg
+    \draw[stpGhost] (#2) -- (#3);%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{member}{#1}\fi
+  % Optional solid end dots for beam/fiber (rigid continuity); not for truss
+  \ifx\stp@t\stp@tt\else
+    \ifthenelse{\equal{#4}{0}}{}{\fill[color=\stpClrMember] (#2) circle (\stpHugeLW/2);}%
+    \ifthenelse{\equal{#5}{0}}{}{\fill[color=\stpClrMember] (#3) circle (\stpHugeLW/2);}%
+  \fi
+}
+% shortcuts
+\newcommand{\stpBeam}[2]{\stpMember{beam}{#1}{#2}}
+\newcommand{\stpBeamFiber}[2]{\stpMember{fiber}{#1}{#2}}
+\newcommand{\stpTruss}[2]{\stpMember{truss}{#1}{#2}}
+\newcommand{\stpGhost}[2]{\stpMember{ghost}{#1}{#2}}
+
+%=============================================================================
+% Supports — unified 2D BC command (pin/fixed share one entry; keys pick
+%            glyph, orientation, and size)
+%
+% Preferred (keyval):
+%   \stpSupport{<point>}[type=..., angle=..., size=..., soft=..., fill=...]
+%
+% type:
+%   wall       hatch wall (single-member end clamp; example-frame)
+%   fixed      triangle + filled black tip (multi-member joint fixity)
+%   pin        triangle + hollow tip (hinged support)
+%   roller     sliding hinge (stanli support/2: triangle + double slide gap,
+%              no roller wheels; tip hollow by default)
+%   spring / elastic — linear elastic support (stanli support/5, zigzag)
+%   springCoil — coil spring (stanli support/5c)
+%   rollerX | slider | torsion | torsionCW
+%   *Soft      same glyph without hatching (wallSoft / fixedSoft / …)
+%
+% angle: local -Y is the ground / spring axis side (degrees)
+%        0 = +global Y restraint (spring drawn downward)
+% size:  base length (default 12mm); scales triangle/gap/hatch by stanli ratios
+% soft:  true → omit hatching
+% fill:  black | hollow | auto
+%        auto: fixed→black, pin/roller→hollow
+% label: optional annotation next to the support (e.g. $k$)
+%
+% Legacy: \stpSupport{<type>}{<point>}[<angle>]
+%   old fixed ≡ wall; use type=fixed (black tip) or type=wall for new meaning
+%=============================================================================
+\newif\ifstpSupSoft
+\def\stp@sup@type{pin}
+\def\stp@sup@angle{0}
+\def\stp@sup@fill{auto}
+\def\stp@sup@label{}
+
+\pgfkeys{
+  /stp/support/.cd,
+  type/.store in=\stp@sup@type,
+  angle/.store in=\stp@sup@angle,
+  size/.code={\pgfkeys{/stp/support size=#1}},
+  soft/.is if=stpSupSoft,
+  soft/.default=true,
+  fill/.store in=\stp@sup@fill,
+  label/.store in=\stp@sup@label,
+  % aliases
+  wall/.style={type=wall},
+  fixed/.style={type=fixed},
+  pin/.style={type=pin},
+  roller/.style={type=roller},
+  spring/.style={type=spring},
+  elastic/.style={type=spring},
+  springCoil/.style={type=springCoil},
+}
+
+% #1=point  #2=keyvals
+\newcommand{\stp@supportKV}[2]{%
+  \stpSupSoftfalse
+  \def\stp@sup@type{pin}%
+  \def\stp@sup@angle{0}%
+  \def\stp@sup@fill{auto}%
+  \def\stp@sup@label{}%
+  \pgfkeys{/stp/support/.cd,#2}%
+  \stp@supportDraw{#1}{\stp@sup@type}{\stp@sup@angle}{\stp@sup@fill}%
+}
+
+% Legacy type names → new semantics (fixed stays hatch wall for old figures)
+\newcommand{\stp@supportLegacy}[3]{%
+  \stpSupSoftfalse
+  \def\stp@sup@fill{auto}%
+  \def\stp@sup@label{}%
+  \def\stp@t{#1}%
+  \def\stp@map{#1}%
+  \def\stp@sFixed{fixed}\def\stp@sFixedS{fixedSoft}%
+  \def\stp@sWall{wall}\def\stp@sWallS{wallSoft}%
+  \def\stp@sPin{pin}\def\stp@sPinS{pinSoft}%
+  \def\stp@sRoll{roller}\def\stp@sRollS{rollerSoft}%
+  \def\stp@sSpr{spring}\def\stp@sSprS{springSoft}%
+  \def\stp@sEla{elastic}\def\stp@sFJ{fixedJoint}%
+  \ifx\stp@t\stp@sFixed\def\stp@map{wall}\fi
+  \ifx\stp@t\stp@sFixedS\def\stp@map{wall}\stpSupSofttrue\fi
+  \ifx\stp@t\stp@sWall\def\stp@map{wall}\fi
+  \ifx\stp@t\stp@sWallS\def\stp@map{wall}\stpSupSofttrue\fi
+  \ifx\stp@t\stp@sFJ\def\stp@map{fixed}\fi
+  \ifx\stp@t\stp@sPinS\def\stp@map{pin}\stpSupSofttrue\fi
+  \ifx\stp@t\stp@sRollS\def\stp@map{roller}\stpSupSofttrue\fi
+  \ifx\stp@t\stp@sEla\def\stp@map{spring}\fi
+  \ifx\stp@t\stp@sSprS\def\stp@map{spring}\stpSupSofttrue\fi
+  \stp@supportDraw{#2}{\stp@map}{#3}{\stp@sup@fill}%
+}
+
+% Dual signature: \stpSupport{pt}[keys]  or  \stpSupport{type}{pt}[ang]
+% (no xparse g — removed from the LaTeX kernel)
+\newcommand{\stpSupport}[1]{%
+  \@ifnextchar\bgroup{\stp@sup@leg{#1}}{\stp@sup@kv{#1}}%
+}
+\def\stp@sup@leg#1#2{%
+  \@ifnextchar[{\stp@sup@legA{#1}{#2}}{\stp@sup@legA{#1}{#2}[0]}%
+}
+\def\stp@sup@legA#1#2[#3]{\stp@supportLegacy{#1}{#2}{#3}}
+\def\stp@sup@kv#1{%
+  \@ifnextchar[{\stp@sup@kvA{#1}}{\stp@sup@kvA{#1}[]}%
+}
+\def\stp@sup@kvA#1[#2]{\stp@supportKV{#1}{#2}}
+
+\newcommand{\stp@supportDraw}[4]{%
+  \edef\stp@t{#2}%
+  \edef\stp@ang{#3}%
+  \edef\stp@ff{#4}%
+  \begin{scope}[rotate around={\stp@ang:(#1)}]%
+    \stpValidTypefalse
+    \def\stp@sWall{wall}\def\stp@sFixed{fixed}\def\stp@sPin{pin}%
+    \def\stp@sRoll{roller}\def\stp@sRollX{rollerX}\def\stp@sSlide{slider}%
+    \def\stp@sSpr{spring}\def\stp@sSprC{springCoil}%
+    \def\stp@sTor{torsion}\def\stp@sTorCW{torsionCW}%
+    \ifx\stp@t\stp@sWall
+      \ifstpSupSoft\stp@supWall{#1}{0}\else\stp@supWall{#1}{1}\fi
+      \stpValidTypetrue\fi
+    \ifx\stp@t\stp@sFixed
+      \stp@resolveFill{\stp@ff}{black}%
+      \ifstpSupSoft\stp@supTri{#1}{0}{\stp@fillUse}\else\stp@supTri{#1}{1}{\stp@fillUse}\fi
+      \stpValidTypetrue\fi
+    \ifx\stp@t\stp@sPin
+      \stp@resolveFill{\stp@ff}{hollow}%
+      \ifstpSupSoft\stp@supTri{#1}{0}{\stp@fillUse}\else\stp@supTri{#1}{1}{\stp@fillUse}\fi
+      \stpValidTypetrue\fi
+    \ifx\stp@t\stp@sRoll
+      \stp@resolveFill{\stp@ff}{hollow}%
+      \ifstpSupSoft\stp@supRoller{#1}{0}{\stp@fillUse}\else\stp@supRoller{#1}{1}{\stp@fillUse}\fi
+      \stpValidTypetrue\fi
+    \ifx\stp@t\stp@sRollX
+      \stp@resolveFill{\stp@ff}{hollow}%
+      \begin{scope}[rotate around={90:(#1)}]%
+        \ifstpSupSoft\stp@supRoller{#1}{0}{\stp@fillUse}\else\stp@supRoller{#1}{1}{\stp@fillUse}\fi
+      \end{scope}%
+      \stpValidTypetrue\fi
+    \ifx\stp@t\stp@sSlide\stp@supSlider{#1}\stpValidTypetrue\fi
+    \ifx\stp@t\stp@sSpr\stp@supSpring{#1}{0}\stpValidTypetrue\fi
+    \ifx\stp@t\stp@sSprC\stp@supSpring{#1}{1}\stpValidTypetrue\fi
+    \ifx\stp@t\stp@sTor\stp@supTorsion{#1}{0}\stpValidTypetrue\fi
+    \ifx\stp@t\stp@sTorCW\stp@supTorsion{#1}{1}\stpValidTypetrue\fi
+    \ifstpValidType\else\stp@typeerr{support}{\stp@t}\fi
+    \stp@supportLabel{#1}%
+  \end{scope}}
+
+% Optional support label (key: label=...)
+\newcommand{\stp@supportLabel}[1]{%
+  \ifx\stp@sup@label\stp@empty\else
+    \edef\stp@styp{\stp@sup@type}%
+    \def\stp@sSpr{spring}\def\stp@sSprC{springCoil}%
+    \ifx\stp@styp\stp@sSpr
+      \node[stpLabel, anchor=west]
+        at ($ (#1)+(\stpSupBasicL/2+1.2mm,{-\stpSpringL/2})$) {\stp@sup@label};%
+    \else\ifx\stp@styp\stp@sSprC
+      \node[stpLabel, anchor=west]
+        at ($ (#1)+(\stpSupBasicL/2+1.2mm,{-\stpCoilL/2})$) {\stp@sup@label};%
+    \else
+      \node[stpLabel, anchor=north]
+        at ($ (#1)+(0,{-\stpSupH-\stpSupBasicH-1.5mm})$) {\stp@sup@label};%
+    \fi\fi
+  \fi
+}
+
+% #1=requested fill (auto|black|hollow)  #2=default when auto
+\newcommand{\stp@resolveFill}[2]{%
+  \edef\stp@freq{#1}%
+  \edef\stp@fdef{#2}%
+  \def\stp@fauto{auto}\def\stp@fblk{black}\def\stp@fhol{hollow}%
+  \ifx\stp@freq\stp@fauto\let\stp@fillUse\stp@fdef
+  \else\ifx\stp@freq\stp@fblk\def\stp@fillUse{black}%
+  \else\ifx\stp@freq\stp@fhol\def\stp@fillUse{hollow}%
+  \else\let\stp@fillUse\stp@fdef\fi\fi\fi
+}
+
+% Tip at support apex: always hollow (no solid black disks)
+\newcommand{\stp@drawTipCircle}[2]{%
+  \fill[white] (#1) circle[radius=\stpHingeR];%
+  \draw[stpNormal] (#1) circle[radius=\stpHingeR];%
+}
+
+% Hatch wall: baseline through node, hatch on local -Y; #2=1 hatch / 0 soft double line
+\newcommand{\stp@supWall}[2]{%
+  \ifthenelse{\equal{#2}{1}}{%
+    \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,0)$) -- ++(-\stpSupBasicL,0);%
+    \begin{scope}
+      \clip ($ (#1)+(-\stpSupBasicL/2,-\stpSupBasicH)$)
+        rectangle ($ (#1)+(\stpSupBasicL/2,0)$);%
+      \draw[stpHatch] ($ (#1)+(\stpSupHatchL/2,0)$) -- ++(-\stpSupHatchL,0);%
+    \end{scope}
+  }{%
+    \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,0)$) -- ++(-\stpSupBasicL,0);%
+    \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,-\stpSupGap)$) -- ++(-\stpSupBasicL,0);%
+    \begin{scope}
+      \clip ($ (#1)+(-\stpSupBasicL/2,-\stpSupBasicH-\stpSupGap)$)
+        rectangle ($ (#1)+(\stpSupBasicL/2,-\stpSupGap)$);%
+      \draw[stpHatch] ($ (#1)+(\stpSupHatchL/2,-\stpSupGap)$) -- ++(-\stpSupHatchL,0);%
+    \end{scope}
+  }%
+}
+% Legacy alias
+\newcommand{\stp@supFixed}[2]{\stp@supWall{#1}{#2}}
+
+% Triangle support + tip circle: #2=1 hatch, #3=black|hollow
+\newcommand{\stp@supTri}[3]{%
+  \draw[stpNormal] (#1)
+    -- ++(\stpSupL/2,-\stpSupH-\stpSupGap)
+    -- ++(-\stpSupL,0) -- cycle;%
+  \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,-\stpSupH-\stpSupGap)$)
+    -- ++(-\stpSupBasicL,0);%
+  \ifthenelse{\equal{#2}{1}}{%
+    \begin{scope}
+      \clip ($ (#1)+(-\stpSupBasicL/2,-\stpSupBasicH-\stpSupH-\stpSupGap)$)
+        rectangle ($ (#1)+(\stpSupBasicL/2,-\stpSupH-\stpSupGap)$);%
+      \draw[stpHatch]
+        ($ (#1)+(\stpSupHatchL/2,-\stpSupHatchH-\stpSupGap)$)
+        -- ++(-\stpSupHatchL,0);%
+    \end{scope}
+  }{}%
+  \stp@drawTipCircle{#1}{#3}%
+}
+\newcommand{\stp@supPin}[2]{\stp@supTri{#1}{#2}{hollow}}
+
+% Sliding hinge (stanli sa2support/2): triangle + double slide gap, no roller wheels
+% #2=1 hatch, #3=black|hollow (tip circle)
+\newcommand{\stp@supRoller}[3]{%
+  \draw[stpNormal] (#1)
+    -- ++(\stpSupL/2,-\stpSupH)
+    -- ++(-\stpSupL,0) -- cycle;%
+  \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,-\stpSupH)$)
+    -- ++(-\stpSupBasicL,0);%
+  \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,-\stpSupH-\stpSupGap)$)
+    -- ++(-\stpSupBasicL,0);%
+  \ifthenelse{\equal{#2}{1}}{%
+    \begin{scope}
+      \clip ($ (#1)+(-\stpSupBasicL/2,-\stpSupBasicH-\stpSupH-\stpSupGap)$)
+        rectangle ($ (#1)+(\stpSupBasicL/2,-\stpSupH-\stpSupGap)$);%
+      \draw[stpHatch]
+        ($ (#1)+(\stpSupHatchL/2,-\stpSupHatchH-\stpSupGap)$)
+        -- ++(-\stpSupHatchL,0);%
+    \end{scope}
+  }{}%
+  \stp@drawTipCircle{#1}{#3}%
+}
+
+\newcommand{\stp@supSlider}[1]{%
+  \draw[stpBC] ($ (#1)+(\stpSupGap/2,\stpSupBasicL/2)$) -- ++(0,-\stpSupBasicL);%
+  \draw[stpBC] ($ (#1)+(-\stpSupGap/2,\stpSupBasicL/2)$) -- ++(0,-\stpSupBasicL);%
+  \fill[white] (#1) circle[radius=\stpSupGap/1.5];%
+  \draw[stpBC] (#1) circle[radius=\stpSupGap/1.5];%
+}
+
+% Elastic support (stanli sa2support/5 and /5c). #2=0 zigzag, #2=1 coil.
+% Local -Y is the spring axis (angle=0 → global Y restraint).
+\newcommand{\stp@supSpring}[2]{%
+  \ifthenelse{\equal{#2}{0}}{%
+    \draw[stpNormal, decorate,
+      decoration={zigzag, amplitude=\stpSpringAmp, segment length=\stpSpringSeg,
+        pre length=\stpSpringPre, post length=\stpSpringPost}]
+      (#1) -- ++(0,-\stpSpringL);%
+    \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,-\stpSpringL)$)
+      -- ++(-\stpSupBasicL,0);%
+    \ifstpSupSoft\else
+      \begin{scope}
+        \clip ($ (#1)+(-\stpSupBasicL/2,-\stpSpringL)$)
+          rectangle ++(\stpSupBasicL,-\stpSpringHatchH);%
+        \draw[stpHatch] ($ (#1)+(\stpSupHatchL/2,-\stpSpringL)$)
+          -- ++(-\stpSupHatchL,0);%
+      \end{scope}
+    \fi
+  }{%
+    \draw[stpNormal, decorate,
+      decoration={coil, amplitude=\stpCoilAmp, segment length=\stpCoilSeg,
+        pre length=\stpCoilPre, post length=\stpCoilPost}]
+      (#1) -- ++(0,-\stpCoilL);%
+    \draw[stpNormal] ($ (#1)+(\stpSupBasicL/2,-\stpCoilL)$)
+      -- ++(-\stpSupBasicL,0);%
+    \ifstpSupSoft\else
+      \begin{scope}
+        \clip ($ (#1)+(-\stpSupBasicL/2,-\stpCoilL)$)
+          rectangle ++(\stpSupBasicL,-\stpSpringHatchH);%
+        \draw[stpHatch] ($ (#1)+(\stpSupHatchL/2,-\stpCoilL)$)
+          -- ++(-\stpSupHatchL,0);%
+      \end{scope}
+    \fi
+  }%
+}
+
+\newcommand{\stp@supTorsion}[2]{%
+  \pgfmathsetmacro{\stp@ss}{\stpTorR/17.007874}%
+  \begin{scope}[scale=\stp@ss]
+    \ifthenelse{\equal{#2}{0}}{%
+      \draw[stpTor] (#1)
+        arc[start angle=-180,end angle=0,radius=0.6mm]
+        arc[start angle=0,end angle=180,radius=1.2mm]
+        arc[start angle=-180,end angle=0,radius=2mm]
+        arc[start angle=0,end angle=180,radius=3mm]
+        arc[start angle=-180,end angle=0,radius=4.2mm]
+        arc[start angle=0,end angle=180,radius=5.6mm];%
+    }{%
+      \draw[stpTor] (#1)
+        arc[start angle=0,end angle=-180,radius=0.6mm]
+        arc[start angle=180,end angle=0,radius=1.2mm]
+        arc[start angle=0,end angle=-180,radius=2mm]
+        arc[start angle=180,end angle=0,radius=3mm]
+        arc[start angle=0,end angle=-180,radius=4.2mm]
+        arc[start angle=180,end angle=0,radius=5.6mm];%
+    }%
+  \end{scope}%
+  \draw[stpBC] ($ (#1)+(-\stpTorR-\stpSupBasicL/7,0)$) -- ++(\stpSupBasicL/3.5,0);%
+  \begin{scope}
+    \clip ($ (#1)+(-\stpTorR-\stpSupBasicL/7,0)$)
+      rectangle ++(\stpSupBasicL/3.5,-\stpSupBasicH/2);%
+    \draw[stpHatchSoft] (#1) -- ++(-\stpSupHatchL/2,0);%
+  \end{scope}%
+}
+
+% CAE mask → support
+\NewDocumentCommand{\stpSupportFromMask}{m m O{0}}{%
+  \edef\stp@bUX{\stp@maskbit{#1}{1}}%
+  \edef\stp@bUY{\stp@maskbit{#1}{2}}%
+  \edef\stp@bRZ{\stp@maskbit{#1}{6}}%
+  \def\stp@typ{none}\def\stp@none{none}%
+  \ifnum\stp@bUX=1\ifnum\stp@bUY=1\ifnum\stp@bRZ=1\def\stp@typ{fixed}\fi\fi\fi
+  \ifx\stp@typ\stp@none
+    \ifnum\stp@bUX=1\ifnum\stp@bUY=1\def\stp@typ{pin}\fi\fi\fi
+  \ifx\stp@typ\stp@none
+    \ifnum\stp@bUY=1\ifnum\stp@bUX=0\def\stp@typ{roller}\fi\fi\fi
+  \ifx\stp@typ\stp@none
+    \ifnum\stp@bUX=1\ifnum\stp@bUY=0\def\stp@typ{rollerX}\fi\fi\fi
+  \ifx\stp@typ\stp@none
+    \ifnum\stp@bRZ=1\def\stp@typ{slider}\fi\fi
+  \ifx\stp@typ\stp@none
+    \PackageWarning{satopdf}{Mask #1: no 2D mapping}%
+  \else\edef\stp@c{\noexpand\stpSupport{\stp@typ}{#2}[#3]}\stp@c\fi
+}
+
+% CAE two-circle BC glyph
+\NewDocumentCommand{\stpBCMark}{m m O{}}{%
+  \stp@unitxy{#2}%
+  \pgfmathsetmacro{\stp@stem}{3.2*\stpTipR}%
+  \coordinate (stp@bc1) at (#1);%
+  \coordinate (stp@bc2) at ($ (#1)+({-\stp@ux*\stp@stem},{-\stp@uy*\stp@stem})$);%
+  \fill[white] (stp@bc1) circle[radius=\stpTipR];%
+  \fill[white] (stp@bc2) circle[radius=\stpTipR];%
+  \draw[stpBC] (stp@bc1) circle[radius=\stpTipR];%
+  \draw[stpBC] (stp@bc2) circle[radius=\stpTipR];%
+  \draw[stpBC]
+    ($ (stp@bc1)+({-\stp@ux*\stpTipR},{-\stp@uy*\stpTipR})$) --
+    ($ (stp@bc2)+({\stp@ux*\stpTipR},{\stp@uy*\stpTipR})$);%
+  \def\stp@tmp{#3}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLabel, text=\stpClrBC, anchor=west] at ($ (stp@bc2)+(1.5mm,0)$) {#3};%
+  \fi}
+
+%=============================================================================
+% Hinges  \stpHinge{type}{point}[…]
+%   full | gap | guide | axial | corner
+%
+% gap (stanli hinge/2 half-hinge at beam–truss joint):
+%   \stpHinge{gap}{joint}[beamA][beamB][trussOther]
+%   Half-circle is always drawn on the truss side — side is deduced from
+%   trussOther (the far end of the truss), no 0/1 orientation switch.
+%=============================================================================
+% #1=joint #2=beamA #3=beamB #4=trussOther
+\newcommand{\stp@hingeGap}[4]{%
+  \pgfmathsetlengthmacro{\stp@hr}{\stpHingeR+\stpNormalLW}%
+  % Cross (beamA→beamB) × (joint→trussOther): sign = which side truss is on.
+  % Default clip (−90 at A, +90 at B) covers the side where cross < 0 for a
+  % left→right chord with truss below; flip ±90 when cross > 0.
+  \xdef\stp@side{0}%
+  \path let \p{a}=(#2), \p{j}=(#1), \p{b}=(#3), \p{t}=(#4) in
+    \pgfextra{%
+      \pgfmathtruncatemacro{\stp@sidetmp}{%
+        ((\x{b}-\x{a})/1cm)*((\y{t}-\y{j})/1cm)
+        -((\y{b}-\y{a})/1cm)*((\x{t}-\x{j})/1cm) > 0 ? 1 : 0}%
+      \xdef\stp@side{\stp@sidetmp}%
+    };%
+  \begin{scope}[even odd rule]
+    \ifnum\stp@side=1
+      \clip (#1)--(#2)--($(#2)!\stp@hr!90:(#1)$)--
+        ($(#3)!\stp@hr!-90:(#1)$)--(#3)--cycle;%
+    \else
+      \clip (#1)--(#2)--($(#2)!\stp@hr!-90:(#1)$)--
+        ($(#3)!\stp@hr!90:(#1)$)--(#3)--cycle;%
+    \fi
+    \filldraw[fill=white,stpNormal] (#1) circle[radius=\stpHingeR];%
+  \end{scope}%
+  \draw[stpHuge] ($ (#1)!\stpHingeR!(#2)$)--(#1)--($ (#1)!\stpHingeR!(#3)$);%
+}
+
+\NewDocumentCommand{\stpHinge}{m m O{0} O{0} O{0}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@hFull{full}\def\stp@hGap{gap}\def\stp@hGuide{guide}%
+  \def\stp@hAxial{axial}\def\stp@hCorner{corner}%
+  \ifx\stp@t\stp@hFull
+    \fill[white] (#2) circle[radius=\stpHingeR];%
+    \draw[stpNormal] (#2) circle[radius=\stpHingeR];%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@hGap
+    \stp@hingeGap{#2}{#3}{#4}{#5}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@hGuide
+    \begin{scope}[rotate around={#3:(#2)}]
+      \fill[white] (#2) circle[radius=\stpSupGap/1.5];%
+      \draw[stpNormal] ($ (#2)+(\stpSupGap/2,\stpSupBasicL/2)$)--++(0,-\stpSupBasicL);%
+      \draw[stpNormal] ($ (#2)+(-\stpSupGap/2,\stpSupBasicL/2)$)--++(0,-\stpSupBasicL);%
+    \end{scope}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@hAxial
+    \begin{scope}[rotate around={#3:(#2)}]
+      \fill[white] ($ (#2)+(-\stpHingeAxialL/3,\stpHingeAxialH/2)$)
+        rectangle ($ (#2)+(0,-\stpHingeAxialH/2)$);%
+      \draw[stpNormal] ($ (#2)+(2*\stpHingeAxialL/3,\stpHingeAxialH/2)$)
+        -- ++(-\stpHingeAxialL,0) -- ++(0,-\stpHingeAxialH)
+        -- ++(\stpHingeAxialL,0);%
+    \end{scope}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@hCorner
+    \coordinate (stp@ha) at ($ (#2)!\stpHingeCornerL!(#3)$);%
+    \coordinate (stp@hb) at ($ (#2)!\stpHingeCornerL!(#4)$);%
+    \fill[color=\stpClrMember] (#2)--(stp@ha)--(stp@hb)--cycle;%
+    \fill[color=\stpClrMember] (#2) circle (\stpHugeLW/2);%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{hinge}{#1}\fi
+}
+\newcommand{\stpHingeFull}[1]{\stpHinge{full}{#1}}
+
+%=============================================================================
+% Point loads & couples
+% \stpLoad{force|moment|momentCW}{point}[rot][len/sweep][gap/radius][label]
+% \stpPointLoad{point}{dx,dy}[label]   — CAE vector form, tip circle + pull-back
+% \stpCouple{point}{cw|ccw}[label]
+% Moment label default: above arc centre, outside the arc (radius + moment label gap)
+%=============================================================================
+\newcommand{\stpMomLabelGap}{1.8mm}
+\pgfkeys{/stp/.cd, moment label gap/.code={\renewcommand{\stpMomLabelGap}{#1}}}
+
+% #1=center #2=radius-macro #3=label
+\newcommand{\stp@momentLabel}[3]{%
+  \def\stp@mlab{#3}%
+  \ifx\stp@mlab\stp@empty\else
+    \pgfmathsetlengthmacro{\stp@mly}{#2+\stpMomLabelGap}%
+    \node[stpLoadLabel, anchor=south]
+      at ($ (#1)+(0,\stp@mly)$) {#3};%
+  \fi
+}
+
+\NewDocumentCommand{\stpLoad}{m m O{0} O{0} O{0} O{}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@lf{force}\def\stp@lm{moment}\def\stp@lc{momentCW}%
+  \ifx\stp@t\stp@lf
+    \ifthenelse{\equal{#5}{0}}{\def\stp@ga{\stpForceDist}}{\def\stp@ga{#5}}%
+    \ifthenelse{\equal{#4}{0}}{\def\stp@lb{\stpForceL}}{\def\stp@lb{#4}}%
+    \draw[stpLoadRev] ($ (#2)+(#3:\stp@ga)$) -- ++(#3:\stp@lb);%
+    \def\stp@tmp{#6}%
+    \ifx\stp@tmp\stp@empty\else
+      \node[stpLoadLabel, anchor=south]
+        at ($ (#2)+(#3:{\stp@ga+\stp@lb+1.2mm})$) {#6};%
+    \fi
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@lm
+    % #3 rotate, #4 sweep (deg), #5 radius — default radius = half support width
+    \ifthenelse{\equal{#5}{0}}{%
+      \pgfmathsetlengthmacro{\stp@ga}{0.5*\stpSupL}%
+    }{\edef\stp@ga{#5}}%
+    \ifthenelse{\equal{#4}{0}}{\edef\stp@lb{\stpMomentAng}}{\edef\stp@lb{#4}}%
+    \begin{scope}[rotate around={#3:(#2)}]
+      \draw[stpMomentArc]
+        ($ (#2)+(\stp@ga,0)$) arc[start angle=0, end angle=\stp@lb, radius=\stp@ga];%
+    \end{scope}%
+    \stp@momentLabel{#2}{\stp@ga}{#6}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@lc
+    \ifthenelse{\equal{#5}{0}}{%
+      \pgfmathsetlengthmacro{\stp@ga}{0.5*\stpSupL}%
+    }{\edef\stp@ga{#5}}%
+    \ifthenelse{\equal{#4}{0}}{\edef\stp@lb{\stpMomentAng}}{\edef\stp@lb{#4}}%
+    \begin{scope}[rotate around={#3:(#2)}]
+      \draw[stpMomentArcCW]
+        ($ (#2)+(\stp@ga,0)$) arc[start angle=0, end angle=\stp@lb, radius=\stp@ga];%
+    \end{scope}%
+    \stp@momentLabel{#2}{\stp@ga}{#6}%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{load}{#1}\fi
+}
+
+\NewDocumentCommand{\stpPointLoad}{m m O{}}{%
+  \stp@unitxy{#2}%
+  \coordinate (stp@pc) at (#1);%
+  \stp@tipmark{stp@pc}{stp@ptip}%
+  \coordinate (stp@ptail) at ($ (stp@pc)+({-\stp@ux*\stpForceL},{-\stp@uy*\stpForceL})$);%
+  \draw[stpLoad] (stp@ptail) -- (stp@ptip);%
+  \def\stp@tmp{#3}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLoadLabel, anchor=south] at ($ (stp@ptail)+(0,1.2mm)$) {#3};%
+  \fi}
+
+\NewDocumentCommand{\stpCouple}{m m O{}}{%
+  \def\stp@sense{#2}\def\stp@cw{cw}%
+  \ifx\stp@sense\stp@cw
+    \stpLoad{momentCW}{#1}[0][0][0][#3]%
+  \else
+    \stpLoad{moment}{#1}[0][0][0][#3]%
+  \fi
+}
+
+%=============================================================================
+% Line loads
+% \stpLineLoad{type}{A}{B}[endA][endB][interval][label]
+%   local  — along member normal (stanli type 1), variable ends
+%   global — global -Y (stanli type 2)
+%   label  — optional; same as \stpLoad; uses load label color
+% \stpLineLoadCAE{A}{B}{dx,dy}[label][count]
+%=============================================================================
+\newcommand{\stpLineLabelGap}{1.8mm}
+\pgfkeys{/stp/.cd, lineload label gap/.code={\renewcommand{\stpLineLabelGap}{#1}}}
+
+\NewDocumentCommand{\stpLineLoad}{m m m O{1} O{1} O{\stpLineInterval} O{}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@ll{local}\def\stp@lg{global}%
+  \edef\stp@lli{#6}%
+  \ifx\stp@t\stp@ll
+    \coordinate (stp@la1) at ($ (#2)!\stpLineDist!90:(#3)$);%
+    \coordinate (stp@lb1) at ($ (#3)!\stpLineDist!-90:(#2)$);%
+    \coordinate (stp@la2) at ($ (#2)!{\stpLineDist+#4cm}!90:(#3)$);%
+    \coordinate (stp@lb2) at ($ (#3)!{\stpLineDist+#5cm}!-90:(#2)$);%
+    \stp@drawLineLoadArrows{\stp@lli}%
+    \stp@lineLoadLabel{#7}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@lg
+    \coordinate (stp@la1) at ($ (#2)+(0,\stpLineDist)$);%
+    \coordinate (stp@lb1) at ($ (#3)+(0,\stpLineDist)$);%
+    \coordinate (stp@la2) at ($ (#2)+(0,\stpLineDist+#4cm)$);%
+    \coordinate (stp@lb2) at ($ (#3)+(0,\stpLineDist+#5cm)$);%
+    \stp@drawLineLoadArrows{\stp@lli}%
+    \stp@lineLoadLabel{#7}%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{lineload}{#1}\fi
+}
+% Label: mid-point of outer envelope, pushed outward (color = load label color)
+\newcommand{\stp@lineLoadLabel}[1]{%
+  \def\stp@llab{#1}%
+  \ifx\stp@llab\stp@empty\else
+    \coordinate (stp@lin) at ($ (stp@la1)!0.5!(stp@lb1)$);%
+    \coordinate (stp@lout) at ($ (stp@la2)!0.5!(stp@lb2)$);%
+    \node[stpLoadLabel, anchor=south]
+      at ($ (stp@lout)!-\stpLineLabelGap!(stp@lin)$) {#1};%
+  \fi
+}
+\newcommand{\stp@drawLineLoadArrows}[1]{%
+  \draw[stpLoad] (stp@la2) -- (stp@la1);%
+  \draw[stpLoad] (stp@lb2) -- (stp@lb1);%
+  \draw[stpLoadRail] (stp@la1) -- (stp@lb1);%
+  \draw[stpLoadRail] (stp@la2) -- (stp@lb2);%
+  \fill[color=\stpClrLoad] (stp@la2) circle (\stpTinyLW/2);%
+  \fill[color=\stpClrLoad] (stp@lb2) circle (\stpTinyLW/2);%
+  \pgfmathsetmacro{\stp@ib}{#1}%
+  \pgfmathsetmacro{\stp@is}{#1*2}%
+  \pgfmathsetmacro{\stp@ie}{1-#1}%
+  \foreach \stp@i in {\stp@ib,\stp@is,...,\stp@ie}{%
+    \draw[stpLoad] ($ (stp@la2)!\stp@i!(stp@lb2)$) -- ($ (stp@la1)!\stp@i!(stp@lb1)$);%
+  }%
+}
+
+\NewDocumentCommand{\stpLineLoadCAE}{m m m O{} O{}}{%
+  \stp@unitxy{#3}%
+  \if\relax\detokenize{#5}\relax
+    \pgfmathtruncatemacro{\stp@N}{\stpLineCount}%
+  \else
+    \pgfmathtruncatemacro{\stp@N}{#5}%
+  \fi
+  \coordinate (stp@t0) at ($ (#1)+({-\stp@ux*\stpLineShaft},{-\stp@uy*\stpLineShaft})$);%
+  \coordinate (stp@t1) at ($ (#2)+({-\stp@ux*\stpLineShaft},{-\stp@uy*\stpLineShaft})$);%
+  \draw[stpLoadPlain] (stp@t0) -- (stp@t1);%
+  \foreach \stp@k in {0,...,\numexpr\stp@N-1\relax}{%
+    \pgfmathsetmacro{\stp@t}{\stp@k/max(\stp@N-1,1)}%
+    \coordinate (stp@lc) at ($ (#1)!\stp@t!(#2)$);%
+    \stp@tipmark{stp@lc}{stp@ltip}%
+    \coordinate (stp@ltail) at
+      ($ (stp@lc)+({-\stp@ux*\stpLineShaft},{-\stp@uy*\stpLineShaft})$);%
+    \draw[stpLoad] (stp@ltail) -- (stp@ltip);%
+  }%
+  \def\stp@tmp{#4}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLoadLabel, anchor=south]
+      at ($ (#1)!0.5!(#2)+({-\stp@ux*(\stpLineShaft+2.5mm)},{-\stp@uy*(\stpLineShaft+2.5mm)})$)
+      {#4};%
+  \fi}
+
+%=============================================================================
+% Springs (standalone, not as support)
+%=============================================================================
+\NewDocumentCommand{\stpSpringK}{m m O{}}{%
+  \begin{scope}[rotate around={#2:(#1)}]
+    \fill[white] (#1) circle[radius=\stpTipR];%
+    \draw[stpBC] (#1) circle[radius=\stpTipR];%
+    \draw[stpSpringZig] ($ (#1)+(0,{-\stpTipR})$) -- ++(0,{-\stpSpringL});%
+    \draw[stpBC] ($ (#1)+(0,{-\stpTipR-\stpSpringL})$)
+      -- ++(\stpSupL/2,0) -- ++(-\stpSupL,0);%
+  \end{scope}%
+  \def\stp@tmp{#3}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLabel, text=\stpClrSpring] at ($ (#1)+(3mm,-8mm)$) {#3};%
+  \fi}
+\NewDocumentCommand{\stpSpringKR}{m O{}}{%
+  \fill[white] (#1) circle[radius=\stpTipR];%
+  \draw[stpTor] (#1) circle[radius=\stpTipR];%
+  \draw[stpTor, -{Latex[length=1.6mm,width=1.1mm]}]
+    (#1) ++(\stpTipR,0) arc[start angle=0,end angle=300,radius=\stpTorR*0.65];%
+  \def\stp@tmp{#2}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLabel, text=\stpClrTor] at ($ (#1)+(5mm,5mm)$) {#2};%
+  \fi}
+
+%=============================================================================
+% Internal force diagrams (stanli-compatible envelope)
+% \stpInternalForces{A}{B}{vA}{vB}[parabola][color][bendpos]
+% values in cm of offset (stanli convention)
+%=============================================================================
+\NewDocumentCommand{\stpInternalForces}{m m m m O{0} O{\stpClrMoment} O{0.6667}}{%
+  \coordinate (stp@ifa) at ($ (#1)!#3cm!-90:(#2)$);%
+  \coordinate (stp@ifb) at ($ (#2)!#4cm!90:(#1)$);%
+  \coordinate (stp@ifab) at ($ (stp@ifa)!.5!(stp@ifb)$);%
+  \coordinate (stp@ifc) at ($ (stp@ifab)+2*(0,#5)$);%
+  \coordinate (stp@ifac) at ($ (stp@ifa)!#7!(stp@ifc)$);%
+  \coordinate (stp@ifbc) at ($ (stp@ifb)!#7!(stp@ifc)$);%
+  \ifthenelse{\equal{#5}{0}}{%
+    \draw[stpBig, color=#6]
+      (#1)--(stp@ifa)--(stp@ifb)--(#2);%
+  }{%
+    \draw[stpBig, color=#6]
+      (#1)--(stp@ifa)
+      (stp@ifa) .. controls (stp@ifac) and (stp@ifbc) .. (stp@ifb)
+      (stp@ifb)--(#2);%
+  }%
+  \fill[color=#6] (stp@ifa) circle (\stpBigLW/2);%
+  \fill[color=#6] (stp@ifb) circle (\stpBigLW/2);%
+  \fill[color=#6] (#1) circle (\stpBigLW/2);%
+  \fill[color=#6] (#2) circle (\stpBigLW/2);%
+}
+
+%=============================================================================
+% Moment diagram — CAE / write_cae_results_to_dxf.py
+% \stpMomentDiagram[qy=,scale=,label=,color=]{A}{B}{Ms}{Me}
+%=============================================================================
+\pgfkeys{
+  /stp/moment/.cd,
+  qy/.estore in=\stp@mom@qy,
+  scale/.estore in=\stp@mom@scl,
+  label/.estore in=\stp@mom@lab,
+  color/.estore in=\stp@mom@clr,
+}
+\NewDocumentCommand{\stpMomentDiagram}{O{} m m m m}{%
+  \pgfkeys{/stp/moment/.cd, qy=0, scale=, label=, color=\stpClrMoment, #1}%
+  \pgfmathsetmacro{\stp@Ms}{#4}%
+  \pgfmathsetmacro{\stp@Me}{#5}%
+  \pgfmathsetmacro{\stp@qy}{\stp@mom@qy}%
+  \edef\stp@tmpscl{\stp@mom@scl}%
+  \ifx\stp@tmpscl\stp@empty
+    \pgfmathsetmacro{\stp@mscl}{\stpMomScale}%
+  \else
+    \pgfmathsetmacro{\stp@mscl}{\stp@mom@scl}%
+  \fi
+  \pgfmathtruncatemacro{\stp@ns}{\stpMomSeg}%
+  \pgfmathtruncatemacro{\stp@teeth}{\stpMomTeeth}%
+  \path let \p1=($(#3)-(#2)$) in \pgfextra{%
+    \pgfmathsetmacro{\stp@Ltmp}{veclen(\x1,\y1)/1mm}%
+    \xdef\stp@L{\stp@Ltmp}};%
+  \pgfmathsetmacro{\stp@Mmax}{0}%
+  \xdef\stp@haveMmax{0}%
+  \foreach \stp@k in {0,...,\stp@ns}{%
+    \pgfmathsetmacro{\stp@xi}{\stp@k/\stp@ns}%
+    \pgfmathsetmacro{\stp@Mval}{%
+      \stp@Ms*(1-\stp@xi)+\stp@Me*\stp@xi
+      -0.5*\stp@qy*\stp@L*\stp@L*\stp@xi*(1-\stp@xi)}%
+    \pgfmathsetmacro{\stp@off}{\stp@Mval*\stp@mscl}%
+    \coordinate (stp@mbase) at ($ (#2)!\stp@xi!(#3)$);%
+    \coordinate (stp@mpt) at ($ (stp@mbase)!{\stp@off mm}!90:(#3)$);%
+    \ifstpShowTeeth
+      \pgfmathparse{int(Mod(\stp@k,\stp@teeth))}%
+      \ifnum\pgfmathresult=0\relax
+        \draw[stpMomentThin, color=\stp@mom@clr] (stp@mbase)--(stp@mpt);%
+      \fi
+    \fi
+    \ifnum\stp@k=0\relax
+      \coordinate (stp@mprev) at (stp@mpt);%
+      \draw[stpMomentThin, color=\stp@mom@clr] (#2)--(stp@mpt);%
+    \else
+      \draw[stpMoment, color=\stp@mom@clr] (stp@mprev)--(stp@mpt);%
+      \coordinate (stp@mprev) at (stp@mpt);%
+    \fi
+    \ifnum\stp@k=\stp@ns\relax
+      \draw[stpMomentThin, color=\stp@mom@clr] (#3)--(stp@mpt);%
+    \fi
+    \pgfmathparse{abs(\stp@Mval)>=abs(\stp@Mmax)?1:0}%
+    \ifnum\pgfmathresult=1\relax
+      \xdef\stp@Mmax{\stp@Mval}%
+      \xdef\stp@haveMmax{1}%
+      \coordinate (stp@mmaxpt) at (stp@mpt);%
+    \fi
+  }%
+  \ifstpShowMmax
+    \ifnum\stp@haveMmax=1\relax
+      \edef\stp@tmplab{\stp@mom@lab}%
+      \ifx\stp@tmplab\stp@empty
+        \node[stpLabel, text=\stp@mom@clr, anchor=south] at (stp@mmaxpt)
+          {$M_{\max}=\pgfmathprintnumber[fixed,precision=1]{\stp@Mmax}$};%
+      \else
+        \node[stpLabel, text=\stp@mom@clr, anchor=south] at (stp@mmaxpt){\stp@mom@lab};%
+      \fi
+    \fi
+  \fi}
+
+%=============================================================================
+% Deform
+%=============================================================================
+\NewDocumentCommand{\stpDeform}{m m m m O{}}{%
+  \if\relax\detokenize{#5}\relax
+    \pgfmathsetmacro{\stp@ds}{\stpDefScale}%
+  \else
+    \pgfmathsetmacro{\stp@ds}{#5}%
+  \fi
+  \expandafter\stp@splitxy#3\stp@end\stp@uax\stp@uay
+  \expandafter\stp@splitxy#4\stp@end\stp@ubx\stp@uby
+  \pgfmathsetmacro{\stp@uax}{\stp@uax}%
+  \pgfmathsetmacro{\stp@uay}{\stp@uay}%
+  \pgfmathsetmacro{\stp@ubx}{\stp@ubx}%
+  \pgfmathsetmacro{\stp@uby}{\stp@uby}%
+  \coordinate (stp@dA) at ($ (#1)+({\stp@uax*\stp@ds},{\stp@uay*\stp@ds})$);%
+  \coordinate (stp@dB) at ($ (#2)+({\stp@ubx*\stp@ds},{\stp@uby*\stp@ds})$);%
+  \draw[stpDeform] (stp@dA)--(stp@dB);%
+  \fill[color=\stpClrDeform] (stp@dA) circle (0.55*\stpTipR);%
+  \fill[color=\stpClrDeform] (stp@dB) circle (0.55*\stpTipR);%
+}
+
+%=============================================================================
+% Dimensioning  \stpDimensioning{horiz|vert|parallel}{A}{B}{offset}[text]
+%=============================================================================
+\NewDocumentCommand{\stpDimensioning}{m m m m O{}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@dh{horiz}\def\stp@dv{vert}\def\stp@dp{parallel}%
+  \ifx\stp@t\stp@dh
+    \path let \p1=(#2), \p2=(#3) in
+      coordinate (stp@da) at (\x1,#4)
+      coordinate (stp@db) at (\x2,#4);%
+    \draw[stpDim]
+      (stp@da)--++(0,\stpDimBar/2)--++(0,-\stpDimBar)
+      (stp@da)--++(\stpDimBar/4,\stpDimBar/4)--++(-\stpDimBar/2,-\stpDimBar/2)
+      (stp@db)--++(0,\stpDimBar/2)--++(0,-\stpDimBar)
+      (stp@db)--++(\stpDimBar/4,\stpDimBar/4)--++(-\stpDimBar/2,-\stpDimBar/2)
+      (stp@da)--(stp@db) node[sloped,midway,above,stpLabel] {#5};%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@dv
+    \path let \p1=(#2), \p2=(#3) in
+      coordinate (stp@da) at (#4,\y1)
+      coordinate (stp@db) at (#4,\y2);%
+    \draw[stpDim]
+      (stp@da)--++(\stpDimBar/2,0)--++(-\stpDimBar,0)
+      (stp@da)--++(\stpDimBar/4,\stpDimBar/4)--++(-\stpDimBar/2,-\stpDimBar/2)
+      (stp@db)--++(\stpDimBar/2,0)--++(-\stpDimBar,0)
+      (stp@db)--++(\stpDimBar/4,\stpDimBar/4)--++(-\stpDimBar/2,-\stpDimBar/2)
+      (stp@da)--(stp@db) node[sloped,midway,above,stpLabel] {#5};%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@dp
+    \coordinate (stp@da) at ($ (#2)!{#4}!90:(#3)$);%
+    \coordinate (stp@db) at ($ (#3)!{#4}!-90:(#2)$);%
+    \draw[stpDim]
+      ($ (stp@da)!{-\stpDimBar/3}!90:(stp@db)$)--($ (stp@da)!{\stpDimBar/3}!90:(stp@db)$);%
+    \draw[stpDim, {|[width=2.2mm]}-{|[width=2.2mm]}]
+      (stp@da)--(stp@db) node[sloped,midway,above,stpLabel] {#5};%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{dimensioning}{#1}\fi
+}
+\NewDocumentCommand{\stpDim}{m m m O{}}{\stpDimensioning{parallel}{#1}{#2}{#3}[#4]}
+
+%=============================================================================
+% Notation
+% \stpNotation{node|tick|section|boxed|plain|circled}{…}
+%=============================================================================
+\NewDocumentCommand{\stpNotation}{m m m O{above right} O{0.5} O{above} O{sloped}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@nn{node}\def\stp@nt{tick}\def\stp@ns{section}%
+  \def\stp@nb{boxed}\def\stp@np{plain}\def\stp@nc{circled}%
+  \ifx\stp@t\stp@nn
+    \node[stpLabel,#4] at (#2) {#3};%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@nt
+    \node[stpLabel,#4] at (#2) {#3};%
+    \draw[stpBig] (#2)--++(0,\stpDimBar/2)--++(0,-\stpDimBar);%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@ns
+    \coordinate (stp@na) at ($ (#2)!#5!(#3)$);%
+    \draw[stpBig]
+      ($ (stp@na)!\stpDimBar/2!90:(#3)$)--($ (stp@na)!\stpDimBar/2!-90:(#3)$);%
+    \node[stpLabel,#6] at (stp@na) {#4};%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@nb
+    \path (#2)--(#3)
+      node[inner sep=0.6mm, rectangle, stpSmall, draw=\stpClrMember, fill=white,
+        minimum size=2.5*\stpHingeR, midway, #6, #7, pos=#5] {#4};%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@np
+    \path (#2)--(#3) node[midway,#6,#7,pos=#5,stpLabel] {#4};%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@nc
+    \node[inner sep=0mm, circle, stpSmall, draw=\stpClrMember, fill=white,
+      minimum size=2.5*\stpHingeR] at (#2) {#3};%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{notation}{#1}\fi
+}
+
+%=============================================================================
+% Temperature, influence line, addon
+%=============================================================================
+\NewDocumentCommand{\stpTemperature}{m m m m O{0.5} O{} O{} O{below} O{above}}{%
+  \coordinate (stp@ta) at ($ (#1)!#5!(#2)$);%
+  \coordinate (stp@tb1) at ($ (stp@ta)!\stpTempH/2!90:(#2)$);%
+  \coordinate (stp@tb2) at ($ (stp@ta)!-\stpTempH/2!90:(#2)$);%
+  \coordinate (stp@tc1) at ($ (stp@tb2)!-#3!90:(stp@tb1)$);%
+  \coordinate (stp@tc2) at ($ (stp@tb1)!#4!90:(stp@tb2)$);%
+  \filldraw[fill=\stpClrGray!20, stpSmall]
+    (stp@tb1)--(stp@tc2)--(stp@tc1)--(stp@tb2)--cycle;%
+  \node[stpLabel,#8] at (stp@tc1) {#6};%
+  \node[stpLabel,#9] at (stp@tc2) {#7};%
+}
+
+\NewDocumentCommand{\stpInfluenceLine}{m m m O{0.5}}{%
+  \path let \p1=(#1), \p2=(#2) in
+    coordinate (stp@ia) at ($(\p1)+(0,\stpLineDist+#3cm)$)
+    coordinate (stp@ib) at ($(\x2,\y1)+(0,\stpLineDist+#3cm)$);%
+  \draw[stpSmall]
+    (stp@ia)--++(0,\stpDimBar/2)--++(0,-\stpDimBar)
+    (stp@ib)--++(0,\stpDimBar/2)--++(0,-\stpDimBar);%
+  \draw[stpSmall, {|[width=2mm]}-{|[width=2mm]}] (stp@ia)--(stp@ib);%
+  \draw[stpSmall] ($ (stp@ia)!#4!(stp@ib)$)--++(\stpHingeR,0)
+    arc[start angle=0,end angle=360,radius=\stpHingeR];%
+  \draw[stpLoad] ($ (stp@ia)!#4!(stp@ib)+(0,\stpForceL/2)$)
+    -- ($ (stp@ia)!#4!(stp@ib)+(0,-\stpForceL/2)$);%
+}
+
+\NewDocumentCommand{\stpAddon}{m m m m O{1}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@aSec{section}\def\stp@aAngle{angle}\def\stp@aArc{arc}%
+  \ifx\stp@t\stp@aSec
+    \coordinate (stp@aa) at ($ (#2)!#4!(#3)$);%
+    \draw[stpSmall]
+      ($ (stp@aa)!\stpDimBar/2!45:(#3)$)--($ (stp@aa)!\stpDimBar/2!225:(#3)$)
+      ($ (stp@aa)!\stpDimBar/2!45:(#3)+(\stpSupGap,0)$)--
+      ($ (stp@aa)!\stpDimBar/2!225:(#3)+(\stpSupGap,0)$);%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@aAngle
+    \coordinate (stp@aa) at ($ (#2)!\stpDimBar!(#3)$);%
+    \coordinate (stp@ab) at ($ (#2)!\stpDimBar!(#4)$);%
+    \ifthenelse{\equal{#5}{1}}{%
+      \coordinate (stp@ac) at ($ (stp@aa)!\stpDimBar!90:(#3)$);%
+      \coordinate (stp@ad) at ($ (#2)!1.414*\stpDimBar/2!45:(#3)$);%
+    }{%
+      \coordinate (stp@ac) at ($ (stp@aa)!\stpDimBar!-90:(#3)$);%
+      \coordinate (stp@ad) at ($ (#2)!1.414*\stpDimBar/2!-45:(#3)$);%
+    }%
+    \draw[stpSmall] (stp@aa)--(stp@ac)--(stp@ab);%
+    \filldraw (stp@ad) circle (\stpSmallLW);%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@aArc
+    \begin{scope}[even odd rule]
+      \ifthenelse{\equal{#5}{1}}{%
+        \clip (#2) circle (\stpDimBar+\stpNormalLW)
+          (#2)--(#3)--($(#3)!\stpDimBar+\stpNormalLW!-90:(#2)$)--
+          ($(#4)!\stpDimBar+\stpNormalLW!90:(#2)$)--(#4)--cycle;%
+      }{%
+        \clip (#2)--(#3)--($(#3)!\stpDimBar+\stpNormalLW!-90:(#2)$)--
+          ($(#4)!\stpDimBar+\stpNormalLW!90:(#2)$)--(#4)--cycle;%
+      }%
+      \draw[stpSmall] (#2) circle (\stpDimBar)
+        (#2) circle (\stpDimBar-2*\stpNormalLW);%
+    \end{scope}%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{addon}{#1}\fi
+}
+
+%=============================================================================
+% Axis (2D)
+%=============================================================================
+\NewDocumentCommand{\stpAxisXY}{O{12mm} m}{%
+  \draw[-{Latex}, thick] (#2)--++(#1,0) node[right,stpLabel] {$x$};%
+  \draw[-{Latex}, thick] (#2)--++(0,#1) node[above,stpLabel] {$y$};%
+}
+
+%=============================================================================
+% 3D — oblique coords, members, supports, hinges
+% Wall anchorage (≡ 2D hatch): hollow circle at the non-node rod end.
+%=============================================================================
+\newcommand{\stpDxAng}{-12}
+\newcommand{\stpDxLen}{1}
+\newcommand{\stpDyAng}{37}
+\newcommand{\stpDyLen}{1}
+\newcommand{\stpDzAng}{90}
+\newcommand{\stpDzLen}{1}
+\newcommand{\stpDscale}{1}
+\newcommand{\stpDhingeR}{1mm}
+\newcommand{\stpDhingeBigR}{1.5mm}
+\newcommand{\stpDsupLen}{1}
+\newcommand{\stpDaxLen}{1.5}
+\newcommand{\stpDhingeAxL}{.5}
+\newcommand{\stpDhingeAxH}{.4}
+\newcommand{\stpDxLab}{$x$}
+\newcommand{\stpDyLab}{$y$}
+\newcommand{\stpDzLab}{$z$}
+\newcommand{\stpDxLabLoc}{$x^\prime$}
+\newcommand{\stpDyLabLoc}{$y^\prime$}
+\newcommand{\stpDzLabLoc}{$z^\prime$}
+\newif\ifstpDshowPoint
+
+\tikzset{
+  stpDCoords/.style={
+    x={(\stpDxAng:\stpDxLen cm)},
+    y={(\stpDyAng:\stpDyLen cm)},
+    z={(\stpDzAng:\stpDzLen cm)}},
+  % 3D: members thin; BC rods thinner than members (never heavier than beams)
+  stpDmember/.style={draw=\stpClrMember, line width=\stpNormalLW, line cap=round},
+  stpDtruss/.style={draw=\stpClrMember, line width=\stpSmallLW, line cap=round},
+  stpDghost/.style={draw=\stpClrMember, line width=\stpTinyLW, dashed},
+  stpDbc/.style={draw=\stpClrGray!55, line width=\stpTinyLW},
+  % Short rot-only stub (u free, r fixed): dense dashes so short rods still read as dashed
+  stpDbcDash/.style={draw=\stpClrGray!55, line width=\stpTinyLW,
+    dash pattern=on 1.2pt off 1.0pt},
+  % Rotation marker ring (same light gray as BC rods)
+  stpDbcRing/.style={draw=\stpClrGray!55, line width=\stpTinyLW},
+  stpDaxis/.style={->, line width=\stpTinyLW},
+  stpDspring/.style={
+    draw=\stpClrSpring, line width=\stpTinyLW, decorate,
+    decoration={zigzag, amplitude=\stpSpringAmp, segment length=\stpSpringSeg,
+      pre length=\stpSpringPre, post length=\stpSpringPost}},
+}
+
+% \stpDsetCoords{x-ang}{y-ang}[Dx][Dy][Dz][z-ang]
+\NewDocumentCommand{\stpDsetCoords}{m m O{1} O{1} O{1} O{90}}{%
+  \renewcommand{\stpDxAng}{#1}%
+  \renewcommand{\stpDyAng}{#2}%
+  \renewcommand{\stpDxLen}{#3}%
+  \renewcommand{\stpDyLen}{#4}%
+  \renewcommand{\stpDzLen}{#5}%
+  \renewcommand{\stpDzAng}{#6}%
+}
+
+% \stpDsetAxis{xyz|XYZ|custom}[…] — label scheme for \stpDaxis
+\NewDocumentCommand{\stpDsetAxis}{m O{$x$} O{$y$} O{$z$} O{$x^\prime$} O{$y^\prime$} O{$z^\prime$}}{%
+  \def\stp@ax{#1}%
+  \def\stp@axxyz{xyz}\def\stp@axXYZ{XYZ}%
+  \ifx\stp@ax\stp@axxyz
+    \renewcommand{\stpDxLab}{$x$}\renewcommand{\stpDyLab}{$y$}\renewcommand{\stpDzLab}{$z$}%
+    \renewcommand{\stpDxLabLoc}{$x^\prime$}\renewcommand{\stpDyLabLoc}{$y^\prime$}%
+    \renewcommand{\stpDzLabLoc}{$z^\prime$}%
+  \else\ifx\stp@ax\stp@axXYZ
+    \renewcommand{\stpDxLab}{$X$}\renewcommand{\stpDyLab}{$Y$}\renewcommand{\stpDzLab}{$Z$}%
+    \renewcommand{\stpDxLabLoc}{$x$}\renewcommand{\stpDyLabLoc}{$y$}\renewcommand{\stpDzLabLoc}{$z$}%
+  \else
+    \renewcommand{\stpDxLab}{#2}\renewcommand{\stpDyLab}{#3}\renewcommand{\stpDzLab}{#4}%
+    \renewcommand{\stpDxLabLoc}{#5}\renewcommand{\stpDyLabLoc}{#6}%
+    \renewcommand{\stpDzLabLoc}{#7}%
+  \fi\fi
+}
+
+\newcommand{\stpDshowPoint}{\stpDshowPointtrue}
+
+% \stpDpoint{name}{x}{y}{z}
+\NewDocumentCommand{\stpDpoint}{m m m m}{%
+  \node[coordinate, shift={(#2*\stpDscale,#3*\stpDscale,#4*\stpDscale)}] (#1) {};%
+  \ifstpDshowPoint
+    \draw (#2*\stpDscale,#3*\stpDscale,#4*\stpDscale) node[above,red,stpLabel] {#1};%
+  \fi
+}
+% CAE-style: \stpDnode{name}{x,y,z}
+\NewDocumentCommand{\stpDnode}{m m}{%
+  \edef\stp@dn{#2}%
+  \expandafter\stp@dnodeA\expandafter{\stp@dn}{#1}%
+}
+\def\stp@dnodeA#1#2{\stp@dnodeB#1\@nil{#2}}
+\def\stp@dnodeB#1,#2,#3\@nil#4{\stpDpoint{#4}{#1}{#2}{#3}}
+
+% \stpDmember{beam|truss|ghost}{A}{B}[endA][endB]
+%   beam: thick; optional solid end dots (1=dot)
+%   truss: medium; optional hollow hinges (0=draw default)
+%   ghost: dashed
+\NewDocumentCommand{\stpDmember}{m m m O{0} O{0}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@tb{beam}\def\stp@tt{truss}\def\stp@tg{ghost}%
+  \ifx\stp@t\stp@tb
+    \draw[stpDmember] (#2)--(#3);%
+    \ifthenelse{\equal{#4}{0}}{}{\fill[color=\stpClrMember] (#2) circle (\stpNormalLW/2);}%
+    \ifthenelse{\equal{#5}{0}}{}{\fill[color=\stpClrMember] (#3) circle (\stpNormalLW/2);}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@tt
+    \draw[stpDtruss] (#2)--(#3);%
+    \ifthenelse{\equal{#4}{0}}{%
+      \fill[white] (#2) circle[radius=\stpDhingeR];%
+      \draw[stpNormal] (#2) circle[radius=\stpDhingeR];%
+    }{}%
+    \ifthenelse{\equal{#5}{0}}{%
+      \fill[white] (#3) circle[radius=\stpDhingeR];%
+      \draw[stpNormal] (#3) circle[radius=\stpDhingeR];%
+    }{}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@tg
+    \draw[stpDghost] (#2)--(#3);%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{Dmember}{#1}\fi
+}
+
+% \stpDaxis{point}[labX][labY][labZ]
+\NewDocumentCommand{\stpDaxis}{m O{below} O{above} O{above}}{%
+  \draw[stpDaxis] (#1)--++(\stpDaxLen,0,0) node[#2] {\stpDxLab};%
+  \draw[stpDaxis] (#1)--++(0,\stpDaxLen,0) node[#3] {\stpDyLab};%
+  \draw[stpDaxis] (#1)--++(0,0,\stpDaxLen) node[#4] {\stpDzLab};%
+}
+
+% \stpDsupport{type}{point}[…]
+%   pin/wall/spring/fork — translation rods + rotation circles at rod ends:
+%     [ux][uy][uz][rx][ry][rz]  each 1|0|-1 (u defaults 1; r defaults 0)
+%     u≠0 → solid rod + circle (fill by r); u=0 & r≠0 → dashed stub + solid circle
+%     solid circle = rotation about that axis constrained
+%     hollow circle = rotation about that axis free
+%   fixed — plane cross (stanli /2); [plane][normal-coord] (legacy)
+% Hollow black circle at the support node (same size/LW as rot-end BC marks)
+\newcommand{\stp@DnodeMark}[1]{%
+  \fill[white] (#1) circle[radius=0.5*\stpDhingeR];%
+  \draw[line width=\stpTinyLW] (#1) circle[radius=0.5*\stpDhingeR];%
+}
+\newcommand{\stp@DrotMark}[2]{%
+  % #1=position, #2=1 light-filled (rot fixed) / 0 hollow (rot free)
+  \ifthenelse{\equal{#2}{0}}{%
+    \fill[white] (#1) circle[radius=0.5*\stpDhingeR];%
+    \draw[stpDbcRing] (#1) circle[radius=0.5*\stpDhingeR];%
+  }{%
+    \fill[\stpClrGray!30] (#1) circle[radius=0.5*\stpDhingeR];%
+    \draw[stpDbcRing] (#1) circle[radius=0.5*\stpDhingeR];%
+  }%
+}
+% Axis mark: #2=u (rod), #3=r (fill), #4/#5/#6 = end offset factors of L along x/y/z
+% u≠0 → solid rod; u=0 & r≠0 → dashed stub to solid circle (rot only)
+\newcommand{\stp@DaxisMark}[6]{%
+  \ifthenelse{\equal{#2}{0}}{%
+    \ifthenelse{\equal{#3}{0}}{}{%
+      \draw[stpDbcDash] (#1)--++(-\stpDsupLen*#4,-\stpDsupLen*#5,-\stpDsupLen*#6);%
+      \stp@DrotMark{$ (#1)+(-\stpDsupLen*#4,-\stpDsupLen*#5,-\stpDsupLen*#6) $}{1}%
+    }%
+  }{%
+    \draw[stpDbc] (#1)--++(-\stpDsupLen*#2*#4,-\stpDsupLen*#2*#5,-\stpDsupLen*#2*#6);%
+    \stp@DrotMark{$ (#1)+(-\stpDsupLen*#2*#4,-\stpDsupLen*#2*#5,-\stpDsupLen*#2*#6) $}{#3}%
+  }%
+}
+\newcommand{\stp@DaxisMarkSpr}[6]{%
+  \ifthenelse{\equal{#2}{0}}{%
+    \ifthenelse{\equal{#3}{0}}{}{%
+      \draw[stpDbcDash] (#1)--++(-\stpDsupLen*#4,-\stpDsupLen*#5,-\stpDsupLen*#6);%
+      \stp@DrotMark{$ (#1)+(-\stpDsupLen*#4,-\stpDsupLen*#5,-\stpDsupLen*#6) $}{1}%
+    }%
+  }{%
+    \draw[stpDspring] (#1)--++(-\stpDsupLen*#2*#4,-\stpDsupLen*#2*#5,-\stpDsupLen*#2*#6);%
+    \stp@DrotMark{$ (#1)+(-\stpDsupLen*#2*#4,-\stpDsupLen*#2*#5,-\stpDsupLen*#2*#6) $}{#3}%
+  }%
+}
+\newcommand{\stp@DrodWall}[7]{%
+  \stp@DaxisMark{#1}{#2}{#5}{1}{0}{0}%
+  \stp@DaxisMark{#1}{#3}{#6}{0}{1}{0}%
+  \stp@DaxisMark{#1}{#4}{#7}{0}{0}{1}%
+}
+\newcommand{\stp@DrodSpring}[7]{%
+  \stp@DaxisMarkSpr{#1}{#2}{#5}{1}{0}{0}%
+  \stp@DaxisMarkSpr{#1}{#3}{#6}{0}{1}{0}%
+  \stp@DaxisMarkSpr{#1}{#4}{#7}{0}{0}{1}%
+}
+
+\NewDocumentCommand{\stpDsupport}{m m O{1} O{1} O{1} O{0} O{0} O{0}}{%
+  \stpValidTypefalse
+  \edef\stp@t{#1}%
+  \def\stp@sPin{pin}\def\stp@sFixed{fixed}\def\stp@sSpr{spring}%
+  \def\stp@sFork{fork}\def\stp@sWall{wall}%
+  \ifx\stp@t\stp@sPin
+    \stp@DrodWall{#2}{#3}{#4}{#5}{#6}{#7}{#8}%
+    \stp@DnodeMark{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@sWall
+    \stp@DrodWall{#2}{#3}{#4}{#5}{#6}{#7}{#8}%
+    \stp@DnodeMark{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@sSpr
+    \stp@DrodSpring{#2}{#3}{#4}{#5}{#6}{#7}{#8}%
+    \stp@DnodeMark{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@sFork
+    \ifthenelse{\equal{#3}{0}}{%
+      \ifthenelse{\equal{#6}{0}}{}{%
+        \draw[stpDbcDash] ($ (#2)+(0,0,-\stpDhingeAxH*2/3)$)--++(-\stpDsupLen,0,0);%
+        \stp@DrotMark{$ (#2)+(-\stpDsupLen,0,-\stpDhingeAxH*2/3) $}{1}%
+      }%
+    }{%
+      \draw[stpDbc] ($ (#2)+(0,0,-\stpDhingeAxH*2/3)$)--++(-\stpDsupLen*#3,0,0);%
+      \stp@DrotMark{$ (#2)+(-\stpDsupLen*#3,0,-\stpDhingeAxH*2/3) $}{#6}%
+    }%
+    \ifthenelse{\equal{#4}{0}}{%
+      \ifthenelse{\equal{#7}{0}}{}{%
+        \draw[stpDbcDash] ($ (#2)+(0,0,-\stpDhingeAxH*2/3)$)--++(0,-\stpDsupLen,0);%
+        \stp@DrotMark{$ (#2)+(0,-\stpDsupLen,-\stpDhingeAxH*2/3) $}{1}%
+      }%
+    }{%
+      \draw[stpDbc] ($ (#2)+(0,0,-\stpDhingeAxH*2/3)$)--++(0,-\stpDsupLen*#4,0);%
+      \stp@DrotMark{$ (#2)+(0,-\stpDsupLen*#4,-\stpDhingeAxH*2/3) $}{#7}%
+    }%
+    \ifthenelse{\equal{#5}{0}}{%
+      \ifthenelse{\equal{#8}{0}}{}{%
+        \draw[stpDbcDash] ($ (#2)+(0,0,-\stpDhingeAxH/2.5)$)--++(0,0,-\stpDsupLen);%
+        \stp@DrotMark{$ (#2)+(0,0,-\stpDsupLen) $}{1}%
+      }%
+    }{%
+      \draw[stpDbc] ($ (#2)+(0,0,-\stpDhingeAxH/2.5)$)
+        --++(0,0,-\stpDsupLen*#5+\stpDhingeAxH/2);%
+      \stp@DrotMark{$ (#2)+(0,0,-\stpDsupLen*#5) $}{#8}%
+    }%
+    \stp@DnodeMark{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@sFixed
+    % #3=plane (xy|xz|yz|…), #4=normal coordinate through point
+    \edef\stp@pl{#3}%
+    \def\stp@pxy{xy}\def\stp@pyx{yx}\def\stp@pxz{xz}%
+    \def\stp@pzx{zx}\def\stp@pyz{yz}\def\stp@pzy{zy}%
+    \def\stp@nax{z}%
+    \ifx\stp@pl\stp@pxy\def\stp@nax{z}\fi
+    \ifx\stp@pl\stp@pyx\def\stp@nax{z}\fi
+    \ifx\stp@pl\stp@pxz\def\stp@nax{y}\fi
+    \ifx\stp@pl\stp@pzx\def\stp@nax{y}\fi
+    \ifx\stp@pl\stp@pyz\def\stp@nax{x}\fi
+    \ifx\stp@pl\stp@pzy\def\stp@nax{x}\fi
+    \begin{scope}[canvas is #3 plane at \stp@nax=#4]
+      \draw[stpDbc] (#2)--++(-\stpDsupLen/2,0)--++(\stpDsupLen,0);%
+      \draw[stpDbc] (#2)--++(0,-\stpDsupLen/2)--++(0,\stpDsupLen);%
+    \end{scope}%
+    \stp@DnodeMark{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{Dsupport}{#1}\fi
+}
+
+% \stpDhinge{full|gap|corner}{point}[beamA][beamB][orient]
+%   gap orient: 0 = one side, 1 = other (stanli sa3hinge/2)
+\NewDocumentCommand{\stpDhinge}{m m O{0} O{0} O{0}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@hFull{full}\def\stp@hGap{gap}\def\stp@hCorn{corner}%
+  \ifx\stp@t\stp@hFull
+    \fill[white] (#2) circle[radius=\stpDhingeR];%
+    \draw[stpNormal] (#2) circle[radius=\stpDhingeR];%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@hGap
+    \pgfmathsetlengthmacro{\stp@dhr}{\stpDhingeBigR+\stpNormalLW}%
+    \begin{scope}[even odd rule]
+      \ifthenelse{\equal{#5}{1}}{%
+        \clip (#2) circle (\stp@dhr)
+          (#2)--(#3)--($(#3)!\stp@dhr!-90:(#2)$)--
+          ($(#4)!\stp@dhr!90:(#2)$)--(#4)--cycle;%
+      }{%
+        \clip (#2)--(#3)--($(#3)!\stp@dhr!-90:(#2)$)--
+          ($(#4)!\stp@dhr!90:(#2)$)--(#4)--cycle;%
+      }%
+      \filldraw[fill=white,stpNormal] (#2) circle[radius=\stpDhingeBigR];%
+    \end{scope}%
+    \draw[stpDmember] ($ (#2)!\stpDhingeBigR!(#3)$)--(#2)--($ (#2)!\stpDhingeBigR!(#4)$);%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@hCorn
+    \coordinate (stp@dha) at ($ (#2)!\stpHingeCornerL!(#3)$);%
+    \coordinate (stp@dhb) at ($ (#2)!\stpHingeCornerL!(#4)$);%
+    \fill[black] (#2)--(stp@dha)--(stp@dhb)--cycle;%
+    \fill[black] (#2) circle (\stpNormalLW/2);%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{Dhinge}{#1}\fi
+}
+
+% \stpDlineload{A}{B}[dx,dy,dz][count][shaft][label]
+% Uniform line load along AB; (dx,dy,dz) = force direction (arrows point that way).
+% Same comb as 2D: tip rail + head rail + arrows at both ends.
+\NewDocumentCommand{\stpDlineload}{m m O{0,0,-1} O{5} O{0.55} O{}}{%
+  \edef\stp@dd{#3}%
+  \expandafter\stp@DldDir\expandafter{\stp@dd}%
+  \pgfmathsetmacro{\stp@dox}{-\stp@ddx*#5}%
+  \pgfmathsetmacro{\stp@doy}{-\stp@ddy*#5}%
+  \pgfmathsetmacro{\stp@doz}{-\stp@ddz*#5}%
+  \pgfmathsetmacro{\stp@dgx}{-\stp@ddx*\stpDldGap}%
+  \pgfmathsetmacro{\stp@dgy}{-\stp@ddy*\stpDldGap}%
+  \pgfmathsetmacro{\stp@dgz}{-\stp@ddz*\stpDldGap}%
+  \coordinate (stp@dla) at (#1);%
+  \coordinate (stp@dlb) at (#2);%
+  \coordinate (stp@dlta) at ($ (stp@dla)+(\stp@dgx,\stp@dgy,\stp@dgz) $);%
+  \coordinate (stp@dltb) at ($ (stp@dlb)+(\stp@dgx,\stp@dgy,\stp@dgz) $);%
+  \coordinate (stp@dlha) at ($ (stp@dla)+(\stp@dox,\stp@doy,\stp@doz) $);%
+  \coordinate (stp@dlhb) at ($ (stp@dlb)+(\stp@dox,\stp@doy,\stp@doz) $);%
+  % Arrows first (include ends), then rails on top so the comb baseline is clear
+  \pgfmathtruncatemacro{\stp@dln}{#4}%
+  \ifnum\stp@dln=1
+    \draw[stpLoad] ($ (stp@dlha)!0.5!(stp@dlhb) $)--($ (stp@dlta)!0.5!(stp@dltb) $);%
+  \else
+    \pgfmathtruncatemacro{\stp@dlm}{\stp@dln-1}%
+    \foreach \stp@i in {0,...,\stp@dlm} {%
+      \pgfmathsetmacro{\stp@t}{\stp@i/\stp@dlm}%
+      \draw[stpLoad]
+        ($ (stp@dlha)!\stp@t!(stp@dlhb) $)--($ (stp@dlta)!\stp@t!(stp@dltb) $);%
+    }%
+  \fi
+  \draw[stpLoadRail] (stp@dlta)--(stp@dltb);%
+  \draw[stpLoadRail] (stp@dlha)--(stp@dlhb);%
+  \fill[color=\stpClrLoad] (stp@dlha) circle (\stpTinyLW/2);%
+  \fill[color=\stpClrLoad] (stp@dlhb) circle (\stpTinyLW/2);%
+  \def\stp@dllab{#6}%
+  \ifx\stp@dllab\stp@empty\else
+    \node[stpLoadLabel, above=1mm] at ($ (stp@dlha)!0.5!(stp@dlhb) $) {#6};%
+  \fi
+}
+\def\stp@DldDir#1{\stp@DldDirA#1\@nil}
+\def\stp@DldDirA#1,#2,#3\@nil{%
+  \def\stp@ddx{#1}\def\stp@ddy{#2}\def\stp@ddz{#3}%
+}
+\newcommand{\stpDldGap}{0.08}
+
+\newcommand{\stpStubPlate}{\PackageWarning{satopdf}{2D PLATE not in v0.3}}
+\newcommand{\stpStubShell}{\PackageWarning{satopdf}{SHELL not in v0.3}}
+
+\endinput

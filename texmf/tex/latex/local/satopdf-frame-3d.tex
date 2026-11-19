@@ -1,0 +1,46 @@
+% satopdf 3D demo — wall anchorage = solid black circles (≡ 2D hatch)
+\documentclass[border=10pt]{standalone}
+\usepackage{satopdf}
+\begin{document}
+\stpDsetCoords{-25}{10}[1][1.2]
+\stpDsetAxis{xyz}
+\begin{tikzpicture}[stpDCoords]
+  \stpDpoint{a}{0}{0}{0}
+  \stpDpoint{b}{3}{0}{0}
+  \stpDpoint{c}{6}{0}{0}
+  \stpDpoint{d}{9}{0}{0}
+  \stpDpoint{e}{12}{0}{0}
+  \stpDpoint{f}{0}{3}{0}
+  \stpDpoint{g}{3}{3}{0}
+  \stpDpoint{h}{6}{3}{0}
+  \stpDpoint{i}{9}{3}{0}
+  \stpDpoint{j}{12}{3}{0}
+
+  \stpDaxis{a}
+
+  \stpDmember{beam}{f}{b}[1][1]
+  \stpDmember{beam}{b}{h}[1][1]
+  \stpDmember{beam}{h}{d}[1][1]
+  \stpDmember{beam}{d}{j}[1][1]
+  \stpDmember{ghost}{a}{e}
+  \stpDmember{ghost}{f}{j}
+  \stpDmember{ghost}{a}{f}
+  \stpDmember{ghost}{b}{g}
+  \stpDmember{ghost}{c}{h}
+  \stpDmember{ghost}{d}{i}
+  \stpDmember{ghost}{e}{j}
+
+  % pin/wall: rods + black wall dots at non-node ends
+  \stpDsupport{pin}{b}
+  \stpDsupport{pin}{h}[0][0][1]
+  \stpDsupport{pin}{d}[0][1][1]
+
+  \stpDhinge{gap}{b}[f][h][1]
+  \stpDhinge{gap}{h}[b][d][1]
+  \stpDhinge{gap}{d}[h][j][1]
+
+  \node[stpLabel, below left] at (b) {$A$};
+  \node[stpLabel, right=2mm] at (h) {$C$};
+  \node[stpLabel, below left] at (d) {$B$};
+\end{tikzpicture}
+\end{document}

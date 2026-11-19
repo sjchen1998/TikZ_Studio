@@ -1,0 +1,60 @@
+% Auto-generated from frame.dxf
+\documentclass[border=10pt]{standalone}
+\usepackage{satopdf}
+\begin{document}
+% beam 刚架；多梁共点固支 = 三角+黑圆；roller；线载荷 = global 梳齿
+\begin{tikzpicture}[x=0.14mm,y=0.14mm]
+  % 可改：载荷图形色 / 载荷标注文字色（也可只改其一）
+  \stpset{
+    support size=12mm,
+    hinge radius=1.5mm,
+    load color=red!75!black,
+    load label color=red!75!black
+  }
+
+  \stpNode{N0}{900.0000,350.0000}
+  \stpNode{N1}{900.0000,0.0000}
+  \stpNode{N2}{1200.0000,180.0000}
+  \stpNode{N3}{1200.0000,0.0000}
+  \stpNode{N4}{600.0000,233.3333}
+  \stpNode{N5}{600.0000,0.0000}
+  \stpNode{N6}{300.0000,116.6667}
+  \stpNode{N7}{300.0000,0.0000}
+  \stpNode{N8}{0.0000,0.0000}
+  \stpNode{Htop}{0.0000,350.0000}
+
+  % 刚架：N0–N1 为 truss；上端 gap 铰接两梁，下端 full 铰（杆后画，避免被盖住）
+  \stpMember{truss}{N0}{N1}[1][1]
+  \stpMember{beam}{N1}{N2}
+  \stpMember{beam}{N1}{N3}
+  \stpMember{beam}{N2}{N0}
+  \stpMember{beam}{N4}{N5}
+  \stpMember{beam}{N6}{N7}
+  \stpMember{beam}{N8}{N7}
+  \stpMember{beam}{N7}{N5}
+  \stpMember{beam}{N5}{N1}
+  \stpMember{beam}{N0}{N8}
+  \stpMember{beam}{N1}{N4}
+  \stpMember{beam}{N5}{N6}
+  \stpMember{beam}{N2}{N3}
+  % gap：半铰自动画在 truss 一侧（N1）；N1 下端 full 铰
+  \stpHinge{gap}{N0}[N8][N2][N1]
+  \stpHinge{full}{N1}
+
+  % N8 fixed (black tip); N3 roller; N5 Y-direction elastic spring
+  \stpSupport{N8}[type=fixed, angle=0, size=12mm]
+  \stpSupport{N3}[type=roller, angle=0, size=12mm]
+  \stpSupport{N5}[type=spring, angle=0, label=$k$]
+
+  % 教材风均布载荷（竖直向下），与 stanli/example 一致；非 CAE 尖端圆样式
+  \stpLineLoad{global}{N0}{N8}[0.85][0.85][0.12][$q$]
+
+  \stpLoad{moment}{N2}[30][200][0][$M$]
+
+  \stpDimensioning{horiz}{N8}{N3}{-77.00}[$L$]
+  \stpDimensioning{vert}{N8}{Htop}{-120.00}[$H$]
+  \stpNotation{node}{N8}{A}[below left=2mm]
+  \stpNotation{node}{N3}{B}[below right=2mm]
+  \stpNotation{node}{N2}{C}[right=2mm]
+\end{tikzpicture}
+\end{document}

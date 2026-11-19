@@ -1,0 +1,86 @@
+% satopdf v0.2 — 2D feature gallery (lualatex / xelatex)
+\documentclass[border=10pt]{standalone}
+\usepackage{satopdf}
+
+\begin{document}
+\begin{tikzpicture}
+  \stpScaling{0.85}
+
+  %----- frame (stanli-like demo, cm coords via scaling) -----
+  \stpPoint{a}{0}{1}
+  \stpPoint{b}{3}{1}
+  \stpPoint{c}{11}{3}
+  \stpPoint{d}{19}{1}
+  \stpPoint{e}{22}{1}
+  \stpPoint{f}{3}{0}
+  \stpPoint{g}{11}{-2}
+  \stpPoint{h}{19}{0}
+
+  \stpMember{fiber}{a}{b}[0][1]
+  \stpMember{fiber}{b}{c}[1][1]
+  \stpMember{fiber}{c}{d}[1][1]
+  \stpMember{fiber}{d}{e}[1][0]
+  \stpMember{fiber}{f}{b}
+  \stpMember{fiber}{d}{h}
+  % truss：两端自动空心铰圆；beam/fiber：固接无铰圆
+  \stpMember{truss}{f}{g}
+  \stpMember{truss}{g}{h}
+  \stpMember{truss}{g}{c}
+
+  \stpSupport{f}[type=pin]
+  \stpSupport{h}[type=roller]
+  \stpHinge{gap}{c}[b][d][1] % 主梁中间铰（beam 上的铰需显式画）
+
+  \stpLineLoad{global}{a}{b}[1][1][.5]
+  \stpLineLoad{global}{b}{c}
+
+  \stpDimensioning{horiz}{a}{b}{-2.5}[$3.0$]
+  \stpDimensioning{horiz}{b}{c}{-2.5}[$8.0$]
+  \stpDimensioning{horiz}{c}{d}{-2.5}[$8.0$]
+  \stpDimensioning{horiz}{d}{e}{-2.5}[$3.0$]
+  \stpDimensioning{vert}{f}{a}{-1}[$1.0$]
+  \stpDimensioning{vert}{g}{f}{-1}[$2.0$]
+  \stpDimensioning{vert}{a}{c}{-1}[$2.0$]
+
+  \stpInfluenceLine{a}{e}{3}[.3]
+
+  \stpNotation{node}{a}{$1$}[left]
+  \stpNotation{node}{b}{$2$}[below right=2mm]
+  \stpNotation{node}{c}{$3$}
+  \stpNotation{node}{d}{$4$}[above]
+  \stpNotation{node}{e}{$5$}[above]
+  \stpNotation{node}{f}{$6$}[left=2mm]
+  \stpNotation{node}{g}{$7$}[below=2mm]
+  \stpNotation{node}{h}{$8$}[right=2mm]
+  \stpNotation{boxed}{f}{g}[$S$]
+\end{tikzpicture}
+
+\vspace{12mm}
+
+%----- CAE mm pipeline demo -----
+\begin{tikzpicture}[x=1mm, y=1mm]
+  \stpset{moment scale=0.008, lineload count=5}
+
+  \stpNode{A}{0,0}
+  \stpNode{B}{400,0}
+  \stpNode{C}{800,0}
+
+  \stpBeamFiber{A}{B}
+  \stpBeam{B}{C}
+
+  \stpSupport{A}[type=wall] % 单梁端全固支墙
+  \stpSupportFromMask{010000}{C}
+  \stpHingeFull{B}
+
+  \stpLineLoadCAE{A}{B}{0,-1}[$q=10\,\mathrm{N{-}mm}$]
+  \stpPointLoad{B}{0,-1}[$F=5\,\mathrm{kN}$]
+  \stpSpringK{B}{-90}[$K=200\,\mathrm{N{-}mm}$]
+
+  \stpDimensioning{parallel}{A}{C}{-35mm}[$L=800\,\mathrm{mm}$]
+  \stpMomentDiagram[qy=0.01, scale=0.008]{A}{B}{-8000}{5000}
+  \stpInternalForces{B}{C}{0.4}{-0.25}[0.15][\stpClrShear]
+  \stpDeform{A}{B}{0,0}{0,-2.5}[40]
+  \stpNotation{circled}{A}{$A$}
+  \stpNotation{circled}{C}{$C$}
+\end{tikzpicture}
+\end{document}
