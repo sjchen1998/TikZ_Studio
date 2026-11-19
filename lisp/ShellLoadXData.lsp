@@ -1,0 +1,20 @@
+;;; 已合并至 LoadXData.lsp — 保留仅为兼容旧 (load "ShellLoadXData") 路径
+(vl-load-com)
+(setq __cae_stub (findfile "ShellLoadXData.lsp"))
+(if __cae_stub
+  (progn
+    (setq __cae_merged (strcat (vl-filename-directory __cae_stub) "\\LoadXData.lsp"))
+    (if (findfile __cae_merged)
+      (load __cae_merged)
+      (if (findfile "LoadXData.lsp")
+        (load (findfile "LoadXData.lsp"))
+        (princ "\n[错误] 找不到 LoadXData.lsp / [Error] LoadXData.lsp not found")
+      )
+    )
+  )
+  (if (findfile "LoadXData.lsp")
+    (load (findfile "LoadXData.lsp"))
+    (princ "\n[错误] 找不到 LoadXData.lsp / [Error] LoadXData.lsp not found")
+  )
+)
+(princ)
