@@ -4,13 +4,36 @@
 
 ## 中文
 
-在本机编辑 TikZ 和 circuitikz。左边是源码，右边用 XeLaTeX 或 pdfLaTeX 编译出预览。点预览上的坐标就能改图，不用先把投影算成平面坐标。界面可在中文与英文之间切换。
+在本机编辑 TikZ 和 circuitikz。左边是源码，右边用 XeLaTeX 或 pdfLaTeX 编译出预览。可在预览上放置元件、拖动坐标写回源码，不必先把三维投影手工算成平面数。界面可在中文与英文之间切换。
 
-本项目以 [GPL-3.0](LICENSE) 发布。
+本项目以 [GPL-3.0](LICENSE) 发布。更细的操作说明见：
+
+- [TikZ_Studio_cn.pdf](TikZ_Studio_cn.pdf) / [TikZ_Studio_en.pdf](TikZ_Studio_en.pdf) — 应用使用说明（含编辑详解）
+- [lisp/LoadXData_cn.pdf](lisp/LoadXData_cn.pdf) / [lisp/LoadXData_en.pdf](lisp/LoadXData_en.pdf) — AutoCAD `LoadXData.lsp` 说明
+- [texmf/tex/latex/local/satopdf.pdf](texmf/tex/latex/local/satopdf.pdf) — `satopdf` 宏包文档
+
+### 界面与基本循环
+
+| 区域 | 内容 |
+| --- | --- |
+| 左：工具栏 | 编译、撤销、打开 `.tex`、导入 DXF、保存、模板、编译器、语言 |
+| 左：元件栏 | 随图类型切换；`＋` 打开元件库 |
+| 左：编辑器 | TeX 源码；选中预览点会高亮对应行 |
+| 右：预览条 | 缩放、点识别、红/蓝/紫、联动、整体平移、吸附、导出 |
+| 右：编辑条 | 全选、放置提示、尺寸样式、X/Y 或 ΔX/ΔY、应用、删除、变换 |
+| 右：画布 | SVG 预览与可拖动句柄 |
+
+典型流程：选模板 → 点元件栏进入放置 → 在画布点够点数（或填表）→ **确认** / Enter / **右键** 结束 → 编译刷新句柄 → 拖红点或框选变换 → 导出。
+
+- 取消放置：`Esc` 或「取消」
+- 编辑器内编译：`Ctrl+Enter`
+- 编译失败：自动退回上一份能通过的源码；也可点「撤销」
+
+切换模板会**替换**当前缓冲区，请先保存。
 
 ### 绘图
 
-打开模板，或在当前图上继续加内容。面板会跟着图的类型切换：
+面板随图类型切换：
 
 | 图 | 面板 | 常住内容 |
 | --- | --- | --- |
@@ -20,31 +43,60 @@
 | 平面图 | 二维 | 点、线段、函数，以及尺寸类标注 |
 | 含 tikz-3dplot 的图 | 三维 | 线段、箭头、圆、圆弧，以及尺寸类标注 |
 
-内置模板有 RC 滤波、Buck、运放、框图、2D/3D 结构分析、曲线、二维坐标、CMS 三维、高斯分布和频率响应。2D/3D 结构分析使用工程内 `satopdf` 宏包（`texmf/tex/latex/local/`，编译时通过 `TEXINPUTS` 自动找到）。
+内置模板：RC 滤波、Buck、运放、框图、2D/3D 结构分析、曲线、二维坐标、CMS 三维、高斯分布、频率响应。2D/3D 结构分析使用工程内 `satopdf`（`texmf/tex/latex/local/`，经 `TEXINPUTS` 自动找到）。
 
-框图里的方框、圆角、椭圆、圆柱、梯形、判断要填**代号**；代号重复时会提示「代号已存在」。带代号的节点编译后会显示吸附点，画箭头或折线箭头时可吸附到端口。折线箭头支持多转折点，接近水平或竖直时会正交吸附；右键或「确认」结束。尺寸、半径、直径、角度、回转与坐标轴等可从「＋」按需加入。
+**放置通则：** 工具需要 0 / 1 / 2（或更多）次点击；0 点工具在编辑条填表后确认。点击优先吸附命名端口/坐标。生成代码插在 `\end{tikzpicture}` / `\end{circuitikz}` / `\end{axis}` 前。
 
-每个面板还能加直线、矩形、圆、弧、椭圆线、虚线、网格等通用图形（具体项随面板略有不同）。元件库里没有的符号，可以用 `{{1}}`、`{{2}}`、`{{文字}}`、`{{角度}}` 做成自己的按钮。
+框图中带文字的形状要填**代号**；重复会提示「代号已存在」。编译后具名节点显示吸附点。折线箭头可多转折，开启正交吸附时接近水平/竖直会对齐；右键或「确认」结束。
 
-工具栏的「导入 DXF」按当前模板分流：在 **2D/3D 结构分析** 下生成 `satopdf` 图（含约束与载荷）；**3D** 还会把板壳 `REGION`/`3DFACE`/`MESH` 画成 `\stpDface`，并把 `SETSHELLLOAD` Face（`P_face`/`F_total`）画成 `\stpDfaceload`。其它模板只导入直线、多段线、圆、圆弧、椭圆、样条和文字等几何，忽略 `CAE_VIS_*` 载荷/约束块。单位按 DXF 记录换算；普通几何导入会缩到大约 16cm 并把左下角移到原点。
+尺寸：点起点、终点、文字位置；放置时可按 `H`/`V`/`R`（水平/竖直/对齐）、`I`/`O`（箭头内外）、`1`/`2`（抑起/终点）。半径/直径先点圆或弧，再点文字位置。角度先点两条直线，再点文字位置。
 
-三维圆和圆弧写在指定平面上。平面可以是 `xy`、`xz`、`yz`，也可以写一个法向，或写两个方向。第一个方向是 0°。圆心可以用 `(0,0,1.55)`，也可以用图里已有的名字，例如 `(O)`。
+通用图形（直线、矩形、圆、弧、椭圆线、虚线、网格等）可从栏或 `＋` 加入。自定义按钮可用 `{{1}}`、`{{2}}`、`{{文字}}`、`{{角度}}`。
+
+三维圆/弧画在指定平面：`xy` / `xz` / `yz`、一个法向或两个方向（第一方向为 0°）。圆心可以是 `(0,0,1.55)` 或已有名字如 `(O)`。
 
 ### 改图
 
-预览上的点分成三种：红点是数值坐标，蓝点是名字或相对位置，紫点是比例点。拖动红点会写回源码。相同数值可以联动，一条语句上的坐标可以一起平移。吸附网格可选自由、0.05、0.1 或 0.25。
+| 颜色 | 含义 |
+| --- | --- |
+| 红点 | 数值坐标，拖动写回源码 |
+| 蓝点 | 名字或相对位置 |
+| 紫点 | 比例点 |
 
-Ctrl 或 Shift 点击可以多选。也可以拖出方框，或点全选。选中后用 ΔX、ΔY 平移，或填缩放、旋转再点变换。坐标轴（`planeaxes`）与网格上的点不进框选/多选/全选，坐标轴只能在输入框里改范围。尺寸、半径、直径、角度相关点同样受保护。
+- **联动**：相同数值一起动；**整体平移**：同一语句（到 `;`）内坐标成组平移
+- 吸附网格：自由 / 0.05 / 0.1 / 0.25
+- `Ctrl`/`Shift` 点击多选；空白处拖拽框选；「全选」或 `Ctrl+A`（焦点不在输入框时）
+- 多选后 X/Y 变为 ΔX/ΔY；可填缩放、旋转再点「变换」
+- 全选后的缩放作用于整幅图（坐标、圆/弧半径、`--++` 长度、`\tdplotsetcoord` 向量长）；局部框选只改框内数值
+- `planeaxes`、网格点、尺寸类构造点不进多选；轴范围在输入框改
+- 关闭「点识别」可加快大图；滚轮以光标为中心缩放预览
 
-全选后的缩放作用在整幅图上：坐标、圆和弧的半径、`--++` 的长度，以及 `\tdplotsetcoord` 里的向量长度一起变。只框选一部分时，改的是框里的数值坐标。
+导出：PDF、600 dpi PNG、SVG。桌面版「保存」弹出另存为。
 
-选中坐标时，状态栏显示行号，源码里对应行会高亮。点空白处即取消选择。
+### 导入 DXF 与 CAE 流程
 
-预览可以放大查看。结果可导出 PDF、600 dpi PNG 或 SVG。桌面版保存 `.tex` 时会弹出另存为对话框。编译失败时会退回上一份能通过的源码，也可以手动撤销。
+「导入 DXF」按**当前模板**分流：
+
+- **2D/3D 结构分析** → `satopdf`（含约束与载荷）；3D 还将板壳 `REGION`/`3DFACE`/`MESH` 转为 `\stpDface`，面载荷转为 `\stpDfaceload`
+- **其它模板** → 仅几何（线、多段线、圆、弧、椭圆、样条、文字），忽略 `CAE_VIS_*`；大图缩到约 16 cm，左下角到原点
+
+推荐 CAE 管线：AutoCAD 中加载 `lisp/LoadXData.lsp`（`(load "LoadXData.lsp")`，需把 `lisp/` 加入支持路径）标注梁/杆/板壳/焊缝 → 导出 DXF → 在本应用打开 2D/3D 结构分析模板 → 导入 DXF → 编辑导出。
+
+### 快捷键（摘要）
+
+| 操作 | 作用 |
+| --- | --- |
+| `Ctrl+Enter`（编辑器） | 编译 |
+| `Esc` | 取消放置 / 关闭元件库 |
+| 放置时右键 | 确认放置 |
+| `Ctrl`/`Shift` 点句柄 | 多选 |
+| `Ctrl+A`（非输入框） | 全选句柄 |
+| 预览滚轮 | 缩放 |
+| `H`/`V`/`R`、`I`/`O`、`1`/`2` | 尺寸放置时的样式 |
 
 ### 运行
 
-需要本机已安装 Python、TeX Live（含 XeLaTeX、ctex、circuitikz、tikz-3dplot、pgfplots），以及：
+需要 Python、TeX Live（XeLaTeX、pdfLaTeX、ctex、circuitikz、tikz-3dplot、pgfplots），以及：
 
 ```
 pip install -r requirements.txt
@@ -56,23 +108,48 @@ pip install -r requirements.txt
 python -m tikzstudio
 ```
 
-或只开网页，默认地址是 `http://127.0.0.1:8765`：
+或仅网页（默认 `http://127.0.0.1:8765`）：
 
 ```
 python -m tikzstudio.server
 ```
 
-`start_tikz_studio.bat` 从自己所在的目录启动桌面窗口。整个项目换到别的文件夹后，直接双击即可。
+`start_tikz_studio.bat` 从脚本所在目录启动；项目换文件夹后仍可直接双击。
+
+---
 
 ## English
 
-Edit TikZ and circuitikz on this computer. The source is on the left. XeLaTeX or pdfLaTeX draws the preview on the right. Click a coordinate in the preview to change the figure, without first turning a projection into plane coordinates. The UI can switch between Chinese and English.
+Edit TikZ and circuitikz on this computer. Source is on the left; XeLaTeX or pdfLaTeX draws the preview on the right. Place components on the canvas, drag coordinates back into the source, and switch the UI between Chinese and English — without converting a 3D projection to plane numbers by hand.
 
-This project is released under [GPL-3.0](LICENSE).
+Released under [GPL-3.0](LICENSE). Full manuals:
+
+- [TikZ_Studio_en.pdf](TikZ_Studio_en.pdf) / [TikZ_Studio_cn.pdf](TikZ_Studio_cn.pdf) — application guide (editing in detail)
+- [lisp/LoadXData_en.pdf](lisp/LoadXData_en.pdf) / [lisp/LoadXData_cn.pdf](lisp/LoadXData_cn.pdf) — AutoCAD `LoadXData.lsp`
+- [texmf/tex/latex/local/satopdf.pdf](texmf/tex/latex/local/satopdf.pdf) — `satopdf` package docs
+
+### Window and basic loop
+
+| Area | Contents |
+| --- | --- |
+| Left: toolbar | Compile, Undo, Open `.tex`, Import DXF, Save, Template, compiler, language |
+| Left: component bar | Follows picture kind; `+` opens the library |
+| Left: editor | TeX source; selecting a preview point highlights its line |
+| Right: preview bar | Zoom, point pick, red/blue/purple, Link, Move-all, snap, export |
+| Right: edit bar | Select-all, place prompts, dimension style, X/Y or dX/dY, Apply, Delete, Transform |
+| Right: canvas | SVG preview with draggable handles |
+
+Typical loop: pick a template → click a tool → click the required points (or fill a form) → **Confirm** / Enter / **right-click** → compile to refresh handles → drag red points or box-transform → export.
+
+- Cancel place: `Esc` or Cancel
+- Compile from the editor: `Ctrl+Enter`
+- Failed compile: reverts to the last good source; Undo also available
+
+Changing the template **replaces** the buffer — save first if needed.
 
 ### Drawing
 
-Open a template, or keep adding to the current figure. The panel follows the kind of picture:
+The panel follows the picture kind:
 
 | Picture | Panel | Always on the bar |
 | --- | --- | --- |
@@ -82,31 +159,60 @@ Open a template, or keep adding to the current figure. The panel follows the kin
 | Plane figure | 2D | Point, segment, function, plus dimension tools |
 | Picture using tikz-3dplot | 3D | Segment, arrow, circle, arc, plus dimension tools |
 
-Built-in templates: RC filter, Buck converter, op-amp, block diagram, 2D/3D SA, plot, 2D axes, CMS in 3D, Gaussian, and frequency response. 2D/3D SA uses the in-tree `satopdf` package under `texmf/tex/latex/local/` (found via `TEXINPUTS` at compile time).
+Built-in templates: RC filter, Buck, op-amp, block diagram, 2D/3D SA, plot, 2D axes, CMS in 3D, Gaussian, frequency response. 2D/3D SA uses in-tree `satopdf` under `texmf/tex/latex/local/` (via `TEXINPUTS`).
 
-Block shapes that carry text need an **ID**. A duplicate ID shows “ID already exists”. Named nodes expose snap ports after compile, so arrows and polyline arrows can latch onto them. A polyline arrow accepts multiple corners, snaps near horizontal or vertical while placing or dragging, and finishes with right-click or Confirm. Dimension tools, turns, and axis helpers can be added from **＋** when needed.
+**Placement:** tools need 0 / 1 / 2 (or more) clicks; 0-point tools use the edit-bar form then Confirm. Clicks prefer named ports/coordinates. Snippets insert before `\end{tikzpicture}` / `\end{circuitikz}` / `\end{axis}`.
 
-Every panel can also add shared graphics such as a line, rectangle, circle, arc, ellipse line, dashed line, or grid (exact items vary by panel). A symbol that is not in the library can become your own button with `{{1}}`, `{{2}}`, `{{文字}}`, and `{{角度}}`.
+Block shapes with text need an **ID**; duplicates show “ID already exists”. After compile, named nodes expose snap ports. Polyline arrows take multiple corners; with ortho-snap, near-horizontal/vertical segments lock; finish with right-click or Confirm.
 
-**Import DXF** follows the active template: under **2D/3D SA** it builds a `satopdf` figure (supports and loads included); **3D** also maps shell `REGION`/`3DFACE`/`MESH` to `\stpDface` and `SETSHELLLOAD` Face (`P_face`/`F_total`) to `\stpDfaceload`. Otherwise it imports geometry only (lines, polylines, circles, arcs, ellipses, splines, text) and skips `CAE_VIS_*` load/BC blocks. Geometry imports scale large drawings to about 16 cm and shift the lower-left corner to the origin.
+Dimensions: start, end, then label. While placing: `H`/`V`/`R` (horizontal / vertical / aligned), `I`/`O` (arrows in/out), `1`/`2` (hide start/end). Radius/diameter: pick a circle or arc, then the label. Angle: two lines, then the label.
 
-A 3D circle or arc lies on a chosen plane. The plane can be `xy`, `xz`, or `yz`, one normal, or two directions. The first direction is 0°. The center can be `(0,0,1.55)`, or a name already in the figure, such as `(O)`.
+Shared graphics (line, rectangle, circle, arc, ellipse path, dashed, grid, …) come from the bar or `+`. Custom buttons use `{{1}}`, `{{2}}`, `{{text}}`, `{{angle}}`.
+
+A 3D circle/arc lies on `xy` / `xz` / `yz`, one normal, or two directions (first direction is 0°). Centre: `(0,0,1.55)` or a name such as `(O)`.
 
 ### Editing
 
-Points on the preview are of three kinds. A red point is a numeric coordinate, a blue point is a name or a relative position, and a purple point is a ratio. Dragging a red point writes the source. Equal numbers can move together, and the coordinates in one statement can shift as a group. The snap grid can be free, 0.05, 0.1, or 0.25.
+| Colour | Meaning |
+| --- | --- |
+| Red | Numeric coordinate — drag rewrites the source |
+| Blue | Name or relative position |
+| Purple | Ratio point |
 
-Ctrl-click or Shift-click adds to the selection. You can also drag a box, or choose Select all. Then move the selection with ΔX and ΔY, or enter a scale and a rotation and apply the transform. Points on packaged axes (`planeaxes`) and on grids stay out of box / multi / select-all; axes ranges are edited in the input fields. Dimension, radius, diameter, and angle points are protected the same way.
+- **Link:** equal numbers move together; **Move all:** shift every numeric pair on the same statement (through `;`)
+- Snap grid: free / 0.05 / 0.1 / 0.25
+- `Ctrl`/`Shift`-click to multi-select; drag empty canvas to box-select; Select all or `Ctrl+A` (when focus is not in an input)
+- With a multi-selection, X/Y become dX/dY; enter scale/rotation and Transform
+- After Select all, scale affects the whole picture (coordinates, circle/arc radii, `--++` lengths, `\tdplotsetcoord` vector lengths); a partial box only rewrites numbers inside it
+- `planeaxes`, grid points, and dimension construction points stay out of multi-select; edit axis ranges in the fields
+- Turn off Point pick for large figures; mouse wheel zooms toward the cursor
 
-After Select all, scale applies to the whole picture: coordinates, circle and arc radii, lengths written with `--++`, and vector lengths in `\tdplotsetcoord`. A box around part of the figure changes the numeric coordinates inside that box.
+Export PDF, 600 dpi PNG, or SVG. Desktop Save opens Save As for `.tex`.
 
-The status bar shows the line number of the selected coordinate, and that line is highlighted in the source. Click empty space to clear the selection.
+### DXF import and CAE pipeline
 
-Zoom the preview to look more closely. Export the result as PDF, a 600 dpi PNG, or SVG. On the desktop build, Save opens a Save As dialog for `.tex`. If compilation fails, the editor returns to the last source that compiled. You can also undo by hand.
+**Import DXF** follows the **active template**:
+
+- **2D/3D SA** → `satopdf` (supports and loads); 3D also maps shell `REGION`/`3DFACE`/`MESH` to `\stpDface` and face loads to `\stpDfaceload`
+- **Other templates** → geometry only (lines, polylines, circles, arcs, ellipses, splines, text); skip `CAE_VIS_*`; scale large drawings to about 16 cm with the lower-left at the origin
+
+Recommended CAE path: in AutoCAD, add `lisp/` to the support path and `(load "LoadXData.lsp")` to annotate beams/rods/shells/welds → export DXF → open the 2D/3D SA template here → Import DXF → edit and export.
+
+### Shortcuts (summary)
+
+| Input | Action |
+| --- | --- |
+| `Ctrl+Enter` (editor) | Compile |
+| `Esc` | Cancel place / close library |
+| Right-click while placing | Confirm place |
+| `Ctrl`/`Shift`-click handle | Multi-select |
+| `Ctrl+A` (outside inputs) | Select all handles |
+| Wheel on preview | Zoom |
+| `H`/`V`/`R`, `I`/`O`, `1`/`2` | Dimension style while placing |
 
 ### Running
 
-Install Python and TeX Live, including XeLaTeX, ctex, circuitikz, tikz-3dplot, and pgfplots. Then:
+Install Python and TeX Live (XeLaTeX, pdfLaTeX, ctex, circuitikz, tikz-3dplot, pgfplots), then:
 
 ```
 pip install -r requirements.txt
@@ -118,10 +224,10 @@ Desktop window:
 python -m tikzstudio
 ```
 
-Or the page only, at `http://127.0.0.1:8765`:
+Browser only (default `http://127.0.0.1:8765`):
 
 ```
 python -m tikzstudio.server
 ```
 
-`start_tikz_studio.bat` starts the desktop window from the folder that contains the script. Move the project to another folder and double-click the script.
+`start_tikz_studio.bat` starts from its own folder; move the project and double-click again.
