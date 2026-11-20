@@ -9,6 +9,12 @@ from pathlib import Path
 import ezdxf
 from ezdxf import recover
 
+from .cae_section_mass import (
+    accumulate_from_dxf,
+    emit_struct_info_tex,
+    format_length_mm_tex as _fmt_len_mm,
+)
+
 
 def _k(p, tol=1e-4):
     return (round(float(p[0]) / tol) * tol, round(float(p[1]) / tol) * tol)
@@ -44,13 +50,38 @@ def _parse_q(txt: str):
 
 
 def _parse_F(txt: str):
-    m = re.search(r"F\[[^\]]*\]\s*=\s*([-+0-9.eE]+)", txt or "")
-    return float(m.group(1)) if m else None
+    """SETPTLOAD VIS: F[START|END]=1000.0N → (mag, unit)."""
+    m = re.search(
+        r"F\[[^\]]*\]\s*=\s*([-+0-9.eE]+)\s*([A-Za-zµμ·\-]*)",
+        txt or "",
+    )
+    if not m:
+        return None
+    return float(m.group(1)), (m.group(2) or "N").strip() or "N"
 
 
 def _parse_M(txt: str):
     m = re.search(r"M\[[^\]]*\]\s*=\s*([-+0-9.eE]+)", txt or "")
     return float(m.group(1)) if m else None
+
+
+def _dir_from_load_block_2d(blk) -> tuple[float, float]:
+    """Longest LINE in VIS block: tail→tip = force direction (xy)."""
+    best = None
+    best_len2 = -1.0
+    for be in blk:
+        if be.dxftype() != "LINE":
+            continue
+        a, b = be.dxf.start, be.dxf.end
+        d = (float(b.x - a.x), float(b.y - a.y))
+        len2 = d[0] * d[0] + d[1] * d[1]
+        if len2 > best_len2:
+            best_len2 = len2
+            best = d
+    if best is None or best_len2 < 1e-18:
+        return (0.0, -1.0)
+    inv = 1.0 / math.sqrt(best_len2)
+    return (best[0] * inv, best[1] * inv)
 
 
 def _parse_K(txt: str):
@@ -209,11 +240,51 @@ def dxf_to_satopdf2d(
         nodes[b] = b
         raw_members.append((a, b))
 
+    # Beam XDATA → vis-handle map for SETPTLOAD direction
+    ptload_by_vis: dict[str, tuple[float, tuple[float, float], str]] = {}
+    for e in msp.query("LINE"):
+        try:
+            tags = e.get_xdata("MY_CAE_POINT_LOAD")
+        except Exception:
+            continue
+        if not tags:
+            continue
+        vals = []
+        for t in tags:
+            code = getattr(t, "code", None)
+            val = getattr(t, "value", t)
+            if code is None and isinstance(t, (tuple, list)) and len(t) >= 2:
+                code, val = t[0], t[1]
+            vals.append((code, val))
+        i = 0
+        while i + 4 <= len(vals):
+            c0, end_tag = vals[i]
+            c1, mag = vals[i + 1] if i + 1 < len(vals) else (None, None)
+            c2, dvec = vals[i + 2] if i + 2 < len(vals) else (None, None)
+            c3, vis_h = vals[i + 3] if i + 3 < len(vals) else (None, None)
+            unit = "N"
+            if i + 4 < len(vals) and vals[i + 4][0] == 1000:
+                unit = str(vals[i + 4][1] or "N")
+                step = 5
+            else:
+                step = 4
+            if (
+                c0 == 1000
+                and c1 == 1040
+                and c2 == 1013
+                and c3 == 1005
+                and isinstance(end_tag, str)
+                and end_tag.upper() in ("START", "END")
+            ):
+                direction = (float(dvec[0]), float(dvec[1]))
+                ptload_by_vis[str(vis_h).upper()] = (float(mag), direction, unit)
+            i += step
+
     bcs: list[tuple] = []
     springs: list[tuple] = []
     qloads: list[dict] = []
     moments: list[tuple] = []
-    forces: list[tuple] = []
+    forces: list[dict] = []
 
     for e in msp:
         if e.dxftype() != "INSERT":
@@ -274,12 +345,26 @@ def dxf_to_satopdf2d(
             nodes[origin] = origin
             continue
 
-        fval = None
+        f_parsed = None
         for t in texts:
-            fval = _parse_F(t) or fval
-        if fval is not None:
-            forces.append((origin, fval))
+            f_parsed = _parse_F(t) or f_parsed
+        if f_parsed is not None:
+            mag, unit = f_parsed
+            direction = None
+            vis_key = str(e.dxf.handle).upper()
+            if vis_key in ptload_by_vis:
+                _m, direction, unit_xd = ptload_by_vis[vis_key]
+                if unit_xd:
+                    unit = unit_xd
+            if direction is None:
+                direction = _dir_from_load_block_2d(blk)
+            # Degenerate in-plane direction (pure ±z load) → default downward
+            if abs(direction[0]) < 1e-12 and abs(direction[1]) < 1e-12:
+                direction = (0.0, -1.0)
             nodes[origin] = origin
+            forces.append(
+                {"p": origin, "mag": mag, "dir": direction, "unit": unit}
+            )
 
     members = _split_at_nodes(raw_members, nodes.keys())
     ordered = sorted(nodes.keys(), key=lambda t: (t[0], t[1]))
@@ -292,13 +377,8 @@ def dxf_to_satopdf2d(
 
     L: list[str] = [
         f"% Auto-generated from {src}",
-        f"\\begin{{tikzpicture}}[x={u},y={u}]",
-        "  \\stpset{",
-        "    support size=12mm,",
-        "    hinge radius=1.5mm,",
-        "    load color=red!75!black,",
-        "    load label color=red!75!black",
-        "  }",
+        f"\\begin{{tikzpicture}}[x={u},y={u},stpScheme=color]",
+        "  \\stpset{support size=12mm, hinge radius=1.5mm}",
     ]
     for p in ordered:
         L.append(f"  \\stpNode{{{nid[p]}}}{{{p[0]:.4f},{p[1]:.4f}}}")
@@ -340,12 +420,45 @@ def dxf_to_satopdf2d(
         name = nid[_nearest(ordered, p)]
         L.append(f"  \\stpLoad{{moment}}{{{name}}}[30][200][0][$M={mag:g}$]")
 
-    for p, mag in forces:
-        name = nid[_nearest(ordered, p)]
-        L.append(f"  \\stpPointLoad{{{name}}}{{0,-1}}[$F={mag:g}$]")
+    for pl in forces:
+        name = nid[_nearest(ordered, pl["p"])]
+        dx, dy = pl["dir"]
+        unit = re.sub(r"[^A-Za-z0-9_\-./]", "", pl.get("unit") or "N") or "N"
+        L.append(
+            f"  \\stpPointLoad{{{name}}}{{{dx:g},{dy:g}}}"
+            f"[$F={pl['mag']:g}\\,\\mathrm{{{unit}}}$]"
+        )
+
+    # Overall envelope dims — per-axis offset via (Δ), default \stpDimOff
+    #   \stpDimX{SW}{SE}[$L_x$]          \stpDimX{SW}{SE}(0.4cm)[$L_x$]
+    #   \stpDimY{SW}{NW}[$L_y$]          \stpDimY{SW}{NW}(0.5cm)[$L_y$]
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+    lx, ly = xmax - xmin, ymax - ymin
+    if lx > 1e-6 or ly > 1e-6:
+        L.append(f"  \\stpNode{{DimSW}}{{{xmin:.4f},{ymin:.4f}}}")
+        L.append(f"  \\stpNode{{DimSE}}{{{xmax:.4f},{ymin:.4f}}}")
+        L.append(f"  \\stpNode{{DimNW}}{{{xmin:.4f},{ymax:.4f}}}")
+        if lx > 1e-6:
+            L.append(
+                f"  \\stpDimX{{DimSW}}{{DimSE}}[$L_x={_fmt_len_mm(lx)}$]"
+            )
+        if ly > 1e-6:
+            L.append(
+                f"  \\stpDimY{{DimSW}}{{DimNW}}[$L_y={_fmt_len_mm(ly)}$]"
+            )
+
+    mass_info = accumulate_from_dxf(doc)
+    if mass_info["volume_mm3"] > 0:
+        L.append(emit_struct_info_tex(mass_info["volume_mm3"], mass_info["mass_kg"]))
 
     L.append("\\end{tikzpicture}")
-    note = f"satopdf 2D: {len(ordered)} nodes, {len(members)} members"
+    note = (
+        f"satopdf 2D: {len(ordered)} nodes, {len(members)} members, "
+        f"{len(forces)} point loads"
+        f"; V={mass_info['volume_mm3']:.3g} mm3, m={mass_info['mass_kg']:.3g} kg"
+        f" (beams={mass_info['n_beam']}, shells={mass_info['n_shell']})"
+    )
     return "\n".join(L) + "\n", note
 
 

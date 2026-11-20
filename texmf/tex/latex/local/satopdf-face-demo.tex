@@ -1,0 +1,33 @@
+% 3D shell face + SETSHELLLOAD-style face load (centroid arrow)
+\documentclass[border=10pt]{standalone}
+\usepackage{satopdf}
+\begin{document}
+% AutoCAD VPOINT 1,-1,1 (SE isometric, Z-up)
+\stpDsetView{1}{-1}{1}
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{P0}{0}{0}{0}
+  \stpDpoint{P1}{2}{0}{0}
+  \stpDpoint{P2}{2}{1.5}{0}
+  \stpDpoint{P3}{0}{1.5}{0}
+  \stpDpoint{P4}{0}{0}{1}
+  \stpDpoint{P5}{2}{0}{1}
+  \stpDpoint{P6}{2}{1.5}{1}
+  \stpDpoint{P7}{0}{1.5}{1}
+  \stpDface{P4,P5,P6,P7}
+  % FACE_PRESSURE from SETSHELLLOAD Face / Pressure
+  \stpDfaceload{P4,P5,P6,P7}{0,0,-1}[0.7][$P_{\mathrm{face}}=1\,\mathrm{MPa}$]
+  \stpDmember{beam}{P0}{P1}
+  \stpDmember{beam}{P1}{P2}
+  \stpDmember{beam}{P2}{P3}
+  \stpDmember{beam}{P3}{P0}
+  \stpDmember{beam}{P4}{P5}
+  \stpDmember{beam}{P5}{P6}
+  \stpDmember{beam}{P6}{P7}
+  \stpDmember{beam}{P7}{P4}
+  \stpDmember{beam}{P0}{P4}
+  \stpDmember{beam}{P1}{P5}
+  \stpDmember{beam}{P2}{P6}
+  \stpDmember{beam}{P3}{P7}
+  \stpDaxis{P0}
+\end{tikzpicture}
+\end{document}

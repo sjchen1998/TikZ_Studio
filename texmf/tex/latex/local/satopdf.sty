@@ -1,6 +1,6 @@
 %=============================================================================
 % satopdf.sty — Structural Analysis diagrams for CAE → PDF (TikZ)
-% Version: 0.3.0 (2026-11-19)
+% Version: 0.4.5 (2026-11-20)
 %
 % Materials-mechanics 2D+3D library (stanli feature parity + CAE contracts).
 % Units: mm, N, N-mm (=N/mm), N·mm, K: N-mm, KR: Nmm/rad
@@ -8,10 +8,12 @@
 % No digits in control-sequence names (TeX limitation).
 %
 % 2D: \begin{tikzpicture}[x=1mm,y=1mm]  or  \stpScaling{0.01}
-% 3D: \stpDsetCoords{…} then \begin{tikzpicture}[stpDCoords]
+% 3D: \stpDsetView / \stpDsetViewDir / \stpDsetCoords then [stpDCoords]
+% Color: \begin{tikzpicture}[stpScheme=color|bw]  (faces keep soft red either way)
+% Mass: \stpStructInfo{$V=\ldots$}{$m=\ldots$} at picture UR (bbox-relative)
 %=============================================================================
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{satopdf}[2026/11/19 v0.3.0 CAE structural diagrams]
+\ProvidesPackage{satopdf}[2026/11/20 v0.4.10 CAE structural diagrams]
 
 \RequirePackage{ifthen}
 \RequirePackage{tikz}
@@ -80,6 +82,11 @@
 
 \newcommand{\stpTempH}{6mm}
 \newcommand{\stpDimBar}{4mm}
+% Default paper offset for dim commands (5×\small 字高). Per-call override:
+%   2D: \stpDimX{A}{B}(0.4cm)[$L_x$]   \stpDimY{A}{B}(0.5cm)[$L_y$]
+%   3D: \stpDdimEnv{x}{…}(0.4cm)[$L_x$]
+\newcommand{\stpDimOff}{1.6cm}
+\newdimen\stp@dimEx
 \def\stp@scale{1}
 
 \newcommand{\stpMomScale}{0.015}
@@ -87,9 +94,10 @@
 \newcommand{\stpMomTeeth}{4}
 \newcommand{\stpDefScale}{30}
 
+% Palette macros (set only via stpScheme=color|bw on the tikzpicture)
 \newcommand{\stpClrMember}{black}
 \newcommand{\stpClrLoad}{red!75!black}
-\newcommand{\stpClrLoadLabel}{red!75!black} % load label text (may differ from glyph)
+\newcommand{\stpClrLoadLabel}{red!75!black}
 \newcommand{\stpClrBC}{teal!70!black}
 \newcommand{\stpClrSpring}{green!45!black}
 \newcommand{\stpClrTor}{magenta!70!black}
@@ -99,11 +107,55 @@
 \newcommand{\stpClrDeform}{magenta!55!black}
 \newcommand{\stpClrHatch}{black!65}
 \newcommand{\stpClrGray}{gray}
+% Faces / shells — fixed soft red; not affected by stpScheme
+\newcommand{\stpClrFace}{red!50!black!22}
+\newcommand{\stpClrFaceEdge}{red!60!black!45}
+\newcommand{\stpFaceOpacity}{0.45}
+\newcommand{\stpDFaceShaft}{0.55}
 
 \newif\ifstpShowTip\stpShowTiptrue
 \newif\ifstpShowTeeth\stpShowTeethtrue
 \newif\ifstpShowMmax\stpShowMmaxtrue
 \newif\ifstpValidType
+
+% Apply color or black/white scheme (faces unchanged)
+\newcommand{\stp@applyScheme}[1]{%
+  \def\stp@sch{#1}%
+  \def\stp@schBW{bw}\def\stp@schMono{mono}\def\stp@schGray{gray}%
+  \ifx\stp@sch\stp@schBW\def\stp@schUseBW{1}\else
+  \ifx\stp@sch\stp@schMono\def\stp@schUseBW{1}\else
+  \ifx\stp@sch\stp@schGray\def\stp@schUseBW{1}\else
+    \def\stp@schUseBW{0}%
+  \fi\fi\fi
+  \ifnum\stp@schUseBW=1\relax
+    \renewcommand{\stpClrMember}{black}%
+    \renewcommand{\stpClrLoad}{black}%
+    \renewcommand{\stpClrLoadLabel}{black}%
+    \renewcommand{\stpClrBC}{black}%
+    \renewcommand{\stpClrSpring}{black}%
+    \renewcommand{\stpClrTor}{black}%
+    \renewcommand{\stpClrMoment}{black}%
+    \renewcommand{\stpClrShear}{black}%
+    \renewcommand{\stpClrAxial}{black}%
+    \renewcommand{\stpClrDeform}{black}%
+    \renewcommand{\stpClrHatch}{black}%
+    % must stay a single named color — styles append !20/!30/!55
+    \renewcommand{\stpClrGray}{gray}%
+  \else
+    \renewcommand{\stpClrMember}{black}%
+    \renewcommand{\stpClrLoad}{red!75!black}%
+    \renewcommand{\stpClrLoadLabel}{red!75!black}%
+    \renewcommand{\stpClrBC}{teal!70!black}%
+    \renewcommand{\stpClrSpring}{green!45!black}%
+    \renewcommand{\stpClrTor}{magenta!70!black}%
+    \renewcommand{\stpClrMoment}{orange!75!black}%
+    \renewcommand{\stpClrShear}{blue!60!black}%
+    \renewcommand{\stpClrAxial}{brown!70!black}%
+    \renewcommand{\stpClrDeform}{magenta!55!black}%
+    \renewcommand{\stpClrHatch}{black!65}%
+    \renewcommand{\stpClrGray}{gray}%
+  \fi
+}
 
 \pgfkeys{
   /stp/.is family, /stp/.cd,
@@ -131,15 +183,9 @@
   moment segments/.code={\renewcommand{\stpMomSeg}{#1}},
   moment teeth/.code={\renewcommand{\stpMomTeeth}{#1}},
   deform scale/.code={\renewcommand{\stpDefScale}{#1}},
-  member color/.code={\renewcommand{\stpClrMember}{#1}},
-  % load color: sets glyph + label; use load label color to split them
-  load color/.code={%
-    \renewcommand{\stpClrLoad}{#1}%
-    \renewcommand{\stpClrLoadLabel}{#1}%
-  },
-  load label color/.code={\renewcommand{\stpClrLoadLabel}{#1}},
-  bc color/.code={\renewcommand{\stpClrBC}{#1}},
-  moment color/.code={\renewcommand{\stpClrMoment}{#1}},
+  % scheme=color|bw — prefer tikzpicture option stpScheme=…
+  scheme/.code={\stp@applyScheme{#1}},
+  dface shaft/.code={\renewcommand{\stpDFaceShaft}{#1}},
   show tip circle/.is if=stpShowTip,
   show moment teeth/.is if=stpShowTeeth,
   show max moment/.is if=stpShowMmax,
@@ -150,6 +196,15 @@
 % Styles
 %=============================================================================
 \tikzset{
+  % Color scheme on the drawing environment (faces keep soft red):
+  %   \begin{tikzpicture}[stpScheme=color]  or  [stpScheme=bw]
+  %   aliases: stpColor / stpBW
+  stpScheme/.is choice,
+  stpScheme/color/.code={\stp@applyScheme{color}},
+  stpScheme/bw/.code={\stp@applyScheme{bw}},
+  stpScheme/mono/.code={\stp@applyScheme{bw}},
+  stpColor/.style={stpScheme=color},
+  stpBW/.style={stpScheme=bw},
   stpHuge/.style={line width=\stpHugeLW},
   stpBig/.style={line width=\stpBigLW},
   stpNormal/.style={line width=\stpNormalLW},
@@ -192,7 +247,29 @@
       segment length=\stpHatchSeg/2}},
   stpLabel/.style={font=\footnotesize, inner sep=1pt},
   stpLoadLabel/.style={stpLabel, text=\stpClrLoadLabel},
-  stpDim/.style={draw=\stpClrMember, line width=\stpSmallLW},
+  % Structure volume/mass box — anchor to current picture bbox (view/scale stable)
+  stpMassBox/.style={
+    font=\footnotesize\sffamily, align=left, inner sep=3pt, outer sep=2pt,
+    fill=white, fill opacity=0.88, text opacity=1,
+    draw=gray!55, line width=0.3pt, rounded corners=1pt},
+  stpDim/.style={draw=\stpClrMember, line width=\stpTinyLW},
+  % Face fill: deeper soft red + contour
+  stpFace/.style={
+    draw=\stpClrFaceEdge,
+    fill=\stpClrFace,
+    fill opacity=\stpFaceOpacity,
+    draw opacity=0.85,
+    line width=\stpTinyLW,
+    line join=round,
+    line cap=round},
+  stpDface/.style={
+    draw=\stpClrFaceEdge,
+    fill=\stpClrFace,
+    fill opacity=\stpFaceOpacity,
+    draw opacity=0.85,
+    line width=\stpTinyLW,
+    line join=round,
+    line cap=round},
 }
 
 %=============================================================================
@@ -822,7 +899,7 @@
 % \stpLineLoad{type}{A}{B}[endA][endB][interval][label]
 %   local  — along member normal (stanli type 1), variable ends
 %   global — global -Y (stanli type 2)
-%   label  — optional; same as \stpLoad; uses load label color
+%   label  — optional; same as \stpLoad; color from stpScheme
 % \stpLineLoadCAE{A}{B}{dx,dy}[label][count]
 %=============================================================================
 \newcommand{\stpLineLabelGap}{1.8mm}
@@ -853,7 +930,7 @@
   \fi
   \ifstpValidType\else\stp@typeerr{lineload}{#1}\fi
 }
-% Label: mid-point of outer envelope, pushed outward (color = load label color)
+% Label: mid-point of outer envelope, pushed outward (color from stpScheme)
 \newcommand{\stp@lineLoadLabel}[1]{%
   \def\stp@llab{#1}%
   \ifx\stp@llab\stp@empty\else
@@ -1084,17 +1161,28 @@
     \stpValidTypetrue
   \fi
   \ifx\stp@t\stp@dp
+    % Offset may be unitless (fraction of |AB|) or a length (e.g. -5ex)
     \coordinate (stp@da) at ($ (#2)!{#4}!90:(#3)$);%
     \coordinate (stp@db) at ($ (#3)!{#4}!-90:(#2)$);%
+    % stanli-style end marks: short bar + diagonal tick
     \draw[stpDim]
-      ($ (stp@da)!{-\stpDimBar/3}!90:(stp@db)$)--($ (stp@da)!{\stpDimBar/3}!90:(stp@db)$);%
-    \draw[stpDim, {|[width=2.2mm]}-{|[width=2.2mm]}]
+      ($ (stp@da)!{-\stpDimBar/2}!90:(stp@db)$)--($ (stp@da)!{\stpDimBar/2}!90:(stp@db)$)
+      ($ (stp@da)!{\stpDimBar/4}!45:(stp@db)$)--($ (stp@da)!{\stpDimBar/4}!225:(stp@db)$)
+      ($ (stp@db)!{-\stpDimBar/2}!90:(stp@da)$)--($ (stp@db)!{\stpDimBar/2}!90:(stp@da)$)
+      ($ (stp@db)!{\stpDimBar/4}!45:(stp@da)$)--($ (stp@db)!{\stpDimBar/4}!225:(stp@da)$)
       (stp@da)--(stp@db) node[sloped,midway,above,stpLabel] {#5};%
     \stpValidTypetrue
   \fi
   \ifstpValidType\else\stp@typeerr{dimensioning}{#1}\fi
 }
 \NewDocumentCommand{\stpDim}{m m m O{}}{\stpDimensioning{parallel}{#1}{#2}{#3}[#4]}
+% Envelope helpers — offset in (…), default \stpDimOff; label in […]
+%   \stpDimX{SW}{SE}[$L_x$]           \stpDimX{SW}{SE}(0.4cm)[$L_x$]
+%   \stpDimY{SW}{NW}[$L_y$]           \stpDimY{SW}{NW}(0.5cm)[$L_y$]
+\NewDocumentCommand{\stpDimX}{m m D(){\stpDimOff} O{}}{%
+  \stpDimensioning{parallel}{#1}{#2}{-#3}[#4]}
+\NewDocumentCommand{\stpDimY}{m m D(){\stpDimOff} O{}}{%
+  \stpDimensioning{parallel}{#1}{#2}{#3}[#4]}
 
 %=============================================================================
 % Notation
@@ -1221,9 +1309,31 @@
 }
 
 %=============================================================================
-% 3D — oblique coords, members, supports, hinges
+% 3D — view / coords, members, supports, hinges
 % Wall anchorage (≡ 2D hatch): hollow circle at the non-node rod end.
+%
+% Preferred (AutoCAD-compatible; default WCS +Z up):
+%   \stpDsetUp{ux}{uy}{uz}                     default screen-up reference (init 0,0,1)
+%   \stpDsetView{vx}{vy}{vz}[sx][sy][sz][ux,uy,uz]     ≡ VPOINT
+%   \stpDsetViewDir{dx}{dy}{dz}[sx][sy][sz][ux,uy,uz]  ≡ VIEWDIR
+%   last optional = up vector (omit → use \stpDsetUp / default +Z)
+%   Y-up example: \stpDsetView{1}{-1}{1}[1][1][1][0,1,0]
+% Legacy paper-angle (stanli-style oblique):
+%   \stpDsetCoords{x-ang}{y-ang}[Dx][Dy][Dz][z-ang]
+% Then: \begin{tikzpicture}[stpDCoords]
 %=============================================================================
+% Canvas components of unit world axes (cm): (êx→(xx,xy), …)
+\newcommand{\stpDxx}{0.9781}
+\newcommand{\stpDxy}{-0.2079}
+\newcommand{\stpDyx}{0.7986}
+\newcommand{\stpDyy}{0.6018}
+\newcommand{\stpDzx}{0}
+\newcommand{\stpDzy}{1}
+% Default world-up for view construction (AutoCAD WCS +Z)
+\newcommand{\stpDUpX}{0}
+\newcommand{\stpDUpY}{0}
+\newcommand{\stpDUpZ}{1}
+% Kept for diagnostics / older docs
 \newcommand{\stpDxAng}{-12}
 \newcommand{\stpDxLen}{1}
 \newcommand{\stpDyAng}{37}
@@ -1247,9 +1357,12 @@
 
 \tikzset{
   stpDCoords/.style={
-    x={(\stpDxAng:\stpDxLen cm)},
-    y={(\stpDyAng:\stpDyLen cm)},
-    z={(\stpDzAng:\stpDzLen cm)}},
+    x={(\stpDxx cm,\stpDxy cm)},
+    y={(\stpDyx cm,\stpDyy cm)},
+    z={(\stpDzx cm,\stpDzy cm)},
+    % Recompute model Δ from pre-measured paper Δ + current scale/axes
+    % (font metrics are unavailable inside the picture = nullfont)
+    execute at begin picture={\stpInitDimDelta}},
   % 3D: members thin; BC rods thinner than members (never heavier than beams)
   stpDmember/.style={draw=\stpClrMember, line width=\stpNormalLW, line cap=round},
   stpDtruss/.style={draw=\stpClrMember, line width=\stpSmallLW, line cap=round},
@@ -1267,14 +1380,177 @@
       pre length=\stpSpringPre, post length=\stpSpringPost}},
 }
 
+% Store 6 canvas components (already scaled by sx,sy,sz)
+\newcommand{\stp@setDCanvas}[6]{%
+  \edef\stp@t{#1}\expandafter\renewcommand\expandafter\stpDxx\expandafter{\stp@t}%
+  \edef\stp@t{#2}\expandafter\renewcommand\expandafter\stpDxy\expandafter{\stp@t}%
+  \edef\stp@t{#3}\expandafter\renewcommand\expandafter\stpDyx\expandafter{\stp@t}%
+  \edef\stp@t{#4}\expandafter\renewcommand\expandafter\stpDyy\expandafter{\stp@t}%
+  \edef\stp@t{#5}\expandafter\renewcommand\expandafter\stpDzx\expandafter{\stp@t}%
+  \edef\stp@t{#6}\expandafter\renewcommand\expandafter\stpDzy\expandafter{\stp@t}%
+}
+
+% \stpDsetUp{ux}{uy}{uz} — default world-up for \stpDsetView / \stpDsetViewDir
+\newcommand{\stpDsetUp}[3]{%
+  \pgfmathsetmacro{\stp@ulen}{sqrt((#1)*(#1)+(#2)*(#2)+(#3)*(#3))}%
+  \pgfmathparse{\stp@ulen<1e-12?1:0}%
+  \ifnum\pgfmathresult=1\relax
+    \PackageError{satopdf}{Zero up vector}{}%
+  \fi
+  \pgfmathsetmacro{\stp@ux}{(#1)/\stp@ulen}%
+  \pgfmathsetmacro{\stp@uy}{(#2)/\stp@ulen}%
+  \pgfmathsetmacro{\stp@uz}{(#3)/\stp@ulen}%
+  \expandafter\renewcommand\expandafter\stpDUpX\expandafter{\stp@ux}%
+  \expandafter\renewcommand\expandafter\stpDUpY\expandafter{\stp@uy}%
+  \expandafter\renewcommand\expandafter\stpDUpZ\expandafter{\stp@uz}%
+}
+
+% Orthographic projection from VIEWDIR n and world-up û.
+% Screen-right r = n×û (fallback if parallel); screen-up v = r×n.
+% #4,#5,#6 = sx,sy,sz; #7,#8,#9 = up components.
+\newcommand{\stp@viewDirToCanvas}[9]{%
+  \pgfmathsetmacro{\stp@nx}{#1}%
+  \pgfmathsetmacro{\stp@ny}{#2}%
+  \pgfmathsetmacro{\stp@nz}{#3}%
+  \pgfmathsetmacro{\stp@nlen}{sqrt(\stp@nx*\stp@nx+\stp@ny*\stp@ny+\stp@nz*\stp@nz)}%
+  \pgfmathparse{\stp@nlen<1e-12?1:0}%
+  \ifnum\pgfmathresult=1\relax
+    \PackageError{satopdf}{Zero view direction}{}%
+  \fi
+  \pgfmathsetmacro{\stp@nx}{\stp@nx/\stp@nlen}%
+  \pgfmathsetmacro{\stp@ny}{\stp@ny/\stp@nlen}%
+  \pgfmathsetmacro{\stp@nz}{\stp@nz/\stp@nlen}%
+  \pgfmathsetmacro{\stp@wx}{#7}%
+  \pgfmathsetmacro{\stp@wy}{#8}%
+  \pgfmathsetmacro{\stp@wz}{#9}%
+  \pgfmathsetmacro{\stp@wlen}{sqrt(\stp@wx*\stp@wx+\stp@wy*\stp@wy+\stp@wz*\stp@wz)}%
+  \pgfmathparse{\stp@wlen<1e-12?1:0}%
+  \ifnum\pgfmathresult=1\relax
+    \PackageError{satopdf}{Zero up vector}{}%
+  \fi
+  \pgfmathsetmacro{\stp@wx}{\stp@wx/\stp@wlen}%
+  \pgfmathsetmacro{\stp@wy}{\stp@wy/\stp@wlen}%
+  \pgfmathsetmacro{\stp@wz}{\stp@wz/\stp@wlen}%
+  % r ← n × û
+  \pgfmathsetmacro{\stp@rx}{\stp@ny*\stp@wz-\stp@nz*\stp@wy}%
+  \pgfmathsetmacro{\stp@ry}{\stp@nz*\stp@wx-\stp@nx*\stp@wz}%
+  \pgfmathsetmacro{\stp@rz}{\stp@nx*\stp@wy-\stp@ny*\stp@wx}%
+  \pgfmathsetmacro{\stp@rlen}{sqrt(\stp@rx*\stp@rx+\stp@ry*\stp@ry+\stp@rz*\stp@rz)}%
+  \pgfmathparse{\stp@rlen<1e-8?1:0}%
+  \ifnum\pgfmathresult=1\relax
+    % n ∥ û → alternate reference (prefer world Z, else world Y)
+    \pgfmathparse{abs(\stp@wz)>0.9?1:0}%
+    \ifnum\pgfmathresult=1\relax
+      % û ≈ ±Z → use Y: n × Y = (-nz, 0, nx)
+      \pgfmathsetmacro{\stp@rx}{-\stp@nz}%
+      \pgfmathsetmacro{\stp@ry}{0}%
+      \pgfmathsetmacro{\stp@rz}{\stp@nx}%
+    \else
+      % use Z: n × Z = (ny, -nx, 0)
+      \pgfmathsetmacro{\stp@rx}{\stp@ny}%
+      \pgfmathsetmacro{\stp@ry}{-\stp@nx}%
+      \pgfmathsetmacro{\stp@rz}{0}%
+    \fi
+    \pgfmathsetmacro{\stp@rlen}{sqrt(\stp@rx*\stp@rx+\stp@ry*\stp@ry+\stp@rz*\stp@rz)}%
+  \fi
+  \pgfmathsetmacro{\stp@rx}{\stp@rx/\stp@rlen}%
+  \pgfmathsetmacro{\stp@ry}{\stp@ry/\stp@rlen}%
+  \pgfmathsetmacro{\stp@rz}{\stp@rz/\stp@rlen}%
+  % v ← r × n  (screen up)
+  \pgfmathsetmacro{\stp@vx}{\stp@ry*\stp@nz-\stp@rz*\stp@ny}%
+  \pgfmathsetmacro{\stp@vy}{\stp@rz*\stp@nx-\stp@rx*\stp@nz}%
+  \pgfmathsetmacro{\stp@vz}{\stp@rx*\stp@ny-\stp@ry*\stp@nx}%
+  \pgfmathsetmacro{\stp@vlen}{sqrt(\stp@vx*\stp@vx+\stp@vy*\stp@vy+\stp@vz*\stp@vz)}%
+  \pgfmathsetmacro{\stp@vx}{\stp@vx/\stp@vlen}%
+  \pgfmathsetmacro{\stp@vy}{\stp@vy/\stp@vlen}%
+  \pgfmathsetmacro{\stp@vz}{\stp@vz/\stp@vlen}%
+  % TikZ unit axes = (ê·r, ê·v) * scale
+  \pgfmathsetmacro{\stp@cxx}{#4*\stp@rx}%
+  \pgfmathsetmacro{\stp@cxy}{#4*\stp@vx}%
+  \pgfmathsetmacro{\stp@cyx}{#5*\stp@ry}%
+  \pgfmathsetmacro{\stp@cyy}{#5*\stp@vy}%
+  \pgfmathsetmacro{\stp@czx}{#6*\stp@rz}%
+  \pgfmathsetmacro{\stp@czy}{#6*\stp@vz}%
+  \stp@setDCanvas{\stp@cxx}{\stp@cxy}{\stp@cyx}{\stp@cyy}{\stp@czx}{\stp@czy}%
+}
+
+% Parse optional up "ux,uy,uz" or empty → current \stpDUp*
+\def\stp@parseUp#1{\stp@parseUpA#1\@nil}
+\def\stp@parseUpA#1,#2,#3\@nil{%
+  \def\stp@upx{#1}\def\stp@upy{#2}\def\stp@upz{#3}%
+}
+\newcommand{\stp@resolveUp}[1]{%
+  \def\stp@tmp{#1}%
+  \ifx\stp@tmp\stp@empty
+    \edef\stp@upx{\stpDUpX}\edef\stp@upy{\stpDUpY}\edef\stp@upz{\stpDUpZ}%
+  \else
+    \stp@parseUp{#1}%
+  \fi
+}
+
+% \stpDsetViewDir{dx}{dy}{dz}[sx][sy][sz][ux,uy,uz]  — AutoCAD VIEWDIR
+\NewDocumentCommand{\stpDsetViewDir}{m m m O{1} O{1} O{1} O{}}{%
+  \stp@resolveUp{#7}%
+  \stp@viewDirToCanvas{#1}{#2}{#3}{#4}{#5}{#6}{\stp@upx}{\stp@upy}{\stp@upz}%
+}
+
+% \stpDsetView{vx}{vy}{vz}[sx][sy][sz][ux,uy,uz]  — AutoCAD VPOINT (eye → origin)
+\NewDocumentCommand{\stpDsetView}{m m m O{1} O{1} O{1} O{}}{%
+  \stp@resolveUp{#7}%
+  \stp@viewDirToCanvas{-#1}{-#2}{-#3}{#4}{#5}{#6}{\stp@upx}{\stp@upy}{\stp@upz}%
+}
+
 % \stpDsetCoords{x-ang}{y-ang}[Dx][Dy][Dz][z-ang]
+% Paper angles of the three axes (stanli-style oblique). Lengths are
+% foreshortening; a negative length is folded into angle+180.
+% Right-hand rule: with z pointing “up” on the page (sin z-ang > 0),
+% +x→+y must be CCW; if the given angles are CW, y is mirrored across
+% x (same |Δ|) so the triad stays right-handed.
 \NewDocumentCommand{\stpDsetCoords}{m m O{1} O{1} O{1} O{90}}{%
-  \renewcommand{\stpDxAng}{#1}%
-  \renewcommand{\stpDyAng}{#2}%
-  \renewcommand{\stpDxLen}{#3}%
-  \renewcommand{\stpDyLen}{#4}%
-  \renewcommand{\stpDzLen}{#5}%
-  \renewcommand{\stpDzAng}{#6}%
+  \pgfmathsetmacro{\stp@xa}{#1}%
+  \pgfmathsetmacro{\stp@ya}{#2}%
+  \pgfmathsetmacro{\stp@za}{#6}%
+  \pgfmathsetmacro{\stp@Dx}{#3}%
+  \pgfmathsetmacro{\stp@Dy}{#4}%
+  \pgfmathsetmacro{\stp@Dz}{#5}%
+  % Fold negative foreshortening into the axis angle
+  \pgfmathparse{\stp@Dx<0}%
+  \ifnum\pgfmathresult=1\relax
+    \pgfmathsetmacro{\stp@xa}{\stp@xa+180}%
+    \pgfmathsetmacro{\stp@Dx}{-\stp@Dx}%
+  \fi
+  \pgfmathparse{\stp@Dy<0}%
+  \ifnum\pgfmathresult=1\relax
+    \pgfmathsetmacro{\stp@ya}{\stp@ya+180}%
+    \pgfmathsetmacro{\stp@Dy}{-\stp@Dy}%
+  \fi
+  \pgfmathparse{\stp@Dz<0}%
+  \ifnum\pgfmathresult=1\relax
+    \pgfmathsetmacro{\stp@za}{\stp@za+180}%
+    \pgfmathsetmacro{\stp@Dz}{-\stp@Dz}%
+  \fi
+  % Δ(y−x) ∈ (−180,180]; need sign(sin Δ) == sign(sin z) for RH
+  \pgfmathsetmacro{\stp@del}{Mod(\stp@ya-\stp@xa+180,360)-180}%
+  \pgfmathsetmacro{\stp@sdel}{sin(\stp@del)}%
+  \pgfmathsetmacro{\stp@sza}{sin(\stp@za)}%
+  \pgfmathparse{abs(\stp@sdel)>1e-6 && abs(\stp@sza)>1e-6 && (\stp@sdel*\stp@sza)<0}%
+  \ifnum\pgfmathresult=1\relax
+    \pgfmathsetmacro{\stp@ya}{\stp@xa-\stp@del}%
+  \fi
+  \expandafter\renewcommand\expandafter\stpDxAng\expandafter{\stp@xa}%
+  \expandafter\renewcommand\expandafter\stpDyAng\expandafter{\stp@ya}%
+  \expandafter\renewcommand\expandafter\stpDzAng\expandafter{\stp@za}%
+  \expandafter\renewcommand\expandafter\stpDxLen\expandafter{\stp@Dx}%
+  \expandafter\renewcommand\expandafter\stpDyLen\expandafter{\stp@Dy}%
+  \expandafter\renewcommand\expandafter\stpDzLen\expandafter{\stp@Dz}%
+  % Polar → canvas components for stpDCoords
+  \pgfmathsetmacro{\stp@cxx}{\stp@Dx*cos(\stp@xa)}%
+  \pgfmathsetmacro{\stp@cxy}{\stp@Dx*sin(\stp@xa)}%
+  \pgfmathsetmacro{\stp@cyx}{\stp@Dy*cos(\stp@ya)}%
+  \pgfmathsetmacro{\stp@cyy}{\stp@Dy*sin(\stp@ya)}%
+  \pgfmathsetmacro{\stp@czx}{\stp@Dz*cos(\stp@za)}%
+  \pgfmathsetmacro{\stp@czy}{\stp@Dz*sin(\stp@za)}%
+  \stp@setDCanvas{\stp@cxx}{\stp@cxy}{\stp@cyx}{\stp@cyy}{\stp@czx}{\stp@czy}%
 }
 
 % \stpDsetAxis{xyz|XYZ|custom}[…] — label scheme for \stpDaxis
@@ -1297,11 +1573,14 @@
 
 \newcommand{\stpDshowPoint}{\stpDshowPointtrue}
 
-% \stpDpoint{name}{x}{y}{z}
+% \stpDpoint{name}{x}{y}{z}  — args may be macros; expand via pgfmath first
 \NewDocumentCommand{\stpDpoint}{m m m m}{%
-  \node[coordinate, shift={(#2*\stpDscale,#3*\stpDscale,#4*\stpDscale)}] (#1) {};%
+  \pgfmathsetmacro{\stp@px}{(#2)*\stpDscale}%
+  \pgfmathsetmacro{\stp@py}{(#3)*\stpDscale}%
+  \pgfmathsetmacro{\stp@pz}{(#4)*\stpDscale}%
+  \node[coordinate] (#1) at (\stp@px,\stp@py,\stp@pz) {};%
   \ifstpDshowPoint
-    \draw (#2*\stpDscale,#3*\stpDscale,#4*\stpDscale) node[above,red,stpLabel] {#1};%
+    \draw (\stp@px,\stp@py,\stp@pz) node[above,red,stpLabel] {#1};%
   \fi
 }
 % CAE-style: \stpDnode{name}{x,y,z}
@@ -1565,7 +1844,224 @@
 }
 \newcommand{\stpDldGap}{0.08}
 
-\newcommand{\stpStubPlate}{\PackageWarning{satopdf}{2D PLATE not in v0.3}}
-\newcommand{\stpStubShell}{\PackageWarning{satopdf}{SHELL not in v0.3}}
+% \stpDpointload{point}{dx,dy,dz}[shaft][label]
+% 3D nodal force ≡ SETPTLOAD (CAE_VIS_LOAD text F[START|END]=…)
+\NewDocumentCommand{\stpDpointload}{m m O{\stpDFaceShaft} O{}}{%
+  \edef\stp@dd{#2}%
+  \expandafter\stp@DldDir\expandafter{\stp@dd}%
+  \pgfmathsetmacro{\stp@flen}{sqrt(\stp@ddx*\stp@ddx+\stp@ddy*\stp@ddy+\stp@ddz*\stp@ddz)}%
+  \pgfmathparse{\stp@flen<1e-9?1:0}%
+  \ifnum\pgfmathresult=1\relax\PackageError{satopdf}{Zero point-load direction}{}\fi
+  \pgfmathsetmacro{\stp@fox}{-\stp@ddx/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@foy}{-\stp@ddy/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@foz}{-\stp@ddz/\stp@flen*#3}%
+  \coordinate (stp@ppc) at (#1);%
+  \coordinate (stp@pptail) at ($ (stp@ppc)+(\stp@fox,\stp@foy,\stp@foz) $);%
+  \draw[stpLoad] (stp@pptail)--(stp@ppc);%
+  \def\stp@tmp{#4}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLoadLabel, above=1mm] at (stp@pptail) {#4};%
+  \fi
+}
+
+%=============================================================================
+% Faces / shells — soft red fill (fixed; not toggled by stpScheme)
+% 2D face geometry only (2D face-load API to be defined separately):
+%   \stpFace{A,B,C[,D…]}
+% 3D shell + face load (CAE SETSHELLLOAD → Face / FACE_PRESSURE|FACE_TOTAL_FORCE):
+%   \stpDface{A,B,C[,D…]}
+%   \stpDfaceload{A,B,C[,D…]}{dx,dy,dz}[shaft][label]
+%     one arrow at face centroid (same as create-shell-faceload-block)
+%     VIS text: P_face=… / F_total=… (ux,uy,uz) on layer CAE_VIS_LOAD
+%=============================================================================
+
+\newcommand{\stp@faceCentroid}[1]{%
+  \foreach \stp@p [count=\stp@fi] in {#1} {%
+    \ifnum\stp@fi=1
+      \coordinate (stp@fcen) at (\stp@p);%
+    \else
+      \coordinate (stp@fcen) at ($ (stp@fcen)!{1/\stp@fi}!(\stp@p) $);%
+    \fi
+  }%
+}
+
+\newcommand{\stp@faceBuildPath}[1]{%
+  \gdef\stp@fpath{}%
+  \gdef\stp@fn{0}%
+  \foreach \stp@p [count=\stp@fi] in {#1} {%
+    \ifnum\stp@fi=1
+      \xdef\stp@fpath{(\stp@p)}%
+    \else
+      \xdef\stp@fpath{\stp@fpath--(\stp@p)}%
+    \fi
+    \xdef\stp@fn{\stp@fi}%
+  }%
+  \ifnum\stp@fn<3\relax
+    \PackageError{satopdf}{Face needs ≥3 nodes (got \stp@fn)}{}%
+  \fi
+  \xdef\stp@fpath{\stp@fpath--cycle}%
+}
+
+\newcommand{\stpFace}[1]{%
+  \stp@faceBuildPath{#1}%
+  \edef\stp@fdcmd{\noexpand\filldraw[stpFace] \stp@fpath;}%
+  \stp@fdcmd
+}
+
+\newcommand{\stpDface}[1]{%
+  \stp@faceBuildPath{#1}%
+  \edef\stp@fdcmd{\noexpand\filldraw[stpDface] \stp@fpath;}%
+  \stp@fdcmd
+}
+
+% 3D face load ≡ SETSHELLLOAD Face (single arrow at geometric centre)
+\NewDocumentCommand{\stpDfaceload}{m m O{\stpDFaceShaft} O{}}{%
+  \stp@faceCentroid{#1}%
+  \edef\stp@dd{#2}%
+  \expandafter\stp@DldDir\expandafter{\stp@dd}%
+  \pgfmathsetmacro{\stp@flen}{sqrt(\stp@ddx*\stp@ddx+\stp@ddy*\stp@ddy+\stp@ddz*\stp@ddz)}%
+  \pgfmathparse{\stp@flen<1e-9?1:0}%
+  \ifnum\pgfmathresult=1\relax\PackageError{satopdf}{Zero face-load direction}{}\fi
+  \pgfmathsetmacro{\stp@fox}{-\stp@ddx/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@foy}{-\stp@ddy/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@foz}{-\stp@ddz/\stp@flen*#3}%
+  \coordinate (stp@fpc) at (stp@fcen);%
+  \coordinate (stp@fptail) at ($ (stp@fpc)+(\stp@fox,\stp@foy,\stp@foz) $);%
+  \draw[stpLoad] (stp@fptail)--(stp@fpc);%
+  \def\stp@tmp{#4}%
+  \ifx\stp@tmp\stp@empty\else
+    \node[stpLoadLabel, above=1mm] at (stp@fptail) {#4};%
+  \fi
+}
+
+\newcommand{\stpStubPlate}[1]{\stpFace{#1}}
+\newcommand{\stpStubShell}[1]{\stpDface{#1}}
+
+%-----------------------------------------------------------------------------
+% 3D envelope dimension
+%   \stpDdimEnv{x|y|z}{x0}{y0}{z0}{len}(Δ)[label]
+%     from corner (x0,y0,z0) along axis by len; Δ = paper offset (default \stpDimOff)
+%     Lx @ y0−Δ;  Ly @ x0−Δ;  Lz @ (x0−Δ,y0−Δ)
+%   \stpDdimEnv{x}{0}{0}{0}{800}[$L_x=800mm$]
+%   \stpDdimEnv{y}{0}{0}{0}{6000}(0.4cm)[$L_y=6000mm$]
+%-----------------------------------------------------------------------------
+\newcommand{\stpDdimDelta}{1.6}% paper cm (diagnostic)
+\newcommand{\stpDimDeltaModel}{0.75}%
+\newcommand{\stpDimDeltaModelX}{0.75}%
+\newcommand{\stpDimDeltaModelY}{0.75}%
+\newcommand{\stpDimDeltaModelZ}{0.75}%
+% Default \stpDimOff = 5×\small 字高 — measure outside tikzpicture (nullfont)
+\AtBeginDocument{%
+  \begingroup\normalfont\small
+    \setlength{\stp@dimEx}{5em}%
+    \ifdim\stp@dimEx<0.1pt\stp@dimEx=1.6cm\fi
+    \pgfmathsetmacro{\stp@offcm}{\stp@dimEx/1cm}%
+    \xdef\stpDimOff{\stp@offcm cm}%
+    \global\let\stpDdimDelta\stp@offcm
+  \endgroup
+}
+% Refresh foreshortening → model Δ for paper length \stpDimOff (or current scale)
+\newcommand{\stpInitDimDelta}{%
+  \pgfmathsetmacro{\stp@xl}{max(0.25,sqrt(\stpDxx*\stpDxx+\stpDxy*\stpDxy))}%
+  \pgfmathsetmacro{\stp@yl}{max(0.25,sqrt(\stpDyx*\stpDyx+\stpDyy*\stpDyy))}%
+  \pgfmathsetmacro{\stp@zl}{max(0.25,sqrt(\stpDzx*\stpDzx+\stpDzy*\stpDzy))}%
+  \pgfmathsetmacro{\stp@pap}{\stpDimOff/1cm}%
+  \global\let\stpDdimDelta\stp@pap
+  \pgfmathsetmacro{\stp@dmx}{\stp@pap/(\stp@xl*\stpDscale)}%
+  \pgfmathsetmacro{\stp@dmy}{\stp@pap/(\stp@yl*\stpDscale)}%
+  \pgfmathsetmacro{\stp@dmz}{\stp@pap/(\stp@zl*\stpDscale)}%
+  \global\let\stpDimDeltaModelX\stp@dmx
+  \global\let\stpDimDeltaModelY\stp@dmy
+  \global\let\stpDimDeltaModelZ\stp@dmz
+  \global\let\stpDimDeltaModel\stp@dmy
+}
+% paper length → model offset along world axis a∈{x,y,z}
+\newcommand{\stp@paperToModel}[2]{%
+  \pgfmathsetmacro{\stp@xl}{max(0.25,sqrt(\stpDxx*\stpDxx+\stpDxy*\stpDxy))}%
+  \pgfmathsetmacro{\stp@yl}{max(0.25,sqrt(\stpDyx*\stpDyx+\stpDyy*\stpDyy))}%
+  \pgfmathsetmacro{\stp@zl}{max(0.25,sqrt(\stpDzx*\stpDzx+\stpDzy*\stpDzy))}%
+  \pgfmathsetmacro{\stp@pap}{(#1)/1cm}%
+  \def\stp@axa{#2}%
+  \def\stp@axX{x}\def\stp@axY{y}\def\stp@axZ{z}%
+  \ifx\stp@axa\stp@axX
+    \pgfmathsetmacro{\stp@dmod}{\stp@pap/(\stp@xl*\stpDscale)}%
+  \else
+    \ifx\stp@axa\stp@axY
+      \pgfmathsetmacro{\stp@dmod}{\stp@pap/(\stp@yl*\stpDscale)}%
+    \else
+      \pgfmathsetmacro{\stp@dmod}{\stp@pap/(\stp@zl*\stpDscale)}%
+    \fi
+  \fi
+}
+\NewDocumentCommand{\stpDdimEnv}{m m m m m D(){\stpDimOff} O{}}{%
+  \def\stp@ax{#1}%
+  \def\stp@axX{x}\def\stp@axY{y}\def\stp@axZ{z}%
+  \ifx\stp@ax\stp@axX
+    % Lx on XY @ z=z0, y = y0 − Δ_Y
+    \stp@paperToModel{#6}{y}%
+    \pgfmathsetmacro{\stp@dimyo}{#3-\stp@dmod}%
+    \pgfmathsetmacro{\stp@dimxa}{#2}%
+    \pgfmathsetmacro{\stp@dimxb}{#2+#5}%
+    \stpDpoint{stp@dO}{\stp@dimxa}{#3}{#4}%
+    \stpDpoint{stp@dE}{\stp@dimxb}{#3}{#4}%
+    \stpDpoint{stp@da}{\stp@dimxa}{\stp@dimyo}{#4}%
+    \stpDpoint{stp@db}{\stp@dimxb}{\stp@dimyo}{#4}%
+    \stpDdimHelp{stp@dO}{stp@da}{stp@dE}{stp@db}%
+    \stpDdimSeg{stp@da}{stp@db}[#7]%
+  \fi
+  \ifx\stp@ax\stp@axY
+    % Ly on XY @ z=z0, x = x0 − Δ_X
+    \stp@paperToModel{#6}{x}%
+    \pgfmathsetmacro{\stp@dimxo}{#2-\stp@dmod}%
+    \pgfmathsetmacro{\stp@dimya}{#3}%
+    \pgfmathsetmacro{\stp@dimyb}{#3+#5}%
+    \stpDpoint{stp@dO}{#2}{\stp@dimya}{#4}%
+    \stpDpoint{stp@dE}{#2}{\stp@dimyb}{#4}%
+    \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimya}{#4}%
+    \stpDpoint{stp@db}{\stp@dimxo}{\stp@dimyb}{#4}%
+    \stpDdimHelp{stp@dO}{stp@da}{stp@dE}{stp@db}%
+    \stpDdimSeg{stp@da}{stp@db}[#7]%
+  \fi
+  \ifx\stp@ax\stp@axZ
+    % Lz on YZ @ x=x0−Δx, y=y0−Δy (same paper Δ)
+    \stp@paperToModel{#6}{x}%
+    \pgfmathsetmacro{\stp@dimxo}{#2-\stp@dmod}%
+    \stp@paperToModel{#6}{y}%
+    \pgfmathsetmacro{\stp@dimyo}{#3-\stp@dmod}%
+    \pgfmathsetmacro{\stp@dimza}{#4}%
+    \pgfmathsetmacro{\stp@dimzb}{#4+#5}%
+    \stpDpoint{stp@dO}{#2}{#3}{\stp@dimza}%
+    \stpDpoint{stp@dE}{#2}{#3}{\stp@dimzb}%
+    \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimyo}{\stp@dimza}%
+    \stpDpoint{stp@db}{\stp@dimxo}{\stp@dimyo}{\stp@dimzb}%
+    \stpDdimHelp{stp@dO}{stp@da}{stp@dE}{stp@db}%
+    \stpDdimSeg{stp@da}{stp@db}[#7]%
+  \fi
+}
+% stanli-like ticks + dimension line between two named 3D points
+\NewDocumentCommand{\stpDdimSeg}{m m O{}}{%
+  \draw[stpDim]
+    ($ (#1)!{-\stpDimBar/2}!90:(#2)$)--($ (#1)!{\stpDimBar/2}!90:(#2)$)
+    ($ (#1)!{\stpDimBar/4}!45:(#2)$)--($ (#1)!{\stpDimBar/4}!225:(#2)$)
+    ($ (#2)!{-\stpDimBar/2}!90:(#1)$)--($ (#2)!{\stpDimBar/2}!90:(#1)$)
+    ($ (#2)!{\stpDimBar/4}!45:(#1)$)--($ (#2)!{\stpDimBar/4}!225:(#1)$)
+    (#1)--(#2) node[sloped,midway,above,stpLabel] {#3};%
+}
+\NewDocumentCommand{\stpDdimHelp}{m m m m}{%
+  \draw[stpDim, densely dotted, line width=\stpTinyLW] (#1)--(#2) (#3)--(#4);%
+}
+
+%-----------------------------------------------------------------------------
+% Structure volume / mass annotation (paper / canvas corner, not model coords)
+% Place once at end of tikzpicture. Uses current bounding box → stays at the
+% upper-right when 2D scale (x=/y=) or 3D \stpDsetView / figure size changes.
+%   \stpStructInfo{$V=\ldots$}{$m=\ldots$}
+%-----------------------------------------------------------------------------
+\newcommand{\stpStructInfo}[2]{%
+  \node[stpMassBox, anchor=north east]
+    at ($(current bounding box.north east)+(-1.5pt,-1.5pt)$)
+    {#1\\[0.15em]#2};%
+}
+\newcommand{\stpDstructInfo}[2]{\stpStructInfo{#1}{#2}}
 
 \endinput

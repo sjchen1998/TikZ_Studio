@@ -2838,7 +2838,7 @@ let activeTpl = '';
 function dxfImportMode() {
   if (activeTpl === 'struct2d' || activeTpl === 'struct3d') return activeTpl;
   const c = $('code').value || '';
-  if (/\\stpDsetCoords|\\stpDpoint|stpDCoords/.test(c)) return 'struct3d';
+  if (/\\stpDset(?:View|ViewDir|Coords)|\\stpDpoint|stpDCoords/.test(c)) return 'struct3d';
   if (/\\stpNode\{|\\stpMember\{|\\stpSupport/.test(c)) return 'struct2d';
   return 'geom';
 }

@@ -9,6 +9,7 @@
 (if (not *CAE_SCALE_LOAD*) (setq *CAE_SCALE_LOAD* 1.0))
 (if (not *CAE_SCALE_BC*)   (setq *CAE_SCALE_BC*   1.0))
 (if (not *CAE_SCALE_SEC*)  (setq *CAE_SCALE_SEC*  1.0))
+(if (not (boundp '*cae-vis-batch*)) (setq *cae-vis-batch* nil))
 
 ;;; ---------- 语言：*CAE_LANG* = "ZH" | "EN"；命令 SETLANG 一键切换 ----------
 (if (not *CAE_LANG*) (setq *CAE_LANG* "ZH"))
@@ -102,6 +103,7 @@
   (if (not (tblsearch "APPID" name)) (regapp name))
 )
 (defun register-all-cae-apps ()
+  (if *cae-vis-batch* (cae-vis-end-batch))
   (foreach a '("MY_CAE_LOAD" "MY_CAE_POINT_LOAD" "MY_CAE_MOMENT" "MY_CAE_BC"
                "MY_CAE_COMP_BC" "MY_CAE_SPRING" "MY_CAE_SEC"
                "MY_CAE_SHELL_LOAD" "MY_CAE_SHELL_PROP"
@@ -119,25 +121,85 @@
 (defun lock-all-cae-layers () (lock-vis-layer))
 (defun unlock-all-cae-layers () (unlock-vis-layer))
 
+;;; AutoLISP 无 Common Lisp SUBSEQ；end 为开区间，nil=到末尾
+(defun cae-subseq (lst start end / i out)
+  (if (not end) (setq end (length lst)))
+  (setq i 0 out nil)
+  (foreach x lst
+    (if (and (>= i start) (< i end))
+      (setq out (append out (list x)))
+    )
+    (setq i (1+ i))
+  )
+  out
+)
+
 
 ;;; ---------- 图层（三图层 + 兼容旧 CAE_LOAD_VIS）----------
-;;; CAE_VIS_LOAD=红(1) / CAE_VIS_BC=青(4) / CAE_VIS_SEC=品红(6)；每次锁定都校正颜色
-(defun lock-vis-layer (/ layInfo)
-  (setq layInfo '(("CAE_VIS_LOAD" . "1") ("CAE_VIS_BC" . "4") ("CAE_VIS_SEC" . "6")))
-  (foreach item layInfo
-    (if (not (tblsearch "LAYER" (car item)))
-      (command "_.-LAYER" "_N" (car item) "")
+;;; CAE_VIS_LOAD=红(1) / CAE_VIS_BC=青(4) / CAE_VIS_SEC=品红(6)
+;;; 用 entmake/entmod 静默处理，避免 command -LAYER 刷屏（批量设截面时极慢）
+;;; DXF 70 bit2(=4)=锁定；62 负值=图层关闭
+(defun cae-ensure-layer (name color / en ed curCol)
+  (setq en (tblobjname "LAYER" name))
+  (if (null en)
+    (progn
+      (entmake (list '(0 . "LAYER") (cons 2 name) '(70 . 0)
+                     (cons 62 (abs color)) '(6 . "Continuous")))
+      (setq en (tblobjname "LAYER" name))
     )
-    (command "_.-LAYER" "_C" (cdr item) (car item) "_LO" (car item) "")
+  )
+  (if en
+    (progn
+      (setq ed (entget en) curCol (cdr (assoc 62 ed)))
+      ;; 校正颜色，保留开/关状态
+      (if (/= (abs curCol) (abs color))
+        (progn
+          (setq ed (subst (cons 62 (if (< curCol 0) (- (abs color)) (abs color)))
+                          (assoc 62 ed) ed))
+          (entmod ed)
+        )
+      )
+    )
+  )
+  en
+)
+(defun cae-set-layer-lock (name locked / en ed flags)
+  (setq en (tblobjname "LAYER" name))
+  (if en
+    (progn
+      (setq ed (entget en) flags (cdr (assoc 70 ed)))
+      (setq flags (if locked (logior flags 4) (logand flags (~ 4))))
+      (if (/= flags (cdr (assoc 70 ed)))
+        (entmod (subst (cons 70 flags) (assoc 70 ed) ed))
+      )
+    )
+  )
+)
+(defun lock-vis-layer (/ layInfo)
+  (setq layInfo '(("CAE_VIS_LOAD" . 1) ("CAE_VIS_BC" . 4) ("CAE_VIS_SEC" . 6)))
+  (foreach item layInfo
+    (cae-ensure-layer (car item) (cdr item))
+    (cae-set-layer-lock (car item) T)
   )
 )
 (defun unlock-vis-layer ()
   (foreach lay '("CAE_VIS_LOAD" "CAE_VIS_BC" "CAE_VIS_SEC" "CAE_LOAD_VIS")
-    (if (tblsearch "LAYER" lay)
-      (command "_.-LAYER" "_U" lay "")
-    )
+    (cae-set-layer-lock lay nil)
   )
 )
+;;; 批量写实体时：外层 begin/end 各锁一次；内层 create/remove 跳过重复 lock
+;;; Esc 中断后若 batch 残留，下次 register / begin 会自动收尾
+(defun cae-vis-end-batch ()
+  (setq *cae-vis-batch* nil)
+  (lock-vis-layer)
+)
+(defun cae-vis-begin-batch ()
+  (if *cae-vis-batch* (cae-vis-end-batch))
+  (setq *cae-vis-batch* T)
+  (unlock-vis-layer)
+)
+(defun cae-vis-unlock () (if (not *cae-vis-batch*) (unlock-vis-layer)))
+(defun cae-vis-lock () (if (not *cae-vis-batch*) (lock-vis-layer)))
 
 ;;; ---------- 向量 ----------
 (defun vec-unit (v / len)
@@ -1540,7 +1602,7 @@
 ;;; 截面 / 材质  MY_CAE_SEC
 ;;; ====================================================================
 (defun create-sec-block (ent secType secSpec matName vy vz offsetVec / entData p1 p2 midPt beamLen sz pyEnd pzEnd offEnd labelPt labelStr blkDefName blkRef)
-  (unlock-vis-layer)
+  (cae-vis-unlock)
   (setq entData (entget ent))
   (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
   (setq midPt (vec-scale (vec-add p1 p2) 0.5) beamLen (distance p1 p2))
@@ -1565,7 +1627,7 @@
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 6) (cons 10 labelPt) (cons 40 (* sz 0.22)) (cons 1 labelStr)))
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_SEC") (cons 2 blkDefName) (cons 10 midPt))))
-  (lock-vis-layer)
+  (cae-vis-lock)
   blkRef
 )
 
@@ -1580,7 +1642,7 @@
           (setq handle (cdr (nth 6 appData)))
           (if (and handle (setq oldBlk (handent handle)))
             (if (entget oldBlk)
-              (progn (unlock-vis-layer) (entdel oldBlk) (lock-vis-layer))
+              (progn (cae-vis-unlock) (entdel oldBlk) (cae-vis-lock))
             )
           )
         )
@@ -1589,17 +1651,26 @@
   )
 )
 
-(defun c:SETSEC (/ ss typeChoice secType secSpec matChoice matName dirPt offPt offDist i beamEnt beamHandle entData p1 p2 ex vy vz offUnit offsetVec visBlkEnt visHandle validCount)
+(defun c:SETSEC (/ ss typeChoice secType secSpec matChoice matName dirPt needOrient offChoice offPt offDist
+                    i beamEnt beamHandle entData p1 p2 ex vy vz basis offUnit offsetVec visBlkEnt visHandle validCount doOffset)
   (register-all-cae-apps)
   (princ (_T "\n请选择梁直线 (支持框选): " "\nSelect beam lines (window OK): "))
   (setq ss (ssget '((0 . "LINE"))))
   (if ss
     (progn
-      (initget "Angle Channel IBeam Pipe RectTube Circle Rect Custom")
-      (setq typeChoice (getkword (_T "\n截面类型 [Angle/Channel/IBeam/Pipe/RectTube/Circle/Rect/Custom] <IBeam>: "
-                                "\nSection type [Angle/Channel/IBeam/Pipe/RectTube/Circle/Rect/Custom] <IBeam>: ")))
+      ;; initget 大写字母为缩写；原 Channel/Circle/Custom 同属 C、Rect/RectTube 同属 R，会串选
+      ;; 缩写：A=Angle H=Channel I=IBeam P=Pipe T=RectTube C=Circle R=Rect M=Custom
+      (initget "Angle cHannel IBeam Pipe rTube Circle Rect custoM")
+      (setq typeChoice (getkword (_T "\n截面类型 [Angle/cHannel/IBeam/Pipe/rTube/Circle/Rect/custoM] <IBeam>: "
+                                "\nSection type [Angle/cHannel/IBeam/Pipe/rTube/Circle/Rect/custoM] <IBeam>: ")))
       (if (not typeChoice) (setq typeChoice "IBeam"))
-      (setq secType typeChoice)
+      (setq secType
+        (cond
+          ((= typeChoice "cHannel") "Channel")
+          ((= typeChoice "rTube")   "RectTube")
+          ((= typeChoice "custoM")  "Custom")
+          (T typeChoice)
+        ))
       (cond
         ((= secType "Angle")    (setq secSpec (getstring T (_T "\n角钢型号 <L100x10>: " "\nAngle size <L100x10>: "))) (if (= secSpec "") (setq secSpec "L100x10")))
         ((= secType "Channel")  (setq secSpec (getstring T (_T "\n槽钢型号 <[20a>: " "\nChannel size <[20a>: "))) (if (= secSpec "") (setq secSpec "[20a")))
@@ -1610,6 +1681,7 @@
         ((= secType "Rect")     (setq secSpec (getstring T (_T "\n实心矩形高x宽 <200x100>: " "\nSolid rect HxW <200x100>: "))) (if (= secSpec "") (setq secSpec "200x100")))
         ((= secType "Custom")   (setq secSpec (getstring T (_T "\n自定义参数 <Custom_Sec>: " "\nCustom params <Custom_Sec>: "))) (if (= secSpec "") (setq secSpec "Custom_Sec")))
       )
+      ;; Q235B/Q355B 首字母同为 Q，需输入 Q2/Q3（或全名）区分
       (initget "Q235B Q355B 45Steel Al6061 Concrete Other")
       (setq matChoice (getkword (_T "\n材料 [Q235B/Q355B/45Steel/Al6061/Concrete/Other] <Q355B>: "
                                "\nMaterial [Q235B/Q355B/45Steel/Al6061/Concrete/Other] <Q355B>: ")))
@@ -1621,52 +1693,90 @@
         )
         (setq matName matChoice)
       )
-      (setq dirPt (getpoint (_T "\n[姿态] 不在梁上的一点 → 截面 Y 轴: "
-                           "\n[Orientation] Point off beam → section Y axis: ")))
-      (if dirPt
+      ;; Pipe / Circle：截面绕梁轴旋转对称，无需姿态点
+      (setq needOrient (not (member secType '("Pipe" "Circle")))
+            dirPt nil)
+      (if needOrient
         (progn
-          (setq dirPt (trans dirPt 1 0))
-          (setq offPt (getpoint (_T "\n[偏置] 不在梁上的一点 → 偏置方向: "
-                           "\n[Offset] Point off beam → offset direction: ")))
-          (if offPt
+          (setq dirPt (getpoint (_T "\n[姿态] 不在梁上的一点 → 截面 Y 轴: "
+                               "\n[Orientation] Point off beam → section Y axis: ")))
+          (if dirPt (setq dirPt (trans dirPt 1 0)))
+        )
+      )
+      (if (or (not needOrient) dirPt)
+        (progn
+          (initget "Yes No")
+          (setq offChoice (getkword (_T "\n是否设置梁偏置? [Yes/No] <No>: "
+                                        "\nSet beam offset? [Yes/No] <No>: ")))
+          (if (not offChoice) (setq offChoice "No"))
+          (setq doOffset (= offChoice "Yes")
+                offPt nil
+                offDist 0.0
+                offsetVec '(0.0 0.0 0.0))
+          (if doOffset
             (progn
-              (setq offPt (trans offPt 1 0))
-              (setq offDist (getreal (_T "\n偏置距离 (mm，0=无偏置) <0.0>: " "\nOffset distance (mm, 0=none) <0.0>: ")))
-              (if (not offDist) (setq offDist 0.0))
-              (setq i 0 validCount 0)
-              (while (< i (sslength ss))
-                (setq beamEnt (ssname ss i))
-                (setq entData (entget beamEnt))
-                (setq beamHandle (cdr (assoc 5 entData)))
-                (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
-                (setq ex (vec-unit (vec-sub p2 p1)))
-                (setq vy (get-perp-unit-vec p1 p2 dirPt))
-                (setq offUnit (get-perp-unit-vec p1 p2 offPt))
-                (if (and ex vy offUnit)
-                  (progn
-                    (setq vz (vec-unit (vec-cross ex vy)))
-                    (setq offsetVec (vec-scale offUnit offDist))
-                    (remove-old-sec-visual beamEnt)
-                    (setq visBlkEnt (create-sec-block beamEnt secType secSpec matName vy vz offsetVec))
-                    (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
-                    (entmod (append (entget beamEnt)
-                                    (list (list -3 (list "MY_CAE_SEC"
-                                      (cons 1000 secType) (cons 1000 secSpec) (cons 1000 matName)
-                                      (cons 1013 vy) (cons 1013 vz) (cons 1013 offsetVec)
-                                      (cons 1005 visHandle))))))
-                    (entupd beamEnt)
-                    (entmod (append (entget visBlkEnt)
-                                    (list (list -3 (list "MY_CAE_SEC" (cons 1005 beamHandle))))))
-                    (setq validCount (1+ validCount))
-                  )
-                  (princ (strcat (_T "\n[跳过] " "\n[Skip] ") beamHandle (_T " 与参考点共线。" " colinear with reference point.")))
+              (setq offPt (getpoint (_T "\n[偏置] 不在梁上的一点 → 偏置方向: "
+                                   "\n[Offset] Point off beam → offset direction: ")))
+              (if offPt
+                (progn
+                  (setq offPt (trans offPt 1 0))
+                  (setq offDist (getreal (_T "\n偏置距离 (mm) <0.0>: "
+                                            "\nOffset distance (mm) <0.0>: ")))
+                  (if (not offDist) (setq offDist 0.0))
                 )
-                (setq i (1+ i))
+                (progn
+                  (setq doOffset nil)
+                  (princ (_T "\n[提示] 未指定偏置点，按无偏置继续。"
+                             "\n[Note] No offset point; continuing with zero offset."))
+                )
               )
-              (princ (strcat (_T "\n[成功] " "\n[OK] ") (itoa validCount) (_T " 根梁 [" " beam(s) [") secType ":" secSpec "] / " matName))
             )
-            (princ (_T "\n[取消] 未指定偏置点。" "\n[Cancel] Offset point not specified."))
           )
+          (setq i 0 validCount 0)
+          (cae-vis-begin-batch)
+          (while (< i (sslength ss))
+            (setq beamEnt (ssname ss i))
+            (setq entData (entget beamEnt))
+            (setq beamHandle (cdr (assoc 5 entData)))
+            (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
+            (setq ex (vec-unit (vec-sub p2 p1)))
+            (if (member secType '("Pipe" "Circle"))
+              (progn
+                (setq basis (make-local-basis ex))
+                (setq vy (cadr basis) vz (caddr basis))
+              )
+              (progn
+                (setq vy (get-perp-unit-vec p1 p2 dirPt))
+                (setq vz (if (and ex vy) (vec-unit (vec-cross ex vy)) nil))
+              )
+            )
+            (setq offUnit (if (and doOffset offPt)
+                            (get-perp-unit-vec p1 p2 offPt)
+                            '(0.0 0.0 0.0)))
+            (if (and ex vy vz (or (not doOffset) offUnit))
+              (progn
+                (setq offsetVec (if (and doOffset offUnit)
+                                  (vec-scale offUnit offDist)
+                                  '(0.0 0.0 0.0)))
+                (remove-old-sec-visual beamEnt)
+                (setq visBlkEnt (create-sec-block beamEnt secType secSpec matName vy vz offsetVec))
+                (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
+                (entmod (append (entget beamEnt)
+                                (list (list -3 (list "MY_CAE_SEC"
+                                  (cons 1000 secType) (cons 1000 secSpec) (cons 1000 matName)
+                                  (cons 1013 vy) (cons 1013 vz) (cons 1013 offsetVec)
+                                  (cons 1005 visHandle))))))
+                (entupd beamEnt)
+                (entmod (append (entget visBlkEnt)
+                                (list (list -3 (list "MY_CAE_SEC" (cons 1005 beamHandle))))))
+                (setq validCount (1+ validCount))
+              )
+              (princ (strcat (_T "\n[跳过] " "\n[Skip] ") beamHandle (_T " 与参考点共线。" " colinear with reference point.")))
+            )
+            (setq i (1+ i))
+          )
+          (cae-vis-end-batch)
+          (princ (strcat (_T "\n[成功] " "\n[OK] ") (itoa validCount) (_T " 根梁 [" " beam(s) [") secType ":" secSpec "] / " matName))
         )
         (princ (_T "\n[取消] 未指定姿态点。" "\n[Cancel] Orientation point not specified."))
       )
@@ -1935,6 +2045,7 @@
   (if ss
     (progn
       (setq i 0)
+      (cae-vis-begin-batch)
       (while (< i (sslength ss))
         (setq ent (ssname ss i) entData (entget ent '("MY_CAE_SEC")))
         (setq beamHandle (cdr (assoc 5 entData)) xdata (assoc -3 entData))
@@ -1957,6 +2068,7 @@
         )
         (setq i (1+ i))
       )
+      (cae-vis-end-batch)
     )
   )
   count
@@ -2160,6 +2272,7 @@
   (if ss
     (progn
       (setq i 0)
+      (cae-vis-begin-batch)
       (while (< i (sslength ss))
         (setq ent (ssname ss i)
               entData (entget ent '("MY_CAE_SHELL_PROP"))
@@ -2189,6 +2302,7 @@
         )
         (setq i (1+ i))
       )
+      (cae-vis-end-batch)
     )
   )
   count
@@ -2316,17 +2430,16 @@
   (c:REFRESH_ALL)
 )
 
-;;; ---------- 图层显隐（梁与板壳共用 CAE_VIS_*）----------
-(defun toggle-cae-layer (layName cnLabel / layData colVal)
-  (setq layData (tblsearch "LAYER" layName))
-  (if layData
+;;; ---------- 图层显隐（梁与板壳共用 CAE_VIS_*；静默取反 62）----------
+(defun toggle-cae-layer (layName cnLabel / en ed colVal)
+  (setq en (tblobjname "LAYER" layName))
+  (if en
     (progn
-      (setq colVal (cdr (assoc 62 layData)))
+      (setq ed (entget en) colVal (cdr (assoc 62 ed)))
+      (entmod (subst (cons 62 (- colVal)) (assoc 62 ed) ed))
       (if (< colVal 0)
-        (progn (command "_.-LAYER" "_ON" layName "")
-               (princ (strcat (_T "\n[显示] " "\n[ON] ") cnLabel)))
-        (progn (command "_.-LAYER" "_OFF" layName "")
-               (princ (strcat (_T "\n[隐藏] " "\n[OFF] ") cnLabel)))
+        (princ (strcat (_T "\n[显示] " "\n[ON] ") cnLabel))
+        (princ (strcat (_T "\n[隐藏] " "\n[OFF] ") cnLabel))
       )
     )
     (princ (strcat (_T "\n[提示] 图层 " "\n[Hint] Layer ") layName (_T " 尚未创建。" " not created yet.")))
@@ -2584,9 +2697,9 @@
       (if (member mainType '("MESH" "REGION" "SURFACE" "3DSOLID" "3DFACE" "LWPOLYLINE"))
         (progn
           (initget "Edge Face")
-          (setq loadScope (getkword (_T "\n[第2步] 加载位置 Edge=边线载荷, Face=面压强/面力 [Edge/Face] <Edge>: "
-                                 "\n[Step 2] Location Edge=edge load, Face=face pressure/force [Edge/Face] <Edge>: ")))
-          (if (not loadScope) (setq loadScope "Edge"))
+          (setq loadScope (getkword (_T "\n加载位置 Edge=边线载荷, Face=面压强/面力 [Edge/Face] <Face>: "
+                                 "\nLocation Edge=edge load, Face=face pressure/force [Edge/Face] <Face>: ")))
+          (if (not loadScope) (setq loadScope "Face"))
           
           (cond
             ;; 分支 A：边分布线载荷
@@ -2851,7 +2964,7 @@
                (setq curLoop (append curLoop (cdr (reverse segPts))) foundNext T))
             )
             (if foundNext
-              (setq curves (append (subseq curves 0 i) (subseq curves (1+ i))))
+              (setq curves (append (cae-subseq curves 0 i) (cae-subseq curves (1+ i) nil)))
               (setq i (1+ i))
             )
           )
@@ -2883,7 +2996,7 @@
 
 ;;; 创建板壳属性整体块 -> 放入 CAE_VIS_SEC
 (defun create-shell-prop-block (cenPt normVec diagLen theoryType thick offZ matName / sz nEnd labelPt labelStr blkDefName blkRef)
-  (unlock-all-cae-layers)
+  (cae-vis-unlock)
   (setq sz (* (max (* diagLen 0.10) 80.0) *CAE_SCALE_SEC*))
   
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
@@ -2897,7 +3010,7 @@
   
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_SEC") (cons 2 blkDefName) (cons 10 cenPt))))
-  (lock-all-cae-layers)
+  (cae-vis-lock)
   blkRef
 )
 
@@ -2926,15 +3039,24 @@
       (setq thick (getreal (_T "\n板壳厚度 Thickness (mm) <10.0>: " "\nShell thickness (mm) <10.0>: ")))
       (if (not thick) (setq thick 10.0))
       
-      (initget "Mid Top Bottom Custom")
-      (setq offChoice (getkword (_T "\n中面偏置 Mid=板中, Top=板顶, Bottom=板底, Custom=自定义 [Mid/Top/Bottom/Custom] <Mid>: "
-                                "\nMid-surface offset [Mid/Top/Bottom/Custom] <Mid>: ")))
-      (if (not offChoice) (setq offChoice "Mid"))
-      (cond
-        ((= offChoice "Mid")    (setq offZ 0.0))
-        ((= offChoice "Top")    (setq offZ (* -0.5 thick)))
-        ((= offChoice "Bottom") (setq offZ (* 0.5 thick)))
-        ((= offChoice "Custom") (setq offZ (getreal (_T "\n法向偏置距离 (mm) <0.0>: " "\nNormal offset (mm) <0.0>: "))) (if (not offZ) (setq offZ 0.0)))
+      (initget "Yes No")
+      (setq offChoice (getkword (_T "\n是否设置中面偏置? [Yes/No] <No>: "
+                                    "\nSet mid-surface offset? [Yes/No] <No>: ")))
+      (if (not offChoice) (setq offChoice "No"))
+      (if (= offChoice "Yes")
+        (progn
+          (initget "Mid Top Bottom Custom")
+          (setq offChoice (getkword (_T "\n中面偏置 Mid=板中, Top=板顶, Bottom=板底, Custom=自定义 [Mid/Top/Bottom/Custom] <Mid>: "
+                                    "\nMid-surface offset [Mid/Top/Bottom/Custom] <Mid>: ")))
+          (if (not offChoice) (setq offChoice "Mid"))
+          (cond
+            ((= offChoice "Mid")    (setq offZ 0.0))
+            ((= offChoice "Top")    (setq offZ (* -0.5 thick)))
+            ((= offChoice "Bottom") (setq offZ (* 0.5 thick)))
+            ((= offChoice "Custom") (setq offZ (getreal (_T "\n法向偏置距离 (mm) <0.0>: " "\nNormal offset (mm) <0.0>: "))) (if (not offZ) (setq offZ 0.0)))
+          )
+        )
+        (setq offZ 0.0)
       )
       
       (initget "Q235B Q355B 45Steel Al6061 Concrete Other")
@@ -2947,6 +3069,7 @@
       )
       
       (setq i 0)
+      (cae-vis-begin-batch)
       (while (< i (sslength ss))
         (setq ent (ssname ss i))
         (setq entHandle (cdr (assoc 5 (entget ent))))
@@ -2956,7 +3079,7 @@
         (setq oldXd (assoc -3 (entget ent '("MY_CAE_SHELL_PROP"))))
         (if oldXd
           (if (setq oldBlk (handent (cdr (nth 4 (cdr (cadr oldXd))))))
-            (if (entget oldBlk) (progn (unlock-all-cae-layers) (entdel oldBlk) (lock-all-cae-layers)))
+            (if (entget oldBlk) (progn (cae-vis-unlock) (entdel oldBlk) (cae-vis-lock)))
           )
         )
         
@@ -2978,6 +3101,7 @@
         (entmod (append (entget visBlk) (list (list -3 (list "MY_CAE_SHELL_PROP" (cons 1005 entHandle))))))
         (setq i (1+ i))
       )
+      (cae-vis-end-batch)
       (princ (strcat (_T "\n[成功] 已为 " "\n[OK] Set properties on ") (itoa (sslength ss))
                  (_T " 块板壳设置属性 [" " shell(s) [") theoryType ", t=" (rtos thick 2 1) "mm, " matName "]"))
     )

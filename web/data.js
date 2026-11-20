@@ -41,59 +41,54 @@ const TPLS = {
   opamp: "\\begin{circuitikz}[font=\\small, european]\n  \\node[op amp] (op) at (3,2) {};\n  \\draw (0,1.5) node[left]{$V_{in}$} -- (op.+);\n  \\draw (op.-) -- (1.35,2.49) -- (1.35,3.5) to[R, l=$R_f$] (4.2,3.5) -| (op.out);\n  \\draw (1.35,3.5) to[R, l=$R_1$] (-0.55,3.5) node[ground]{};\n  \\draw (op.out) -- (5,2) node[right]{$V_{out}$};\n  \\node[circ] at (1.35,3.5) {};\n  \\node[circ] at (4.19,3.5) {};\n  \\node[circ] at (op.east) {};\n\\end{circuitikz}",
   block: "\\begin{tikzpicture}[>=Stealth, font=\\small]\n  \\node[draw, rounded corners, minimum width=1.8cm, minimum height=0.9cm] (a) at (0,0) {Sensor};\n  \\node[draw, rounded corners, minimum width=2cm, minimum height=0.9cm] (b) at (3.5,0) {DSP};\n  \\draw[->] (a) -- (b);\n\\end{tikzpicture}",
   // satopdf frame demo (from satopdf-frame.tex / frame.dxf)
-  struct2d: String.raw`\begin{tikzpicture}[x=0.14mm,y=0.14mm]
-  % Edit: load glyph color / load label text color (or set either alone)
-  \stpset{
-    support size=12mm,
-    hinge radius=1.5mm,
-    load color=red!75!black,
-    load label color=red!75!black
-  }
-  \stpNode{N0}{900.0000,350.0000}
-  \stpNode{N1}{900.0000,0.0000}
-  \stpNode{N2}{1200.0000,180.0000}
-  \stpNode{N3}{1200.0000,0.0000}
-  \stpNode{N4}{600.0000,233.3333}
-  \stpNode{N5}{600.0000,0.0000}
-  \stpNode{N6}{300.0000,116.6667}
-  \stpNode{N7}{300.0000,0.0000}
-  \stpNode{N8}{0.0000,0.0000}
-  \stpNode{Htop}{0.0000,350.0000}
-  \stpMember{truss}{N0}{N1}[1][1]
-  \stpMember{beam}{N1}{N2}
+  struct2d: String.raw`% Auto-generated from 2d_example.dxf
+\begin{tikzpicture}[x=0.117mm,y=0.117mm,stpScheme=color]
+  \stpset{support size=12mm, hinge radius=1.5mm}
+  \stpNode{N0}{50.9619,0.0000}
+  \stpNode{N1}{350.9619,0.0000}
+  \stpNode{N2}{350.9619,116.6667}
+  \stpNode{N3}{650.9619,0.0000}
+  \stpNode{N4}{650.9619,233.3333}
+  \stpNode{N5}{950.9619,0.0000}
+  \stpNode{N6}{950.9619,350.0000}
+  \stpNode{N7}{1250.9619,0.0000}
+  \stpNode{N8}{1250.9619,180.0000}
+  \stpMember{beam}{N6}{N5}
+  \stpMember{beam}{N5}{N8}
+  \stpMember{beam}{N5}{N7}
+  \stpMember{beam}{N8}{N6}
+  \stpMember{beam}{N4}{N3}
+  \stpMember{beam}{N2}{N1}
+  \stpMember{beam}{N0}{N1}
   \stpMember{beam}{N1}{N3}
-  \stpMember{beam}{N2}{N0}
-  \stpMember{beam}{N4}{N5}
-  \stpMember{beam}{N6}{N7}
+  \stpMember{beam}{N3}{N5}
+  \stpMember{beam}{N6}{N0}
+  \stpMember{beam}{N5}{N4}
+  \stpMember{beam}{N3}{N2}
   \stpMember{beam}{N8}{N7}
-  \stpMember{beam}{N7}{N5}
-  \stpMember{beam}{N5}{N1}
-  \stpMember{beam}{N0}{N8}
-  \stpMember{beam}{N1}{N4}
-  \stpMember{beam}{N5}{N6}
-  \stpMember{beam}{N2}{N3}
-  \stpHinge{gap}{N0}[N8][N2][N1]
-  \stpHinge{full}{N1}
-  \stpSupport{N8}[type=fixed, angle=0, size=12mm]
-  \stpSupport{N3}[type=roller, angle=0, size=12mm]
-  % N5: Y-direction elastic support (spring along local -Y)
-  \stpSupport{N5}[type=spring, angle=0, label=$k$]
-  \stpLineLoad{global}{N0}{N8}[0.85][0.85][0.12][$q$]
-  \stpLoad{moment}{N2}[30][200][0][$M$]
-  \stpDimensioning{horiz}{N8}{N3}{-77.00}[$L$]
-  \stpDimensioning{vert}{N8}{Htop}{-120.00}[$H$]
-  \stpNotation{node}{N8}{A}[below left=2mm]
-  \stpNotation{node}{N3}{B}[below right=2mm]
-  \stpNotation{node}{N2}{C}[right=2mm]
+  \stpSupport{N0}[type=fixed, angle=0, size=12mm]  % shared-node fixed [111111] deg=2
+  \stpSupport{N7}[type=roller, angle=0, size=12mm]  % shared-node [011000] deg=2
+  \stpLineLoad{global}{N6}{N0}[0.85][0.85][0.1667][$q=10$]
+  \stpLoad{moment}{N8}[30][200][0][$M=1000$]
+  \stpNode{DimSW}{50.9619,0.0000}
+  \stpNode{DimSE}{1250.9619,0.0000}
+  \stpNode{DimNW}{50.9619,350.0000}
+  \stpDimX{DimSW}{DimSE}[$L_x=1200\,\mathrm{mm}$]
+  \stpDimY{DimSW}{DimNW}[$L_y=350\,\mathrm{mm}$]
+  % Structure mass properties (UR of current figure bbox)
+  \stpStructInfo{$V=8.72\times 10^{-3}\,\mathrm{m}^{3}$}{$m=68.5\,\mathrm{kg}$}
 \end{tikzpicture}`,
-  struct3d: String.raw`\stpDsetCoords{-25}{10}[1][1.2]
+  struct3d: String.raw`% Auto-generated from 3d_example.dxf
+% Drawing scale 1:5 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
+\stpDsetView{1}{-1}{1}
 \stpDsetAxis{xyz}
-\renewcommand{\stpDscale}{0.001}
+\renewcommand{\stpDscale}{0.002}
 \renewcommand{\stpDsupLen}{0.35}
 \renewcommand{\stpDhingeR}{0.9mm}
 \renewcommand{\stpDaxLen}{1.2}
-\begin{tikzpicture}[stpDCoords]
-  \stpset{load color=red!75!black, load label color=red!75!black}
+% Δ before tikzpicture (nullfont inside would zero char height)
+\stpInitDimDelta
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
   \stpDpoint{N0}{0.0000}{0.0000}{0.0000}
   \stpDpoint{N1}{200.0000}{0.0000}{0.0000}
   \stpDpoint{N2}{600.0000}{0.0000}{0.0000}
@@ -123,6 +118,8 @@ const TPLS = {
   \stpDpoint{N26}{600.0000}{6000.0000}{0.0000}
   \stpDpoint{N27}{800.0000}{6000.0000}{0.0000}
   \stpDaxis{N0}
+  \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}(0.5cm)[$L_y=6000\,\mathrm{mm}$]
+  \stpDface{N21,N5,N4,N20}
   \stpDmember{beam}{N0}{N4}
   \stpDmember{beam}{N4}{N8}
   \stpDmember{beam}{N8}{N12}
@@ -183,16 +180,24 @@ const TPLS = {
   \stpDmember{beam}{N11}{N9}
   \stpDmember{beam}{N9}{N5}
   \stpDmember{beam}{N5}{N7}
-  \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
-  \stpDsupport{pin}{N3}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDface{N21,N5,N7,N23}
+  \stpDface{N23,N7,N6,N22}
   \stpDsupport{pin}{N24}[1][0][1][0][0][0]  % BC GLOBAL[101000]
   \stpDsupport{pin}{N27}[1][0][1][0][0][0]  % BC GLOBAL[101000]
-  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
-  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDsupport{pin}{N3}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDpointload{N5}{0,0,-1}[0.55][$F=1000\,\mathrm{N}$]
+  \stpDfaceload{N21,N5,N7,N23}{0,0,-1}[0.55][$P_{\mathrm{face}}=-1\,\mathrm{MPa}$]
   \node[stpLabel, below left=1.5mm] at (N0) {$A$};
   \node[stpLabel, below right=1.5mm] at (N3) {$B$};
   \node[stpLabel, above left=1.5mm] at (N24) {$D$};
   \node[stpLabel, above right=1.5mm] at (N27) {$C$};
+  \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}(0.5cm)[$L_x=800\,\mathrm{mm}$]
+  \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}(0.5cm)[$L_z=1200\,\mathrm{mm}$]
+  % Structure mass properties (UR of current figure bbox)
+  \stpStructInfo{$V=2.7\times 10^{-1}\,\mathrm{m}^{3}$}{$m=2.12\,\mathrm{t}$}
 \end{tikzpicture}`,
   plot: String.raw`\begin{tikzpicture}
     \begin{axis}[
