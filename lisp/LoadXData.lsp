@@ -1,6 +1,6 @@
 ;;; ====================================================================
 ;;; LoadXData.lsp — AutoCAD 梁 + 板壳：截面/属性 / 载荷 / 约束 XData + 可视化
-;;; 图层：CAE_VIS_LOAD / CAE_VIS_BC / CAE_VIS_SEC
+;;; 图层：CAE_VIS_LOAD / CAE_VIS_BC / CAE_VIS_SEC / CAE_VIS_WELD
 ;;; 语言：*CAE_LANG* ("ZH"|"EN") + SETLANG
 ;;; 默认单位：分布力/线载荷 N-mm、集中力 N、面压 MPa；线刚度 N-mm、角刚度 Nmm/rad
 ;;; ====================================================================
@@ -106,10 +106,34 @@
   (if *cae-vis-batch* (cae-vis-end-batch))
   (foreach a '("MY_CAE_LOAD" "MY_CAE_POINT_LOAD" "MY_CAE_MOMENT" "MY_CAE_BC"
                "MY_CAE_COMP_BC" "MY_CAE_SPRING" "MY_CAE_SEC"
+               "MY_CAE_MEMBER_KIND"
                "MY_CAE_SHELL_LOAD" "MY_CAE_SHELL_PROP"
-               "MY_CAE_SHELL_GEOM" "MY_CAE_SHELL_BC")
+               "MY_CAE_SHELL_GEOM" "MY_CAE_SHELL_BC"
+               "MY_CAE_SPOT_WELD" "MY_CAE_SEAM_WELD")
     (cae-regapp a)
   )
+)
+
+;;; 构件类型 MY_CAE_MEMBER_KIND：1000=BEAM|ROD（缺省=BEAM）；仅 LINE
+(defun cae-member-kind (ent / ed xd app tag)
+  (setq ed (entget ent '("MY_CAE_MEMBER_KIND")))
+  (setq xd (assoc -3 ed))
+  (if xd
+    (progn
+      (setq app (cdr (cadr xd)) tag nil)
+      (foreach p app
+        (if (and (= (car p) 1000) (not tag))
+          (setq tag (strcase (cdr p)))
+        )
+      )
+      (if (member tag '("ROD" "BEAM")) tag "BEAM")
+    )
+    "BEAM"
+  )
+)
+
+(defun cae-is-rod (ent)
+  (= (cae-member-kind ent) "ROD")
 )
 (defun register-shell-load-app () (cae-regapp "MY_CAE_SHELL_LOAD"))
 (defun register-shell-prop-app ()
@@ -135,8 +159,8 @@
 )
 
 
-;;; ---------- 图层（三图层 + 兼容旧 CAE_LOAD_VIS）----------
-;;; CAE_VIS_LOAD=红(1) / CAE_VIS_BC=青(4) / CAE_VIS_SEC=品红(6)
+;;; ---------- 图层（四图层 + 兼容旧 CAE_LOAD_VIS）----------
+;;; CAE_VIS_LOAD=红(1) / CAE_VIS_BC=青(4) / CAE_VIS_SEC=品红(6) / CAE_VIS_WELD=黄(2)
 ;;; 用 entmake/entmod 静默处理，避免 command -LAYER 刷屏（批量设截面时极慢）
 ;;; DXF 70 bit2(=4)=锁定；62 负值=图层关闭
 (defun cae-ensure-layer (name color / en ed curCol)
@@ -176,14 +200,15 @@
   )
 )
 (defun lock-vis-layer (/ layInfo)
-  (setq layInfo '(("CAE_VIS_LOAD" . 1) ("CAE_VIS_BC" . 4) ("CAE_VIS_SEC" . 6)))
+  (setq layInfo '(("CAE_VIS_LOAD" . 1) ("CAE_VIS_BC" . 4) ("CAE_VIS_SEC" . 6)
+                  ("CAE_VIS_WELD" . 2)))
   (foreach item layInfo
     (cae-ensure-layer (car item) (cdr item))
     (cae-set-layer-lock (car item) T)
   )
 )
 (defun unlock-vis-layer ()
-  (foreach lay '("CAE_VIS_LOAD" "CAE_VIS_BC" "CAE_VIS_SEC" "CAE_LOAD_VIS")
+  (foreach lay '("CAE_VIS_LOAD" "CAE_VIS_BC" "CAE_VIS_SEC" "CAE_VIS_WELD" "CAE_LOAD_VIS")
     (cae-set-layer-lock lay nil)
   )
 )
@@ -381,10 +406,10 @@
   )
 )
 
-(defun c:SETLOAD (/ ss loadMag unitStr unitVec i beamEnt beamHandle visBlkEnt visHandle)
+(defun c:SETLOAD (/ ss loadMag unitStr unitVec i beamEnt beamHandle visBlkEnt visHandle nSkip nOk)
   (register-all-cae-apps)
-  (princ (_T "\n请选择要施加分布载荷的梁直线 (支持框选): "
-             "\nSelect beam lines for distributed load (window OK): "))
+  (princ (_T "\n请选择要施加分布载荷的梁直线 (杆 ROD 不可用): "
+             "\nSelect beam lines for distributed load (ROD not allowed): "))
   (setq ss (ssget '((0 . "LINE"))))
   (if ss
     (progn
@@ -395,28 +420,38 @@
       (setq unitVec (ask-unit-vec))
       (if unitVec
         (progn
-          (setq i 0)
+          (setq i 0 nSkip 0 nOk 0)
           (while (< i (sslength ss))
             (setq beamEnt (ssname ss i))
-            (setq beamHandle (cdr (assoc 5 (entget beamEnt))))
-            (remove-old-visual beamEnt)
-            (setq visBlkEnt (create-load-block beamEnt loadMag unitVec unitStr))
-            (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
-            (entmod (append (entget beamEnt)
-                            (list (list -3 (list "MY_CAE_LOAD"
-                              (cons 1000 "Distributed") (cons 1040 loadMag)
-                              (cons 1000 unitStr) (cons 1013 unitVec)
-                              (cons 1005 visHandle))))))
-            (entupd beamEnt)
-            (entmod (append (entget visBlkEnt)
-                            (list (list -3 (list "MY_CAE_LOAD" (cons 1005 beamHandle))))))
+            (if (cae-is-rod beamEnt)
+              (setq nSkip (1+ nSkip))
+              (progn
+                (setq beamHandle (cdr (assoc 5 (entget beamEnt))))
+                (remove-old-visual beamEnt)
+                (setq visBlkEnt (create-load-block beamEnt loadMag unitVec unitStr))
+                (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
+                (entmod (append (entget beamEnt)
+                                (list (list -3 (list "MY_CAE_LOAD"
+                                  (cons 1000 "Distributed") (cons 1040 loadMag)
+                                  (cons 1000 unitStr) (cons 1013 unitVec)
+                                  (cons 1005 visHandle))))))
+                (entupd beamEnt)
+                (entmod (append (entget visBlkEnt)
+                                (list (list -3 (list "MY_CAE_LOAD" (cons 1005 beamHandle))))))
+                (setq nOk (1+ nOk))
+              )
+            )
             (setq i (1+ i))
           )
           (princ (strcat (_T "\n[成功] 已为 " "\n[OK] Wrote distributed load on ")
-                         (itoa (sslength ss))
+                         (itoa nOk)
                          (_T " 根梁写入分布载荷 (" " beam(s) (")
                          unitStr
                          (_T ")。" ").")))
+          (if (> nSkip 0)
+            (princ (strcat (_T " 跳过 " " Skipped ") (itoa nSkip)
+                           (_T " 根杆。" " rod(s).")))
+          )
         )
         (princ (_T "\n[错误] 方向向量无效。" "\n[Error] Invalid direction vector."))
       )
@@ -536,9 +571,9 @@
   )
 )
 
-(defun c:SETPTLOAD (/ ent entData beamHandle p1 p2 beamLen endInfo ptNode endTag forceMag unitStr unitVec visBlkEnt visHandle oldXdata oldAppData newRecords i)
+(defun c:SETPTLOAD (/ ent entData beamHandle p1 p2 beamLen endInfo ptNode endTag forceMag unitStr unitVec visBlkEnt visHandle oldXdata oldAppData newRecords i otherPt)
   (register-all-cae-apps)
-  (setq ent (car (entsel (_T "\n[第1步] 选择梁直线 (LINE): " "\n[Step 1] Select a beam line (LINE): "))))
+  (setq ent (car (entsel (_T "\n[第1步] 选择梁/杆直线 (LINE): " "\n[Step 1] Select a beam/rod LINE: "))))
   (if (and ent (= (cdr (assoc 0 (setq entData (entget ent)))) "LINE"))
     (progn
       (setq beamHandle (cdr (assoc 5 entData)))
@@ -548,33 +583,72 @@
       (if endInfo
         (progn
           (setq ptNode (car endInfo) endTag (cadr endInfo))
-          (setq forceMag (getreal (strcat (_T "\n" "\n") endTag (_T " 集中力 <50.0>: " " force <50.0>: "))))
-          (if (not forceMag) (setq forceMag 50.0))
-          (setq unitStr (ask-force-unit))
-          (setq unitVec (ask-unit-vec))
-          (if unitVec
+          (if (cae-is-rod ent)
             (progn
-              (remove-old-ptload-visual ent endTag)
-              (setq visBlkEnt (create-ptload-block ptNode beamLen forceMag unitVec endTag unitStr))
-              (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
-              (setq oldXdata (assoc -3 (entget ent '("MY_CAE_POINT_LOAD"))))
-              (setq newRecords nil)
-              (if oldXdata
-                (setq newRecords (xdata-drop-end (cdr (cadr oldXdata)) endTag
-                                   (ptload-stride (cdr (cadr oldXdata)))))
+              ;; 杆：仅轴向端点力；+拉 -压；方向指向另一端
+              (setq forceMag (getreal (strcat (_T "\n" "\n") endTag
+                (_T " 轴向力(+拉/-压) <50.0>: " " axial F(+ten/-comp) <50.0>: "))))
+              (if (not forceMag) (setq forceMag 50.0))
+              (setq unitStr (ask-force-unit))
+              (setq otherPt (if (= endTag "START") p2 p1))
+              (setq unitVec (vec-unit (vec-sub otherPt ptNode)))
+              (if unitVec
+                (progn
+                  (remove-old-ptload-visual ent endTag)
+                  (setq visBlkEnt (create-ptload-block ptNode beamLen (abs forceMag) unitVec endTag unitStr))
+                  (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
+                  (setq oldXdata (assoc -3 (entget ent '("MY_CAE_POINT_LOAD"))))
+                  (setq newRecords nil)
+                  (if oldXdata
+                    (setq newRecords (xdata-drop-end (cdr (cadr oldXdata)) endTag
+                                       (ptload-stride (cdr (cadr oldXdata)))))
+                  )
+                  (setq newRecords (append newRecords (list
+                    (cons 1000 endTag) (cons 1040 forceMag)
+                    (cons 1013 unitVec) (cons 1005 visHandle)
+                    (cons 1000 unitStr))))
+                  (entmod (append (entget ent) (list (list -3 (cons "MY_CAE_POINT_LOAD" newRecords)))))
+                  (entupd ent)
+                  (entmod (append (entget visBlkEnt)
+                                  (list (list -3 (list "MY_CAE_POINT_LOAD"
+                                    (cons 1005 beamHandle) (cons 1000 endTag))))))
+                  (princ (strcat (_T "\n[成功] 杆[" "\n[OK] Rod[") endTag "] F="
+                                 (rtos forceMag 2 2) " " unitStr
+                                 (_T " (+拉/-压)" " (+ten/-comp)")))
+                )
+                (princ (_T "\n[错误] 杆轴向方向无效。" "\n[Error] Invalid rod axis."))
               )
-              (setq newRecords (append newRecords (list
-                (cons 1000 endTag) (cons 1040 forceMag)
-                (cons 1013 unitVec) (cons 1005 visHandle)
-                (cons 1000 unitStr))))
-              (entmod (append (entget ent) (list (list -3 (cons "MY_CAE_POINT_LOAD" newRecords)))))
-              (entupd ent)
-              (entmod (append (entget visBlkEnt)
-                              (list (list -3 (list "MY_CAE_POINT_LOAD"
-                                (cons 1005 beamHandle) (cons 1000 endTag))))))
-              (princ (strcat (_T "\n[成功] [" "\n[OK] [") endTag "] F=" (rtos forceMag 2 2) " " unitStr))
             )
-            (princ (_T "\n[错误] 方向向量无效。" "\n[Error] Invalid direction vector."))
+            (progn
+              (setq forceMag (getreal (strcat (_T "\n" "\n") endTag (_T " 集中力 <50.0>: " " force <50.0>: "))))
+              (if (not forceMag) (setq forceMag 50.0))
+              (setq unitStr (ask-force-unit))
+              (setq unitVec (ask-unit-vec))
+              (if unitVec
+                (progn
+                  (remove-old-ptload-visual ent endTag)
+                  (setq visBlkEnt (create-ptload-block ptNode beamLen forceMag unitVec endTag unitStr))
+                  (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
+                  (setq oldXdata (assoc -3 (entget ent '("MY_CAE_POINT_LOAD"))))
+                  (setq newRecords nil)
+                  (if oldXdata
+                    (setq newRecords (xdata-drop-end (cdr (cadr oldXdata)) endTag
+                                       (ptload-stride (cdr (cadr oldXdata)))))
+                  )
+                  (setq newRecords (append newRecords (list
+                    (cons 1000 endTag) (cons 1040 forceMag)
+                    (cons 1013 unitVec) (cons 1005 visHandle)
+                    (cons 1000 unitStr))))
+                  (entmod (append (entget ent) (list (list -3 (cons "MY_CAE_POINT_LOAD" newRecords)))))
+                  (entupd ent)
+                  (entmod (append (entget visBlkEnt)
+                                  (list (list -3 (list "MY_CAE_POINT_LOAD"
+                                    (cons 1005 beamHandle) (cons 1000 endTag))))))
+                  (princ (strcat (_T "\n[成功] [" "\n[OK] [") endTag "] F=" (rtos forceMag 2 2) " " unitStr))
+                )
+                (princ (_T "\n[错误] 方向向量无效。" "\n[Error] Invalid direction vector."))
+              )
+            )
           )
         )
         (princ (_T "\n[取消] 未捕捉端点。" "\n[Cancel] No endpoint picked."))
@@ -729,6 +803,9 @@
   (register-all-cae-apps)
   (setq ent (car (entsel (_T "\n[第1步] 选择梁直线 (LINE): " "\n[Step 1] Select a beam line (LINE): "))))
   (if (and ent (= (cdr (assoc 0 (setq entData (entget ent)))) "LINE"))
+    (if (cae-is-rod ent)
+      (princ (_T "\n[错误] 杆(ROD)不能施加弯矩，仅允许端点轴向集中力。"
+                 "\n[Error] ROD cannot take moments; axial end force only."))
     (progn
       (setq beamHandle (cdr (assoc 5 entData)))
       (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
@@ -801,6 +878,7 @@
         (princ (_T "\n[取消] 未捕捉端点。" "\n[Cancel] No endpoint picked."))
       )
     )
+    ) ; end (if cae-is-rod …)
     (princ (_T "\n[错误] 请选择 LINE。" "\n[Error] Select a LINE."))
   )
   (princ)
@@ -1693,21 +1771,21 @@
         )
         (setq matName matChoice)
       )
-      ;; Pipe / Circle：截面绕梁轴旋转对称，无需姿态点
+      ;; Pipe / Circle：绕轴对称无需姿态；杆(ROD)在每根实体上忽略姿态/偏置
       (setq needOrient (not (member secType '("Pipe" "Circle")))
             dirPt nil)
       (if needOrient
         (progn
-          (setq dirPt (getpoint (_T "\n[姿态] 不在梁上的一点 → 截面 Y 轴: "
-                               "\n[Orientation] Point off beam → section Y axis: ")))
+          (setq dirPt (getpoint (_T "\n[姿态] 不在梁上的一点 → 截面 Y 轴 (杆忽略): "
+                               "\n[Orientation] Point off beam → Y (ignored for ROD): ")))
           (if dirPt (setq dirPt (trans dirPt 1 0)))
         )
       )
       (if (or (not needOrient) dirPt)
         (progn
           (initget "Yes No")
-          (setq offChoice (getkword (_T "\n是否设置梁偏置? [Yes/No] <No>: "
-                                        "\nSet beam offset? [Yes/No] <No>: ")))
+          (setq offChoice (getkword (_T "\n是否设置梁偏置? (杆忽略) [Yes/No] <No>: "
+                                        "\nSet beam offset? (ignored for ROD) [Yes/No] <No>: ")))
           (if (not offChoice) (setq offChoice "No"))
           (setq doOffset (= offChoice "Yes")
                 offPt nil
@@ -1740,24 +1818,26 @@
             (setq beamHandle (cdr (assoc 5 entData)))
             (setq p1 (cdr (assoc 10 entData)) p2 (cdr (assoc 11 entData)))
             (setq ex (vec-unit (vec-sub p2 p1)))
-            (if (member secType '("Pipe" "Circle"))
+            ;; 杆：只写截面尺寸+材料，姿态/偏置强制为零基（解析端也会忽略）
+            (if (or (cae-is-rod beamEnt) (member secType '("Pipe" "Circle")))
               (progn
                 (setq basis (make-local-basis ex))
-                (setq vy (cadr basis) vz (caddr basis))
+                (setq vy (cadr basis) vz (caddr basis)
+                      offsetVec '(0.0 0.0 0.0) offUnit '(0.0 0.0 0.0))
               )
               (progn
                 (setq vy (get-perp-unit-vec p1 p2 dirPt))
                 (setq vz (if (and ex vy) (vec-unit (vec-cross ex vy)) nil))
-              )
-            )
-            (setq offUnit (if (and doOffset offPt)
-                            (get-perp-unit-vec p1 p2 offPt)
-                            '(0.0 0.0 0.0)))
-            (if (and ex vy vz (or (not doOffset) offUnit))
-              (progn
-                (setq offsetVec (if (and doOffset offUnit)
+                (setq offUnit (if (and doOffset offPt)
+                                (get-perp-unit-vec p1 p2 offPt)
+                                '(0.0 0.0 0.0)))
+                (setq offsetVec (if (and doOffset offUnit (not (cae-is-rod beamEnt)))
                                   (vec-scale offUnit offDist)
                                   '(0.0 0.0 0.0)))
+              )
+            )
+            (if (and ex vy vz (or (cae-is-rod beamEnt) (not doOffset) offUnit))
+              (progn
                 (remove-old-sec-visual beamEnt)
                 (setq visBlkEnt (create-sec-block beamEnt secType secSpec matName vy vz offsetVec))
                 (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
@@ -2379,10 +2459,10 @@
   count
 )
 
-(defun c:REFRESH_ALL (/ ssOld i cDist cPt cMom cBc cComp cSec cSpring cShLoad cShBc cShProp)
+(defun c:REFRESH_ALL (/ ssOld i cDist cPt cMom cBc cComp cSec cSpring cShLoad cShBc cShProp cSpot cSeam)
   (vl-load-com)
   (unlock-vis-layer)
-  (setq ssOld (ssget "_X" '((8 . "CAE_VIS_LOAD,CAE_VIS_BC,CAE_VIS_SEC,CAE_LOAD_VIS"))))
+  (setq ssOld (ssget "_X" '((8 . "CAE_VIS_LOAD,CAE_VIS_BC,CAE_VIS_SEC,CAE_VIS_WELD,CAE_LOAD_VIS"))))
   (if ssOld
     (progn
       (setq i 0)
@@ -2401,7 +2481,9 @@
         cSec    (refresh-sections)
         cShLoad (refresh-shell-loads)
         cShBc   (refresh-shell-bcs)
-        cShProp (refresh-shell-props))
+        cShProp (refresh-shell-props)
+        cSpot   (refresh-spot-welds)
+        cSeam   (refresh-seam-welds))
   (lock-vis-layer)
   (princ (strcat (_T "\n[刷新] 梁截面=" "\n[Refresh] BeamSec=") (itoa cSec)
                  (_T " 分布=" " Dist=") (itoa cDist)
@@ -2412,7 +2494,9 @@
                  (_T " 弹簧=" " Spring=") (itoa cSpring)))
   (princ (strcat (_T "\n       板壳属性=" "\n       ShellProp=") (itoa cShProp)
                  (_T " 板壳载荷=" " ShellLoad=") (itoa cShLoad)
-                 (_T " 板壳约束=" " ShellBC=") (itoa cShBc)))
+                 (_T " 板壳约束=" " ShellBC=") (itoa cShBc)
+                 (_T " 点焊=" " Spot=") (itoa cSpot)
+                 (_T " 满焊=" " Seam=") (itoa cSeam)))
   (princ)
 )
 
@@ -2449,6 +2533,7 @@
 (defun c:TOGGLESEC () (toggle-cae-layer "CAE_VIS_SEC" (_T "截面/板壳属性" "Section/ShellProp")))
 (defun c:TOGGLELOAD () (toggle-cae-layer "CAE_VIS_LOAD" (_T "载荷(梁+板壳)" "Load (beam+shell)")))
 (defun c:TOGGLEBC () (toggle-cae-layer "CAE_VIS_BC" (_T "约束(梁+板壳)" "BC (beam+shell)")))
+(defun c:TOGGLEWELD () (toggle-cae-layer "CAE_VIS_WELD" (_T "焊缝/焊点" "Welds")))
 
 ;;; ====================================================================
 ;;; 板壳：几何 / 边面载荷 / 属性 / 复合约束
@@ -3359,16 +3444,603 @@
   (princ)
 )
 
+;;; ====================================================================
+;;; 点焊 / 满焊  MY_CAE_SPOT_WELD / MY_CAE_SEAM_WELD + CAE_VIS_WELD
+;;; 点焊载体：POINT（层 0）；满焊载体：LINE/LWPOLYLINE/ARC（真实几何）
+;;; XData 点焊: 1000=SPOT, 1040=直径mm, 1000=FE类型, 1005=VIS
+;;; XData 满焊: 1000=FILLET|BUTT, 1040=焊脚mm, 1040=步长mm, 1005=VIS
+;;; ====================================================================
+
+(defun cae-last (lst)
+  (while (cdr lst) (setq lst (cdr lst)))
+  (car lst)
+)
+
+(defun cae-make-anon-blk (ents / name)
+  ;; 匿名块名必须以 *U 开头
+  (setq name (strcat "*U" (rtos (* 1000000.0 (rem (getvar "CDATE") 1.0)) 2 0)))
+  (entmake (list '(0 . "BLOCK") (cons 2 name) '(10 0.0 0.0 0.0) '(70 . 1)))
+  (foreach e ents (entmake e))
+  (entmake '((0 . "ENDBLK")))
+  name
+)
+
+;;; 点焊可视化：黄圈 + 十字
+(defun create-spot-weld-vis (pt dia / r blkName blkRef)
+  (cae-vis-unlock)
+  (setq r (max 1.2 (* 0.35 dia)))
+  (setq blkName (cae-make-anon-blk
+    (list
+      (list '(0 . "CIRCLE") '(8 . "0") '(62 . 2) '(10 0.0 0.0 0.0) (cons 40 r))
+      (list '(0 . "LINE") '(8 . "0") '(62 . 2)
+            (cons 10 (list (- r) 0.0 0.0)) (cons 11 (list r 0.0 0.0)))
+      (list '(0 . "LINE") '(8 . "0") '(62 . 2)
+            (cons 10 (list 0.0 (- r) 0.0)) (cons 11 (list 0.0 r 0.0)))
+    )))
+  (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_WELD")
+                               (cons 2 blkName) (cons 10 pt))))
+  (cae-vis-lock)
+  blkRef
+)
+
+(defun attach-spot-weld-xdata (ptEnt dia feType visHandle /)
+  (entmod (append (entget ptEnt)
+                  (list (list -3 (list "MY_CAE_SPOT_WELD"
+                    (cons 1000 "SPOT")
+                    (cons 1040 dia)
+                    (cons 1000 feType)
+                    (cons 1005 visHandle))))))
+  (entupd ptEnt)
+)
+
+(defun create-one-spot-weld (ptWcs dia feType / ptEnt visEnt visH ptH)
+  (setq ptEnt (entmakex (list '(0 . "POINT") '(8 . "0") (cons 10 ptWcs))))
+  (setq visEnt (create-spot-weld-vis ptWcs dia))
+  (setq visH (cdr (assoc 5 (entget visEnt)))
+        ptH  (cdr (assoc 5 (entget ptEnt))))
+  (attach-spot-weld-xdata ptEnt dia feType visH)
+  (entmod (append (entget visEnt)
+                  (list (list -3 (list "MY_CAE_SPOT_WELD" (cons 1005 ptH))))))
+  ptEnt
+)
+
+(defun sample-line-by-spacing (p1 p2 spacing / len n i pts d)
+  (setq len (distance p1 p2))
+  (if (< len 1e-9)
+    (list p1)
+    (progn
+      (if (or (not spacing) (<= spacing 0.0)) (setq spacing len))
+      (setq n (max 1 (fix (1+ (/ len spacing))))
+            i 0 pts nil)
+      (while (<= i n)
+        (setq d (if (= n 0) 0.0 (/ (float i) (float n))))
+        (setq pts (append pts (list (mapcar '(lambda (a b) (+ a (* d (- b a)))) p1 p2))))
+        (setq i (1+ i))
+      )
+      pts
+    )
+  )
+)
+
+(defun c:SETSPOTWELD (/ mode dia feChoice feType p1 p2 spacing pts pt nOk)
+  (register-all-cae-apps)
+  (initget "Single Along")
+  (setq mode (getkword (_T "\n布置方式 Single=单点, Along=沿线间距 [Single/Along] <Single>: "
+                           "\nMode [Single/Along] <Single>: ")))
+  (if (not mode) (setq mode "Single"))
+  (setq dia (getreal (_T "\n焊核直径 (mm) <5.0>: " "\nNugget diameter (mm) <5.0>: ")))
+  (if (not dia) (setq dia 5.0))
+  ;; Acm / Cweld / Rbe — 缩写互不冲突
+  (initget "Acm Cweld Rbe")
+  (setq feChoice (getkword (_T "\n焊点单元 [Acm/Cweld/Rbe] <Acm>: "
+                               "\nSpot FE type [Acm/Cweld/Rbe] <Acm>: ")))
+  (if (not feChoice) (setq feChoice "Acm"))
+  (setq feType (cond ((= feChoice "Cweld") "CWELD")
+                     ((= feChoice "Rbe") "RBE2")
+                     (T "ACM")))
+  (setq nOk 0)
+  (cond
+    ((= mode "Along")
+     (setq p1 (getpoint (_T "\n请捕捉起点（建议 OSNAP）: " "\nPick start (OSNAP): ")))
+     (if p1 (setq p2 (getpoint p1 (_T "\n请捕捉终点: " "\nPick end: "))))
+     (if (and p1 p2)
+       (progn
+         (setq spacing (getreal (_T "\n间距 Spacing (mm) <25.0>: " "\nSpacing (mm) <25.0>: ")))
+         (if (not spacing) (setq spacing 25.0))
+         (setq p1 (trans p1 1 0) p2 (trans p2 1 0)
+               pts (sample-line-by-spacing p1 p2 spacing))
+         (cae-vis-begin-batch)
+         (foreach pt pts
+           (create-one-spot-weld pt dia feType)
+           (setq nOk (1+ nOk))
+         )
+         (cae-vis-end-batch)
+       )
+     )
+    )
+    (T
+     (setq p1 (getpoint (_T "\n请捕捉焊点位置（建议 OSNAP）: " "\nPick spot (OSNAP): ")))
+     (if p1
+       (progn
+         (cae-vis-begin-batch)
+         (create-one-spot-weld (trans p1 1 0) dia feType)
+         (cae-vis-end-batch)
+         (setq nOk 1)
+       )
+     )
+    )
+  )
+  (if (> nOk 0)
+    (princ (strcat (_T "\n[成功] 点焊 " "\n[OK] Spot welds ") (itoa nOk)
+                   " Ø" (rtos dia 2 2) " / " feType))
+    (princ (_T "\n[取消] 未创建点焊。" "\n[Cancel] No spot welds created."))
+  )
+  (princ)
+)
+
+(defun c:DELSPOTWELD (/ ss i ent ed typ xd app visH hostH oldVis host)
+  (unlock-vis-layer)
+  (princ (_T "\n请选择【点焊 POINT】或【黄色点焊符号】: "
+             "\nSelect spot POINT(s) or yellow spot symbol(s): "))
+  (setq ss (ssget '((0 . "POINT,INSERT"))))
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i)
+              ed (entget ent '("MY_CAE_SPOT_WELD"))
+              typ (cdr (assoc 0 ed))
+              xd (assoc -3 ed))
+        (if xd
+          (progn
+            (setq app (cdr (cadr xd)))
+            (if (= typ "POINT")
+              (progn
+                (setq visH (cdr (assoc 1005 app)))
+                (if (and visH (setq oldVis (handent visH)))
+                  (if (entget oldVis) (entdel oldVis))
+                )
+                (entdel ent)
+              )
+              (progn
+                (setq hostH (cdr (assoc 1005 app)))
+                (if (and hostH (setq host (handent hostH)))
+                  (if (entget host) (entdel host))
+                )
+                (entdel ent)
+              )
+            )
+          )
+        )
+        (setq i (1+ i))
+      )
+      (princ (_T "\n[清除完成] 点焊已删除。" "\n[Done] Spot welds removed."))
+    )
+  )
+  (lock-vis-layer)
+  (princ)
+)
+
+(defun refresh-spot-welds (/ ss i ent ed xd app dia fe visH oldVis newVis newH cnt)
+  (setq ss (ssget "_X" '((0 . "POINT"))) cnt 0)
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i)
+              ed (entget ent '("MY_CAE_SPOT_WELD"))
+              xd (assoc -3 ed))
+        (if xd
+          (progn
+            ;; app: 1000 SPOT, 1040 dia, 1000 feType, 1005 vis
+            (setq app (cdr (cadr xd))
+                  dia (cdr (nth 1 app))
+                  fe  (cdr (nth 2 app)))
+            (if (not dia) (setq dia 5.0))
+            (if (or (not fe) (= fe "SPOT")) (setq fe "ACM"))
+            (setq visH (cdr (assoc 1005 app)))
+            (if (and visH (setq oldVis (handent visH)))
+              (if (entget oldVis) (entdel oldVis))
+            )
+            (setq newVis (create-spot-weld-vis (cdr (assoc 10 ed)) dia)
+                  newH (cdr (assoc 5 (entget newVis))))
+            (attach-spot-weld-xdata ent dia fe newH)
+            (entmod (append (entget newVis)
+                            (list (list -3 (list "MY_CAE_SPOT_WELD"
+                              (cons 1005 (cdr (assoc 5 ed))))))))
+            (setq cnt (1+ cnt))
+          )
+        )
+        (setq i (1+ i))
+      )
+    )
+  )
+  cnt
+)
+
+;;; ---------- 满焊轨迹采样 ----------
+(defun cae-lwpoly-pts (ed / pts elev)
+  (setq elev (if (assoc 38 ed) (cdr (assoc 38 ed)) 0.0) pts nil)
+  (foreach it ed
+    (if (= (car it) 10)
+      (setq pts (append pts (list (list (cadr it) (caddr it) elev))))
+    )
+  )
+  pts
+)
+
+(defun cae-arc-sample (ed n / cen r a0 a1 a i pts)
+  (setq cen (cdr (assoc 10 ed))
+        r   (cdr (assoc 40 ed))
+        a0  (* (/ (cdr (assoc 50 ed)) 180.0) pi)
+        a1  (* (/ (cdr (assoc 51 ed)) 180.0) pi)
+        n   (max 4 n))
+  (if (< a1 a0) (setq a1 (+ a1 (* 2.0 pi))))
+  (setq i 0 pts nil)
+  (while (<= i n)
+    (setq a (+ a0 (* (/ (float i) (float n)) (- a1 a0))))
+    (setq pts (append pts (list (list (+ (car cen) (* r (cos a)))
+                                     (+ (cadr cen) (* r (sin a)))
+                                     (if (caddr cen) (caddr cen) 0.0)))))
+    (setq i (1+ i))
+  )
+  pts
+)
+
+(defun cae-densify-polyline (verts spacing / out a b seg)
+  (if (or (not verts) (not (cdr verts)))
+    verts
+    (progn
+      (setq out (list (car verts)) a (car verts) verts (cdr verts))
+      (foreach b verts
+        (setq seg (sample-line-by-spacing a b spacing))
+        (setq out (append out (cdr seg)))
+        (setq a b)
+      )
+      out
+    )
+  )
+)
+
+(defun cae-entity-path-pts (ent spacing / ed typ p1 p2 pts arcLen n)
+  (setq ed (entget ent) typ (cdr (assoc 0 ed)))
+  (cond
+    ((= typ "LINE")
+     (setq p1 (cdr (assoc 10 ed)) p2 (cdr (assoc 11 ed)))
+     (sample-line-by-spacing p1 p2 spacing)
+    )
+    ((= typ "LWPOLYLINE")
+     (cae-densify-polyline (cae-lwpoly-pts ed) spacing)
+    )
+    ((= typ "ARC")
+     (setq arcLen (* (cdr (assoc 40 ed))
+                     (abs (- (cdr (assoc 51 ed)) (cdr (assoc 50 ed))))
+                     (/ pi 180.0)))
+     (setq n (max 8 (fix (/ arcLen (if (and spacing (> spacing 0)) spacing 5.0)))))
+     (cae-arc-sample ed n)
+    )
+    (T nil)
+  )
+)
+
+;;; 锯齿 VIS：匿名块内折线（交替法向偏移）
+(defun create-seam-weld-vis (pathPts amp / zig i p0 p1 mid tdir nxy blkName blkRef base ents)
+  (cae-vis-unlock)
+  (if (or (not pathPts) (< (length pathPts) 2))
+    (progn (cae-vis-lock) nil)
+    (progn
+      (setq amp (if (and amp (> amp 0)) amp 1.5)
+            base (car pathPts)
+            zig nil i 0)
+      (while (< i (1- (length pathPts)))
+        (setq p0 (nth i pathPts) p1 (nth (1+ i) pathPts)
+              tdir (vec-unit (vec-sub p1 p0)))
+        (if tdir
+          (progn
+            (setq nxy (vec-unit (list (- (cadr tdir)) (car tdir) 0.0)))
+            (if (not nxy) (setq nxy '(0.0 1.0 0.0)))
+            (setq mid (vec-add
+                        (list (* 0.5 (+ (car p0) (car p1)))
+                              (* 0.5 (+ (cadr p0) (cadr p1)))
+                              (* 0.5 (+ (caddr p0) (caddr p1))))
+                        (vec-scale nxy (if (= (rem i 2) 0) amp (- amp)))))
+            (setq zig (append zig (list p0 mid)))
+          )
+        )
+        (setq i (1+ i))
+      )
+      (setq zig (append zig (list (cae-last pathPts))))
+      ;; 块坐标相对 base
+      (setq ents nil i 0)
+      (while (< i (1- (length zig)))
+        (setq p0 (vec-sub (nth i zig) base)
+              p1 (vec-sub (nth (1+ i) zig) base))
+        (setq ents (append ents (list
+          (list '(0 . "LINE") '(8 . "0") '(62 . 2)
+                (cons 10 p0) (cons 11 p1)))))
+        (setq i (1+ i))
+      )
+      (setq blkName (cae-make-anon-blk ents)
+            blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_WELD")
+                                   (cons 2 blkName) (cons 10 base))))
+      (cae-vis-lock)
+      blkRef
+    )
+  )
+)
+
+(defun attach-seam-weld-xdata (pathEnt weldType leg spacing visHandle /)
+  (entmod (append (entget pathEnt)
+                  (list (list -3 (list "MY_CAE_SEAM_WELD"
+                    (cons 1000 weldType)
+                    (cons 1040 leg)
+                    (cons 1040 spacing)
+                    (cons 1005 visHandle))))))
+  (entupd pathEnt)
+)
+
+(defun c:SETSEAMWELD (/ ss ent ed typ weldChoice weldType leg spacing pathPts visEnt visH pathH)
+  (register-all-cae-apps)
+  (princ (_T "\n请选择焊缝轨迹 LINE / LWPOLYLINE / ARC（建议 OSNAP 落在钣金棱边）: "
+             "\nSelect seam path LINE/LWPOLYLINE/ARC (OSNAP on sheet edge): "))
+  (setq ss (ssget '((0 . "LINE,LWPOLYLINE,ARC"))))
+  (if (and ss (= (sslength ss) 1))
+    (progn
+      (setq ent (ssname ss 0) ed (entget ent) typ (cdr (assoc 0 ed)))
+      (initget "Fillet Butt")
+      (setq weldChoice (getkword (_T "\n焊缝类型 Fillet=角焊, Butt=对接 [Fillet/Butt] <Fillet>: "
+                                     "\nSeam type [Fillet/Butt] <Fillet>: ")))
+      (if (not weldChoice) (setq weldChoice "Fillet"))
+      (setq weldType (strcase weldChoice))
+      (setq leg (getreal (_T "\n焊脚尺寸 LegSize (mm) <4.0>: " "\nLeg size (mm) <4.0>: ")))
+      (if (not leg) (setq leg 4.0))
+      (setq spacing (getreal (_T "\n离散步长 Spacing (mm) <5.0>: " "\nDiscretize spacing (mm) <5.0>: ")))
+      (if (not spacing) (setq spacing 5.0))
+      ;; 清除旧 VIS
+      (setq ed (entget ent '("MY_CAE_SEAM_WELD")))
+      (if (assoc -3 ed)
+        (progn
+          (setq visH (cdr (assoc 1005 (cdr (cadr (assoc -3 ed))))))
+          (if (and visH (setq visEnt (handent visH)))
+            (progn (cae-vis-unlock) (if (entget visEnt) (entdel visEnt)) (cae-vis-lock))
+          )
+        )
+      )
+      (setq pathPts (cae-entity-path-pts ent spacing))
+      (if (and pathPts (>= (length pathPts) 2))
+        (progn
+          (cae-vis-begin-batch)
+          (setq visEnt (create-seam-weld-vis pathPts (max 1.2 (* 0.35 leg))))
+          (cae-vis-end-batch)
+          (if visEnt
+            (progn
+              (setq visH (cdr (assoc 5 (entget visEnt)))
+                    pathH (cdr (assoc 5 (entget ent))))
+              (attach-seam-weld-xdata ent weldType leg spacing visH)
+              (entmod (append (entget visEnt)
+                              (list (list -3 (list "MY_CAE_SEAM_WELD" (cons 1005 pathH))))))
+              (princ (strcat (_T "\n[成功] 满焊 " "\n[OK] Seam ") weldType
+                             " a=" (rtos leg 2 2) " / s=" (rtos spacing 2 2)
+                             (_T " 点数=" " pts=") (itoa (length pathPts))))
+            )
+            (princ (_T "\n[失败] 无法生成锯齿标记。" "\n[Fail] Zigzag VIS not created."))
+          )
+        )
+        (princ (_T "\n[失败] 轨迹采样点不足。" "\n[Fail] Path sampling too short."))
+      )
+    )
+    (princ (_T "\n[取消] 请只选择一条轨迹。" "\n[Cancel] Select exactly one path."))
+  )
+  (princ)
+)
+
+(defun c:DELSEAMWELD (/ ss i ent ed typ xd app visH hostH oldVis host)
+  (unlock-vis-layer)
+  (princ (_T "\n请选择【满焊轨迹】或【黄色锯齿符号】: "
+             "\nSelect seam path(s) or yellow zigzag symbol(s): "))
+  (setq ss (ssget '((0 . "LINE,LWPOLYLINE,ARC,INSERT"))))
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i)
+              ed (entget ent '("MY_CAE_SEAM_WELD"))
+              typ (cdr (assoc 0 ed))
+              xd (assoc -3 ed))
+        (if xd
+          (progn
+            (setq app (cdr (cadr xd)))
+            (if (= typ "INSERT")
+              (progn
+                (setq hostH (cdr (assoc 1005 app)))
+                (if (and hostH (setq host (handent hostH)))
+                  (progn
+                    (entmod (append (entget host) (list (list -3 (list "MY_CAE_SEAM_WELD")))))
+                    (entupd host)
+                  )
+                )
+                (entdel ent)
+              )
+              (progn
+                (setq visH (cdr (assoc 1005 app)))
+                (if (and visH (setq oldVis (handent visH)))
+                  (if (entget oldVis) (entdel oldVis))
+                )
+                (entmod (append (entget ent) (list (list -3 (list "MY_CAE_SEAM_WELD")))))
+                (entupd ent)
+              )
+            )
+          )
+        )
+        (setq i (1+ i))
+      )
+      (princ (_T "\n[清除完成] 满焊已删除。" "\n[Done] Seam welds removed."))
+    )
+  )
+  (lock-vis-layer)
+  (princ)
+)
+
+(defun refresh-seam-welds (/ ss i ent ed xd app weldType leg spacing visH oldVis pathPts newVis newH cnt)
+  (setq ss (ssget "_X" '((0 . "LINE,LWPOLYLINE,ARC"))) cnt 0)
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i)
+              ed (entget ent '("MY_CAE_SEAM_WELD"))
+              xd (assoc -3 ed))
+        (if xd
+          (progn
+            (setq app (cdr (cadr xd))
+                  weldType (cdr (nth 0 app))
+                  leg (cdr (nth 1 app))
+                  spacing (cdr (nth 2 app))
+                  visH (cdr (nth 3 app)))
+            (if (not leg) (setq leg 4.0))
+            (if (not spacing) (setq spacing 5.0))
+            (if (and visH (setq oldVis (handent visH)))
+              (if (entget oldVis) (entdel oldVis))
+            )
+            (setq pathPts (cae-entity-path-pts ent spacing)
+                  newVis (create-seam-weld-vis pathPts (max 1.2 (* 0.35 leg))))
+            (if newVis
+              (progn
+                (setq newH (cdr (assoc 5 (entget newVis))))
+                (attach-seam-weld-xdata ent weldType leg spacing newH)
+                (entmod (append (entget newVis)
+                                (list (list -3 (list "MY_CAE_SEAM_WELD"
+                                  (cons 1005 (cdr (assoc 5 ed))))))))
+                (setq cnt (1+ cnt))
+              )
+            )
+          )
+        )
+        (setq i (1+ i))
+      )
+    )
+  )
+  cnt
+)
+
+;;; ====================================================================
+;;; 梁/杆类型  MY_CAE_MEMBER_KIND（仅 LINE）
+;;; 1000 = BEAM | ROD；缺省无 XData = BEAM
+;;; 杆：不可分割；仅端点轴向集中力(+拉/-压)；忽略偏置/截面方向/分布载荷
+;;; ====================================================================
+(defun create-kind-vis (pt kind / r blkName blkRef col lab)
+  (cae-vis-unlock)
+  (setq r 2.5 col (if (= kind "ROD") 5 3) lab kind) ; ROD=蓝  BEAM=绿
+  (setq blkName (cae-make-anon-blk
+    (list
+      (list '(0 . "CIRCLE") '(8 . "0") (cons 62 col) '(10 0.0 0.0 0.0) (cons 40 r))
+      (list '(0 . "TEXT") '(8 . "0") (cons 62 col)
+            (cons 10 (list (* r 1.2) (* r 0.2) 0.0)) (cons 40 r) (cons 1 lab))
+    )))
+  (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_SEC")
+                               (cons 2 blkName) (cons 10 pt))))
+  (cae-vis-lock)
+  blkRef
+)
+
+(defun remove-old-kind-visual (ent / ed xd app h old)
+  (setq ed (entget ent '("MY_CAE_MEMBER_KIND")))
+  (setq xd (assoc -3 ed))
+  (if xd
+    (progn
+      (setq app (cdr (cadr xd)))
+      (foreach p app
+        (if (= (car p) 1005)
+          (if (and (setq old (handent (cdr p))) (entget old))
+            (progn (cae-vis-unlock) (entdel old) (cae-vis-lock))
+          )
+        )
+      )
+    )
+  )
+)
+
+(defun cae-set-member-kind (kind / ss i ent ed p1 p2 mid visH nOk)
+  (register-all-cae-apps)
+  (princ (strcat (_T "\n请选择直线 LINE 标记为 " "\nSelect LINE(s) to mark as ")
+                 kind ": "))
+  (setq ss (ssget '((0 . "LINE"))))
+  (if ss
+    (progn
+      (setq i 0 nOk 0)
+      (cae-vis-begin-batch)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i) ed (entget ent))
+        ;; 跳过焊缝载体
+        (if (assoc -3 (entget ent '("MY_CAE_SEAM_WELD")))
+          nil
+          (progn
+            (setq p1 (cdr (assoc 10 ed)) p2 (cdr (assoc 11 ed))
+                  mid (vec-scale (vec-add p1 p2) 0.5))
+            (remove-old-kind-visual ent)
+            (setq visH (cdr (assoc 5 (entget (create-kind-vis mid kind)))))
+            (entmod (append (entget ent)
+                            (list (list -3 (list "MY_CAE_MEMBER_KIND"
+                              (cons 1000 kind) (cons 1005 visH))))))
+            (entupd ent)
+            (setq nOk (1+ nOk))
+          )
+        )
+        (setq i (1+ i))
+      )
+      (cae-vis-end-batch)
+      (princ (strcat (_T "\n[成功] " "\n[OK] ") (itoa nOk) " → " kind))
+    )
+    (princ (_T "\n[取消] 未选中 LINE。" "\n[Cancel] No LINE selected."))
+  )
+  (princ)
+)
+
+(defun c:SETROD ()
+  (cae-set-member-kind "ROD")
+)
+
+(defun c:SETBEAM ()
+  (cae-set-member-kind "BEAM")
+)
+
+(defun c:DELKIND (/ ss i ent ed xd app h old)
+  (unlock-vis-layer)
+  (princ (_T "\n请选择要清除梁/杆类型标记的 LINE: "
+             "\nSelect LINE(s) to clear BEAM/ROD kind: "))
+  (setq ss (ssget '((0 . "LINE"))))
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (setq ent (ssname ss i))
+        (remove-old-kind-visual ent)
+        (entmod (append (entget ent) (list (list -3 (list "MY_CAE_MEMBER_KIND")))))
+        (entupd ent)
+        (setq i (1+ i))
+      )
+      (princ (_T "\n[清除完成] 构件类型已恢复为默认梁(BEAM)。"
+                 "\n[Done] Kind cleared → default BEAM."))
+    )
+  )
+  (lock-vis-layer)
+  (princ)
+)
+
 ;;; ---------- 启动 ----------
 (vl-load-com)
 (register-all-cae-apps)
 (lock-vis-layer)
-(princ (_T "\n[CAE] 梁+板壳已加载。默认单位: 线载荷 N-mm、N、MPa；线刚度 N-mm；角刚度 Nmm/rad。语言: SETLANG"
-           "\n[CAE] Beam+Shell loaded. Defaults: line load N-mm, N, MPa; K N-mm; KR Nmm/rad. Lang: SETLANG"))
-(princ (_T "\n  梁载荷: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT | 约束: SETBC/DELBC/ADDBC | 弹簧: SETSPRING/DELSPRING"
-           "\n  Beam loads: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT | BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING"))
-(princ (_T "\n  截面: SETSEC/DELSEC | 板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"
-           "\n  Sec: SETSEC/DELSEC | Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"))
-(princ (_T "\n  显示(梁+板壳): REFRESH_ALL/SETSCALE/TOGGLELOAD/TOGGLEBC/TOGGLESEC"
-           "\n  Display(beam+shell): REFRESH_ALL/SETSCALE/TOGGLELOAD/TOGGLEBC/TOGGLESEC"))
+(princ (_T "\n[CAE] 梁+杆+板壳+焊缝已加载。默认单位: 线载荷 N-mm、N、MPa；焊点/焊缝 mm。语言: SETLANG"
+           "\n[CAE] Beam+Rod+Shell+Weld loaded. Defaults: line load N-mm, N, MPa; welds mm. Lang: SETLANG"))
+(princ (_T "\n  类型: SETROD/SETBEAM/DELKIND | 梁载荷: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT"
+           "\n  Kind: SETROD/SETBEAM/DELKIND | Beam loads: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT"))
+(princ (_T "\n  约束: SETBC/DELBC/ADDBC | 弹簧: SETSPRING/DELSPRING | 截面: SETSEC/DELSEC"
+           "\n  BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING | Sec: SETSEC/DELSEC"))
+(princ (_T "\n  板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"
+           "\n  Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"))
+(princ (_T "\n  焊缝: SETSPOTWELD/DELSPOTWELD | SETSEAMWELD/DELSEAMWELD | TOGGLEWELD"
+           "\n  Weld: SETSPOTWELD/DELSPOTWELD | SETSEAMWELD/DELSEAMWELD | TOGGLEWELD"))
+(princ (_T "\n  显示: REFRESH_ALL/SETSCALE/TOGGLELOAD/TOGGLEBC/TOGGLESEC/TOGGLEWELD"
+           "\n  Display: REFRESH_ALL/SETSCALE/TOGGLELOAD/TOGGLEBC/TOGGLESEC/TOGGLEWELD"))
 (princ)

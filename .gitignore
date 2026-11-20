@@ -14,9 +14,10 @@ texmf/tex/latex/local/*.toc
 texmf/tex/latex/local/*.idx
 texmf/tex/latex/local/*.ilg
 texmf/tex/latex/local/*.ind
-texmf/tex/latex/local/_*.png
-texmf/tex/latex/local/_*.tex
-texmf/tex/latex/local/_*.pdf
-texmf/tex/latex/local/*.pdf
+texmf/tex/latex/local/*.hd
+texmf/tex/latex/local/_*.*
 texmf/tex/latex/local/texput.log
 texmf/tex/latex/local/Example.pdf.locked
+# Ignore demo PDFs; keep the package manual
+texmf/tex/latex/local/satopdf-*.pdf
+!texmf/tex/latex/local/satopdf.pdf

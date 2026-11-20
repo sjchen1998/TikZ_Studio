@@ -82,7 +82,7 @@ const TPLS = {
 % Drawing scale 1:5 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
 \stpDsetView{1}{-1}{1}
 \stpDsetAxis{xyz}
-\renewcommand{\stpDscale}{0.002}
+\renewcommand{\stpDscale}{0.02}
 \renewcommand{\stpDsupLen}{0.35}
 \renewcommand{\stpDhingeR}{0.9mm}
 \renewcommand{\stpDaxLen}{1.2}
@@ -118,8 +118,6 @@ const TPLS = {
   \stpDpoint{N26}{600.0000}{6000.0000}{0.0000}
   \stpDpoint{N27}{800.0000}{6000.0000}{0.0000}
   \stpDaxis{N0}
-  \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}(0.5cm)[$L_y=6000\,\mathrm{mm}$]
-  \stpDface{N21,N5,N4,N20}
   \stpDmember{beam}{N0}{N4}
   \stpDmember{beam}{N4}{N8}
   \stpDmember{beam}{N8}{N12}
@@ -180,22 +178,24 @@ const TPLS = {
   \stpDmember{beam}{N11}{N9}
   \stpDmember{beam}{N9}{N5}
   \stpDmember{beam}{N5}{N7}
-  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
-  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
   \stpDface{N21,N5,N7,N23}
   \stpDface{N23,N7,N6,N22}
+  \stpDface{N21,N5,N4,N20}
   \stpDsupport{pin}{N24}[1][0][1][0][0][0]  % BC GLOBAL[101000]
   \stpDsupport{pin}{N27}[1][0][1][0][0][0]  % BC GLOBAL[101000]
   \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
   \stpDsupport{pin}{N3}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
   \stpDpointload{N5}{0,0,-1}[0.55][$F=1000\,\mathrm{N}$]
   \stpDfaceload{N21,N5,N7,N23}{0,0,-1}[0.55][$P_{\mathrm{face}}=-1\,\mathrm{MPa}$]
   \node[stpLabel, below left=1.5mm] at (N0) {$A$};
   \node[stpLabel, below right=1.5mm] at (N3) {$B$};
   \node[stpLabel, above left=1.5mm] at (N24) {$D$};
   \node[stpLabel, above right=1.5mm] at (N27) {$C$};
-  \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}(0.5cm)[$L_x=800\,\mathrm{mm}$]
-  \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}(0.5cm)[$L_z=1200\,\mathrm{mm}$]
+  \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}[$L_x=800\,\mathrm{mm}$]
+  \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}[$L_y=6000\,\mathrm{mm}$]
+  \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}[$L_z=1200\,\mathrm{mm}$]
   % Structure mass properties (UR of current figure bbox)
   \stpStructInfo{$V=2.7\times 10^{-1}\,\mathrm{m}^{3}$}{$m=2.12\,\mathrm{t}$}
 \end{tikzpicture}`,

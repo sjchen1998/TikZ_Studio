@@ -9,11 +9,17 @@ from pathlib import Path
 import ezdxf
 from ezdxf import recover
 
+from .cae_beam_mesh import (
+    collect_beam_segs_from_msp,
+    expand_dist_loads,
+    mesh_beams,
+)
 from .cae_section_mass import (
     accumulate_from_dxf,
     emit_struct_info_tex,
     format_length_mm_tex as _fmt_len_mm,
 )
+from .cae_welds import emit_weld_tex_2d, parse_seam_welds, parse_spot_welds
 
 
 def _k(p, tol=1e-4):
@@ -87,41 +93,6 @@ def _dir_from_load_block_2d(blk) -> tuple[float, float]:
 def _parse_K(txt: str):
     m = re.search(r"K\[[^\]]*\]\s*=", txt or "")
     return bool(m)
-
-
-def _split_at_nodes(members, nodes):
-    node_list = list(nodes)
-    out = []
-    for a, b in members:
-        ax, ay = a
-        bx, by = b
-        ab = (bx - ax, by - ay)
-        ab2 = ab[0] * ab[0] + ab[1] * ab[1]
-        if ab2 < 1e-12:
-            continue
-        hits = []
-        for p in node_list:
-            if p in (a, b):
-                continue
-            ap = (p[0] - ax, p[1] - ay)
-            cross = ab[0] * ap[1] - ab[1] * ap[0]
-            if abs(cross) > 1e-2:
-                continue
-            t = (ab[0] * ap[0] + ab[1] * ap[1]) / ab2
-            if 1e-6 < t < 1 - 1e-6:
-                hits.append((t, p))
-        hits.sort()
-        chain = [a] + [p for _, p in hits] + [b]
-        for i in range(len(chain) - 1):
-            out.append((chain[i], chain[i + 1]))
-    uniq, seen = [], set()
-    for a, b in out:
-        key = tuple(sorted((a, b)))
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append((a, b))
-    return uniq
 
 
 def _nearest(nodes, p):
@@ -226,19 +197,10 @@ def dxf_to_satopdf2d(
     src = Path(path).name if path else name
 
     nodes: dict[tuple, tuple] = {}
-    raw_members: list[tuple] = []
-    for e in msp:
-        if e.dxftype() != "LINE":
-            continue
-        layer = (e.dxf.layer or "").upper()
-        if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
-            continue
-        a, b = _k(e.dxf.start), _k(e.dxf.end)
-        if a == b:
-            continue
-        nodes[a] = a
-        nodes[b] = b
-        raw_members.append((a, b))
+    beam_segs = collect_beam_segs_from_msp(msp, dim=2)
+    for s in beam_segs:
+        nodes[s.a] = s.a
+        nodes[s.b] = s.b
 
     # Beam XDATA → vis-handle map for SETPTLOAD direction
     ptload_by_vis: dict[str, tuple[float, tuple[float, float], str]] = {}
@@ -366,7 +328,47 @@ def dxf_to_satopdf2d(
                 {"p": origin, "mag": mag, "dir": direction, "unit": unit}
             )
 
-    members = _split_at_nodes(raw_members, nodes.keys())
+    # Welds — snap onto beams, then split at welds + beam intersections
+    def _k2(p):
+        return _k((p[0], p[1]))
+
+    spot_welds = parse_spot_welds(msp, _k2)
+    seam_welds = parse_seam_welds(msp, _k2)
+    weld_pts = [sw["xyz"] for sw in spot_welds]
+    for sm in seam_welds:
+        weld_pts.extend(sm["pts"])
+
+    # VIS BC / load / spring origins also force a split when they lie on a beam
+    extra_cuts = list(weld_pts)
+    for p, _mask in bcs:
+        extra_cuts.append(p)
+    for p in springs:
+        extra_cuts.append(p)
+    for pl in forces:
+        extra_cuts.append(pl["p"])
+    for p, _m in moments:
+        extra_cuts.append(p)
+
+    mesh_nodes, meshed = mesh_beams(
+        beam_segs, extra_cuts, tol=1e-2, key_tol=1e-4, dim=2
+    )
+    nodes.update(mesh_nodes)
+    # Snap weld dict coords to meshed node keys (projection may shift slightly)
+    for sw in spot_welds:
+        sw["xyz"] = _nearest(nodes.keys(), sw["xyz"]) if nodes else sw["xyz"]
+        nodes[sw["xyz"]] = sw["xyz"]
+    for sm in seam_welds:
+        sm["pts"] = [
+            _nearest(nodes.keys(), p) if nodes else p for p in sm["pts"]
+        ]
+        for p in sm["pts"]:
+            nodes[p] = p
+
+    members = [(s.a, s.b) for s in meshed]
+    # Preserve attrs on meshed segs for CAE / comments
+    member_attrs = {(s.a, s.b): s.attrs for s in meshed}
+    # q span rebound to each child: (0,0)-(1000,1000) @P → (0,0)-P and P-(1000,1000)
+    qloads = expand_dist_loads(meshed, qloads, tol=1e-2)
     ordered = sorted(nodes.keys(), key=lambda t: (t[0], t[1]))
     nid = {p: f"N{i}" for i, p in enumerate(ordered)}
 
@@ -384,7 +386,24 @@ def dxf_to_satopdf2d(
         L.append(f"  \\stpNode{{{nid[p]}}}{{{p[0]:.4f},{p[1]:.4f}}}")
 
     for a, b in members:
-        L.append(f"  \\stpMember{{beam}}{{{nid[a]}}}{{{nid[b]}}}")
+        attr = member_attrs.get((a, b))
+        kind = "rod" if (attr and attr.is_rod) else "beam"
+        notes: list[str] = []
+        if attr and attr.section:
+            notes.append(
+                f"sec={attr.section.get('type')}"
+                f" {attr.section.get('spec')}"
+                f" {attr.section.get('material')}"
+            )
+            if attr.dist_load and not attr.is_rod:
+                notes.append(f"q={attr.dist_load.get('magnitude')}")
+        if kind == "rod":
+            notes.append("kind=rod")
+        sec_note = f"  % {' '.join(notes)}" if notes else ""
+        L.append(f"  \\stpMember{{{kind}}}{{{nid[a]}}}{{{nid[b]}}}{sec_note}")
+
+    # Welds after members (above geometry, before BC/loads)
+    L.extend(emit_weld_tex_2d(spot_welds, seam_welds, nid))
 
     adj = _degree_map(members)
     for p, mask in bcs:
@@ -402,10 +421,12 @@ def dxf_to_satopdf2d(
         )
 
     for ld in qloads:
-        a = nid[_nearest(ordered, ld["a"])]
-        b = nid[_nearest(ordered, ld["b"])]
-        dx, dy, _dz = ld["dir"]
-        lab = f"$q={ld['mag']:g}$"
+        a = nid[_nearest(ordered, ld["start"])]
+        b = nid[_nearest(ordered, ld["end"])]
+        direction = ld["direction"]
+        dx = float(direction[0]) if len(direction) > 0 else 0.0
+        dy = float(direction[1]) if len(direction) > 1 else -1.0
+        lab = f"$q={ld['magnitude']:g}$"
         # Nominal spacing ~1/6 of span → 7 uniformly spaced arrows (incl. ends)
         if abs(dx) < 1e-9 and dy < 0:
             L.append(
@@ -455,7 +476,7 @@ def dxf_to_satopdf2d(
     L.append("\\end{tikzpicture}")
     note = (
         f"satopdf 2D: {len(ordered)} nodes, {len(members)} members, "
-        f"{len(forces)} point loads"
+        f"{len(forces)} point loads, spots={len(spot_welds)}, seams={len(seam_welds)}"
         f"; V={mass_info['volume_mm3']:.3g} mm3, m={mass_info['mass_kg']:.3g} kg"
         f" (beams={mass_info['n_beam']}, shells={mass_info['n_shell']})"
     )

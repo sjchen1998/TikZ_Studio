@@ -10,11 +10,17 @@ from pathlib import Path
 import ezdxf
 from ezdxf import recover
 
+from .cae_beam_mesh import (
+    collect_beam_segs_from_msp,
+    expand_dist_loads,
+    mesh_beams,
+)
 from .cae_section_mass import (
     accumulate_from_dxf,
     emit_struct_info_tex,
     format_length_mm_tex as _fmt_len_mm,
 )
+from .cae_welds import emit_weld_tex_3d, parse_seam_welds, parse_spot_welds
 from .dxf_import import _A0, _SCALE_N, _TO_CM, _sheet_scale
 
 
@@ -350,43 +356,10 @@ def _mask_to_dirs(mask: str):
     return tuple(bits)
 
 
-def _split_at_nodes(members, nodes):
-    node_list = list(nodes)
-    out = []
-    for a, b in members:
-        ax, ay, az = a
-        bx, by, bz = b
-        ab = (bx - ax, by - ay, bz - az)
-        ab2 = sum(v * v for v in ab)
-        hits = []
-        if ab2 < 1e-12:
-            continue
-        for p in node_list:
-            if p in (a, b):
-                continue
-            ap = (p[0] - ax, p[1] - ay, p[2] - az)
-            cross = (
-                ab[1] * ap[2] - ab[2] * ap[1],
-                ab[2] * ap[0] - ab[0] * ap[2],
-                ab[0] * ap[1] - ab[1] * ap[0],
-            )
-            if math.sqrt(sum(c * c for c in cross)) > 1e-3:
-                continue
-            t = sum(ab[i] * ap[i] for i in range(3)) / ab2
-            if 1e-6 < t < 1 - 1e-6:
-                hits.append((t, p))
-        hits.sort()
-        chain = [a] + [p for _, p in hits] + [b]
-        for i in range(len(chain) - 1):
-            out.append((chain[i], chain[i + 1]))
-    uniq, seen = [], set()
-    for a, b in out:
-        key = tuple(sorted((a, b)))
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append((a, b))
-    return uniq
+def _nearest3(nodes, p):
+    return min(
+        nodes, key=lambda q: sum((q[i] - p[i]) ** 2 for i in range(3))
+    )
 
 
 def dxf_to_satopdf3d(
@@ -412,17 +385,10 @@ def dxf_to_satopdf3d(
     src = Path(path).name if path else name
 
     nodes: dict[tuple, tuple] = {}
-    raw_members: list[tuple] = []
-    for e in msp:
-        if e.dxftype() != "LINE":
-            continue
-        layer = (e.dxf.layer or "").upper()
-        if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
-            continue
-        a, b = _k(e.dxf.start), _k(e.dxf.end)
-        nodes[a] = a
-        nodes[b] = b
-        raw_members.append((a, b))
+    beam_segs = collect_beam_segs_from_msp(msp, dim=3, key_tol=1e-6)
+    for s in beam_segs:
+        nodes[s.a] = s.a
+        nodes[s.b] = s.b
 
     # Shell faces (REGION / 3DFACE / MESH / …) + SETSHELLLOAD Face XDATA
     faces: list[dict] = []
@@ -592,7 +558,47 @@ def dxf_to_satopdf3d(
                 }
             )
 
-    members = _split_at_nodes(raw_members, nodes.keys())
+    # Welds + beam intersections → unit split (attrs inherited on children)
+    spot_welds = parse_spot_welds(msp, _k)
+    seam_welds = parse_seam_welds(msp, _k)
+    weld_pts = [sw["xyz"] for sw in spot_welds]
+    for sm in seam_welds:
+        weld_pts.extend(sm["pts"])
+
+    extra_cuts = list(weld_pts)
+    for p, _mask in bcs:
+        extra_cuts.append(p)
+    for pl in point_loads:
+        extra_cuts.append(pl["p"])
+
+    mesh_nodes, meshed = mesh_beams(
+        beam_segs, extra_cuts, tol=1e-2, key_tol=1e-6, dim=3
+    )
+    nodes.update(mesh_nodes)
+    for sw in spot_welds:
+        sw["xyz"] = _nearest3(nodes.keys(), sw["xyz"]) if nodes else sw["xyz"]
+        nodes[sw["xyz"]] = sw["xyz"]
+    for sm in seam_welds:
+        sm["pts"] = [
+            _nearest3(nodes.keys(), p) if nodes else p for p in sm["pts"]
+        ]
+        for p in sm["pts"]:
+            nodes[p] = p
+
+    members = [(s.a, s.b) for s in meshed]
+    member_attrs = {(s.a, s.b): s.attrs for s in meshed}
+    # q span rebound to each child segment (intensity/direction unchanged)
+    loads = [
+        {
+            "a": ld["start"],
+            "b": ld["end"],
+            "mag": ld["magnitude"],
+            "dir": tuple(ld["direction"]),
+            "label": f"$q={ld['magnitude']:g}$",
+        }
+        for ld in expand_dist_loads(meshed, loads, tol=1e-2)
+    ]
+
     ordered = sorted(nodes.keys(), key=lambda t: (t[1], t[0], t[2]))
     if not ordered:
         raise ValueError("没有可转换的结构线段或板壳面")
@@ -653,14 +659,41 @@ def dxf_to_satopdf3d(
     L.append(f"  \\stpDaxis{{{nid[ordered[0]]}}}")
 
     for a, b in members:
-        if _is_axis_aligned(a, b):
-            L.append(f"  \\stpDmember{{beam}}{{{nid[a]}}}{{{nid[b]}}}")
+        attr = member_attrs.get((a, b))
+        sec_note = ""
+        if attr and attr.section:
+            sec_note = (
+                f"  % sec={attr.section.get('type')}"
+                f" {attr.section.get('spec')}"
+                f" {attr.section.get('material')}"
+            )
+            if attr.dist_load and not attr.is_rod:
+                sec_note += f" q={attr.dist_load.get('magnitude')}"
+        if attr and attr.is_rod:
+            # Axial rod: never use beam/truss heuristic
+            if not sec_note:
+                sec_note = "  % kind=rod"
+            else:
+                sec_note += " kind=rod"
+            L.append(
+                f"  \\stpDmember{{rod}}{{{nid[a]}}}{{{nid[b]}}}{sec_note}"
+            )
+        elif _is_axis_aligned(a, b):
+            L.append(
+                f"  \\stpDmember{{beam}}{{{nid[a]}}}{{{nid[b]}}}{sec_note}"
+            )
         else:
-            L.append(f"  \\stpDmember{{truss}}{{{nid[a]}}}{{{nid[b]}}}[1][1]")
+            L.append(
+                f"  \\stpDmember{{truss}}{{{nid[a]}}}{{{nid[b]}}}[1][1]"
+                f"{sec_note}"
+            )
 
     for face in faces:
         names = ",".join(nid[p] for p in face["pts"])
         L.append(f"  \\stpDface{{{names}}}")
+
+    # Welds after faces/members (above shell fill, before BC/loads)
+    L.extend(emit_weld_tex_3d(spot_welds, seam_welds, nid))
 
     for p, mask in bcs:
         nearest = min(ordered, key=lambda q: sum((q[i] - p[i]) ** 2 for i in range(3)))
@@ -755,7 +788,8 @@ def dxf_to_satopdf3d(
     scale_note = f", scale 1:{scale_n}" if scale_n is not None else f", stpDscale={scale:g}"
     note = (
         f"satopdf 3D: {len(ordered)} nodes, {len(members)} members, "
-        f"{len(faces)} faces, {len(point_loads)} point loads, {n_fl} face loads"
+        f"{len(faces)} faces, {len(point_loads)} point loads, {n_fl} face loads, "
+        f"spots={len(spot_welds)}, seams={len(seam_welds)}"
         f"{scale_note}"
         f"; V={mass_info['volume_mm3']:.3g} mm3, m={mass_info['mass_kg']:.3g} kg"
         f" (beams={mass_info['n_beam']}, shells={mass_info['n_shell']})"

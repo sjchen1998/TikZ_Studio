@@ -1,10 +1,27 @@
 %=============================================================================
 % satopdf.sty — Structural Analysis diagrams for CAE → PDF (TikZ)
-% Version: 0.4.5 (2026-11-20)
 %
-% Materials-mechanics 2D+3D library (stanli feature parity + CAE contracts).
-% Units: mm, N, N-mm (=N/mm), N·mm, K: N-mm, KR: Nmm/rad
-% Prefix: \stp… / stp…   (no clash with stanli \sa2/\sa3)
+% Author(s): Shijin Chen <sjchen1998@gmail.com>
+% Copyright (C) 2026 Shijin Chen
+%
+% This work may be distributed and/or modified under the conditions of the
+% LaTeX Project Public License, either version 1.3c of this license or (at
+% your option) any later version. The latest version of this license is in
+%   https://www.latex-project.org/lppl.txt
+% and version 1.3c or later is part of all distributions of LaTeX version
+% 2008/05/04 or later.
+%
+% This work has the LPPL maintenance status "maintained".
+% The Current Maintainer of this work is Shijin Chen.
+%
+% This work consists of the files satopdf.sty and satopdf.pdf (documentation
+% generated from satopdf.tex).
+%
+% Version: 0.4.13 (2026-11-21)
+%
+% Independent materials-mechanics 2D+3D TikZ library for CAE → PDF diagrams
+% (LoadXData / dxf_to_satopdf contracts). Units: mm, N, N-mm (=N/mm), N·mm,
+% K: N-mm, KR: Nmm/rad. Prefix: \stp… / stp…
 % No digits in control-sequence names (TeX limitation).
 %
 % 2D: \begin{tikzpicture}[x=1mm,y=1mm]  or  \stpScaling{0.01}
@@ -13,9 +30,10 @@
 % Mass: \stpStructInfo{$V=\ldots$}{$m=\ldots$} at picture UR (bbox-relative)
 %=============================================================================
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{satopdf}[2026/11/20 v0.4.10 CAE structural diagrams]
+\ProvidesPackage{satopdf}[2026/11/21 v0.4.13 CAE structural diagrams]
 
 \RequirePackage{ifthen}
+\RequirePackage{amsmath,amssymb}
 \RequirePackage{tikz}
 \RequirePackage{pgfkeys}
 \RequirePackage{pgffor}
@@ -107,6 +125,8 @@
 \newcommand{\stpClrDeform}{magenta!55!black}
 \newcommand{\stpClrHatch}{black!65}
 \newcommand{\stpClrGray}{gray}
+\newcommand{\stpClrWeld}{violet!80!black}
+\newcommand{\stpClrRod}{blue!55!black}% dark blue axial rod (bw → black)
 % Faces / shells — fixed soft red; not affected by stpScheme
 \newcommand{\stpClrFace}{red!50!black!22}
 \newcommand{\stpClrFaceEdge}{red!60!black!45}
@@ -139,6 +159,8 @@
     \renewcommand{\stpClrAxial}{black}%
     \renewcommand{\stpClrDeform}{black}%
     \renewcommand{\stpClrHatch}{black}%
+    \renewcommand{\stpClrWeld}{black}%
+    \renewcommand{\stpClrRod}{black}%
     % must stay a single named color — styles append !20/!30/!55
     \renewcommand{\stpClrGray}{gray}%
   \else
@@ -153,6 +175,8 @@
     \renewcommand{\stpClrAxial}{brown!70!black}%
     \renewcommand{\stpClrDeform}{magenta!55!black}%
     \renewcommand{\stpClrHatch}{black!65}%
+    \renewcommand{\stpClrWeld}{violet!80!black}%
+    \renewcommand{\stpClrRod}{blue!55!black}%
     \renewcommand{\stpClrGray}{gray}%
   \fi
 }
@@ -164,7 +188,7 @@
   force length/.code={\renewcommand{\stpForceL}{#1}},
   lineload length/.code={\renewcommand{\stpLineShaft}{#1}},
   lineload count/.code={\renewcommand{\stpLineCount}{#1}},
-  % #1 = supportBasicLength; other dims scale with stanli default ratios
+  % #1 = supportBasicLength; other dims scale with fixed ratios
   %   BasicL:L:H:BasicH:Gap:HatchL:HatchH = 12:8:5:3.5:1:20:5
   support size/.code={%
     \pgfmathsetmacro{\stp@ss}{#1/12mm}%
@@ -212,6 +236,9 @@
   stpTiny/.style={line width=\stpTinyLW},
   stpMember/.style={draw=\stpClrMember, line width=\stpHugeLW, line cap=round},
   stpTruss/.style={draw=\stpClrMember, line width=\stpBigLW, line cap=round},
+  % Axial rod: same LW as truss; dark-blue (stpClrRod); thin end circles
+  stpRod/.style={draw=\stpClrRod, line width=\stpBigLW, line cap=round},
+  stpRodPin/.style={draw=\stpClrRod, line width=\stpTinyLW},
   stpGhost/.style={draw=\stpClrMember, line width=\stpNormalLW, dashed},
   stpFiber/.style={draw=\stpClrMember, line width=\stpSmallLW, dashed},
   % Point / line / moment loads: thin stroke + classic tip arrows (same as moment arc)
@@ -232,10 +259,11 @@
     decoration={coil, amplitude=\stpCoilAmp, segment length=\stpCoilSeg,
       pre length=\stpCoilPre, post length=\stpCoilPost}},
   stpTor/.style={draw=\stpClrTor, line width=\stpNormalLW},
-  stpMoment/.style={draw=\stpClrMoment, line width=\stpNormalLW},
+  % Diagram envelopes (moment/shear/axial): thin, never beam-weight
+  stpMoment/.style={draw=\stpClrMoment, line width=\stpTinyLW},
   stpMomentThin/.style={draw=\stpClrMoment, line width=\stpTinyLW},
-  stpShear/.style={draw=\stpClrShear, line width=\stpBigLW},
-  stpAxial/.style={draw=\stpClrAxial, line width=\stpBigLW},
+  stpShear/.style={draw=\stpClrShear, line width=\stpTinyLW},
+  stpAxial/.style={draw=\stpClrAxial, line width=\stpTinyLW},
   stpDeform/.style={draw=\stpClrDeform, line width=\stpHugeLW, densely dashed},
   stpHatch/.style={
     draw=\stpClrHatch, line width=\stpTinyLW, decorate,
@@ -253,6 +281,14 @@
     fill=white, fill opacity=0.88, text opacity=1,
     draw=gray!55, line width=0.3pt, rounded corners=1pt},
   stpDim/.style={draw=\stpClrMember, line width=\stpTinyLW},
+  % Spot weld: white fill + violet ring (readable on soft-red faces)
+  stpSpotWeld/.style={
+    draw=\stpClrWeld, fill=white, line width=\stpTinyLW},
+  % Seam weld: zigzag (paper mm amplitude — view/scale stable)
+  stpSeamWeld/.style={
+    draw=\stpClrWeld, line width=\stpTinyLW, line cap=round,
+    decorate, decoration={zigzag, amplitude=0.85mm, segment length=1.8mm,
+      pre length=0.5mm, post length=0.5mm}},
   % Face fill: deeper soft red + contour
   stpFace/.style={
     draw=\stpClrFaceEdge,
@@ -309,7 +345,7 @@
 
 %=============================================================================
 % Scaling & points
-% \stpScaling{factor}   — multiply subsequent point coords (stanli-compatible)
+% \stpScaling{factor}   — multiply subsequent point coords
 % \stpPoint{name}{x}{y}
 % \stpNode{name}{x,y} — alias with comma form (CAE JSON style)
 %=============================================================================
@@ -331,19 +367,54 @@
 %                  optional solid end dots mark continuous-beam joints
 %   truss        — axial-only; hinged by default; hollow circles at both ends
 %                  (same as Example.pdf / sa2hinge)
+%   rod          — axial bar (MY_CAE_MEMBER_KIND=ROD); dark-blue; LW = truss
+%                  End DOF marks: default thin full circle; for multi-beam
+%                  joints use \stpRodPin{gap}{…} (partial circle). Pass [1] on
+%                  that end of \stpMember{rod} to suppress the default full pin.
 %   ghost        — dashed member
 %   endA/endB: beam/fiber → 1 = solid end dot;
-%              truss → 0 = draw hinge (default), nonzero = suppress that end
+%              truss/rod → 0 = draw end mark (default), nonzero = suppress
 %=============================================================================
 \newcommand{\stp@hingeHollow}[1]{%
   \fill[white] (#1) circle[radius=\stpHingeR];%
   \draw[stpNormal] (#1) circle[radius=\stpHingeR];%
 }
+% Rod end pin — full thin circle (default)
+\newcommand{\stp@rodPinFull}[1]{%
+  \fill[white] (#1) circle[radius=\stpHingeR];%
+  \draw[stpRodPin] (#1) circle[radius=\stpHingeR];%
+}
+% Rod end pin — partial circle on the rod side of a multi-beam joint
+% (same geometry as \stp@hingeGap; stroke uses thin \stpClrRod)
+% #1=joint #2=beamA #3=beamB #4=rodOther (far end of the rod)
+\newcommand{\stp@rodPinGap}[4]{%
+  \pgfmathsetlengthmacro{\stp@hr}{\stpHingeR+\stpTinyLW}%
+  \xdef\stp@side{0}%
+  \path let \p{a}=(#2), \p{j}=(#1), \p{b}=(#3), \p{t}=(#4) in
+    \pgfextra{%
+      \pgfmathtruncatemacro{\stp@sidetmp}{%
+        ((\x{b}-\x{a})/1cm)*((\y{t}-\y{j})/1cm)
+        -((\y{b}-\y{a})/1cm)*((\x{t}-\x{j})/1cm) > 0 ? 1 : 0}%
+      \xdef\stp@side{\stp@sidetmp}%
+    };%
+  \begin{scope}[even odd rule]
+    \ifnum\stp@side=1
+      \clip (#1)--(#2)--($(#2)!\stp@hr!90:(#1)$)--
+        ($(#3)!\stp@hr!-90:(#1)$)--(#3)--cycle;%
+    \else
+      \clip (#1)--(#2)--($(#2)!\stp@hr!-90:(#1)$)--
+        ($(#3)!\stp@hr!90:(#1)$)--(#3)--cycle;%
+    \fi
+    \filldraw[fill=white,stpRodPin] (#1) circle[radius=\stpHingeR];%
+  \end{scope}%
+  % Restore beam chord through the joint (cover circle on the beam side)
+  \draw[stpMember] ($ (#1)!\stpHingeR!(#2)$)--(#1)--($ (#1)!\stpHingeR!(#3)$);%
+}
 
 \NewDocumentCommand{\stpMember}{m m m O{0} O{0}}{%
   \stpValidTypefalse
   \def\stp@t{#1}%
-  \def\stp@tf{fiber}\def\stp@tb{beam}\def\stp@tt{truss}\def\stp@tg{ghost}%
+  \def\stp@tf{fiber}\def\stp@tb{beam}\def\stp@tt{truss}\def\stp@tr{rod}\def\stp@tg{ghost}%
   \ifx\stp@t\stp@tf
     \draw[stpMember] (#2) -- (#3);%
     \coordinate (stp@ba) at ($ (#2)!\stpBarGap!-\stpBarAngle:(#3)$);%
@@ -357,9 +428,15 @@
   \fi
   \ifx\stp@t\stp@tt
     \draw[stpTruss] (#2) -- (#3);%
-    % Hinged ends: white-filled hollow circles over member tips (stanli hinge/1)
+    % Hinged ends: white-filled hollow circles over member tips
     \ifthenelse{\equal{#4}{0}}{\stp@hingeHollow{#2}}{}%
     \ifthenelse{\equal{#5}{0}}{\stp@hingeHollow{#3}}{}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@tr
+    \draw[stpRod] (#2) -- (#3);%
+    \ifthenelse{\equal{#4}{0}}{\stp@rodPinFull{#2}}{}%
+    \ifthenelse{\equal{#5}{0}}{\stp@rodPinFull{#3}}{}%
     \stpValidTypetrue
   \fi
   \ifx\stp@t\stp@tg
@@ -367,17 +444,42 @@
     \stpValidTypetrue
   \fi
   \ifstpValidType\else\stp@typeerr{member}{#1}\fi
-  % Optional solid end dots for beam/fiber (rigid continuity); not for truss
-  \ifx\stp@t\stp@tt\else
+  % Optional solid end dots for beam/fiber (rigid continuity); not truss/rod
+  \ifx\stp@t\stp@tt\else\ifx\stp@t\stp@tr\else
     \ifthenelse{\equal{#4}{0}}{}{\fill[color=\stpClrMember] (#2) circle (\stpHugeLW/2);}%
     \ifthenelse{\equal{#5}{0}}{}{\fill[color=\stpClrMember] (#3) circle (\stpHugeLW/2);}%
-  \fi
+  \fi\fi
 }
 % shortcuts
 \newcommand{\stpBeam}[2]{\stpMember{beam}{#1}{#2}}
 \newcommand{\stpBeamFiber}[2]{\stpMember{fiber}{#1}{#2}}
 \newcommand{\stpTruss}[2]{\stpMember{truss}{#1}{#2}}
+\newcommand{\stpRod}[2]{\stpMember{rod}{#1}{#2}}
 \newcommand{\stpGhost}[2]{\stpMember{ghost}{#1}{#2}}
+
+% \stpRodPin{full|gap}{point}[beamA][beamB][rodOther]
+%   full — thin solid hollow circle (default end mark; same as member end 0)
+%   gap  — partial circle on the rod side at a multi-beam joint
+%          (beamA–point–beamB = continuous beams; rodOther = far rod node)
+% Example:
+%   \stpMember{rod}{R1}{J}[0][1]          % suppress full pin at J
+%   \stpRodPin{gap}{J}[B1][B2][R1]        % partial pin toward the rod
+\NewDocumentCommand{\stpRodPin}{m m O{0} O{0} O{0}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@rf{full}\def\stp@rg{gap}%
+  \ifx\stp@t\stp@rf
+    \stp@rodPinFull{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@rg
+    \stp@rodPinGap{#2}{#3}{#4}{#5}%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{RodPin}{#1}\fi
+}
+\newcommand{\stpRodPinFull}[1]{\stpRodPin{full}{#1}}
+\newcommand{\stpRodPinGap}[4]{\stpRodPin{gap}{#1}[#2][#3][#4]}
 
 %=============================================================================
 % Supports — unified 2D BC command (pin/fixed share one entry; keys pick
@@ -390,16 +492,16 @@
 %   wall       hatch wall (single-member end clamp; example-frame)
 %   fixed      triangle + filled black tip (multi-member joint fixity)
 %   pin        triangle + hollow tip (hinged support)
-%   roller     sliding hinge (stanli support/2: triangle + double slide gap,
-%              no roller wheels; tip hollow by default)
-%   spring / elastic — linear elastic support (stanli support/5, zigzag)
-%   springCoil — coil spring (stanli support/5c)
+%   roller     sliding hinge (triangle + double slide gap, no roller wheels;
+%              tip hollow by default)
+%   spring / elastic — linear elastic support (zigzag)
+%   springCoil — coil spring
 %   rollerX | slider | torsion | torsionCW
 %   *Soft      same glyph without hatching (wallSoft / fixedSoft / …)
 %
 % angle: local -Y is the ground / spring axis side (degrees)
 %        0 = +global Y restraint (spring drawn downward)
-% size:  base length (default 12mm); scales triangle/gap/hatch by stanli ratios
+% size:  base length (default 12mm); scales triangle/gap/hatch by fixed ratios
 % soft:  true → omit hatching
 % fill:  black | hollow | auto
 %        auto: fixed→black, pin/roller→hollow
@@ -600,7 +702,7 @@
 }
 \newcommand{\stp@supPin}[2]{\stp@supTri{#1}{#2}{hollow}}
 
-% Sliding hinge (stanli sa2support/2): triangle + double slide gap, no roller wheels
+% Sliding hinge: triangle + double slide gap, no roller wheels
 % #2=1 hatch, #3=black|hollow (tip circle)
 \newcommand{\stp@supRoller}[3]{%
   \draw[stpNormal] (#1)
@@ -629,7 +731,7 @@
   \draw[stpBC] (#1) circle[radius=\stpSupGap/1.5];%
 }
 
-% Elastic support (stanli sa2support/5 and /5c). #2=0 zigzag, #2=1 coil.
+% Elastic support. #2=0 zigzag, #2=1 coil.
 % Local -Y is the spring axis (angle=0 → global Y restraint).
 \newcommand{\stp@supSpring}[2]{%
   \ifthenelse{\equal{#2}{0}}{%
@@ -715,11 +817,12 @@
 }
 
 % CAE two-circle BC glyph
+% Stem must keep mm units: \pgfmathsetmacro strips them → TikZ reads cm.
 \NewDocumentCommand{\stpBCMark}{m m O{}}{%
   \stp@unitxy{#2}%
-  \pgfmathsetmacro{\stp@stem}{3.2*\stpTipR}%
   \coordinate (stp@bc1) at (#1);%
-  \coordinate (stp@bc2) at ($ (#1)+({-\stp@ux*\stp@stem},{-\stp@uy*\stp@stem})$);%
+  \coordinate (stp@bc2) at
+    ($ (#1)+({-3.2*\stpTipR*\stp@ux},{-3.2*\stpTipR*\stp@uy})$);%
   \fill[white] (stp@bc1) circle[radius=\stpTipR];%
   \fill[white] (stp@bc2) circle[radius=\stpTipR];%
   \draw[stpBC] (stp@bc1) circle[radius=\stpTipR];%
@@ -736,7 +839,7 @@
 % Hinges  \stpHinge{type}{point}[…]
 %   full | gap | guide | axial | corner
 %
-% gap (stanli hinge/2 half-hinge at beam–truss joint):
+% gap (half-hinge at beam–truss joint):
 %   \stpHinge{gap}{joint}[beamA][beamB][trussOther]
 %   Half-circle is always drawn on the truss side — side is deduced from
 %   trussOther (the far end of the truss), no 0/1 orientation switch.
@@ -897,8 +1000,8 @@
 %=============================================================================
 % Line loads
 % \stpLineLoad{type}{A}{B}[endA][endB][interval][label]
-%   local  — along member normal (stanli type 1), variable ends
-%   global — global -Y (stanli type 2)
+%   local  — along member normal, variable ends
+%   global — global -Y
 %   label  — optional; same as \stpLoad; color from stpScheme
 % \stpLineLoadCAE{A}{B}{dx,dy}[label][count]
 %=============================================================================
@@ -1001,7 +1104,8 @@
 \NewDocumentCommand{\stpSpringKR}{m O{}}{%
   \fill[white] (#1) circle[radius=\stpTipR];%
   \draw[stpTor] (#1) circle[radius=\stpTipR];%
-  \draw[stpTor, -{Latex[length=1.6mm,width=1.1mm]}]
+  % Same simple -> tip as moment arcs / point loads (not Latex wedge)
+  \draw[stpTor, line width=\stpTinyLW, ->]
     (#1) ++(\stpTipR,0) arc[start angle=0,end angle=300,radius=\stpTorR*0.65];%
   \def\stp@tmp{#2}%
   \ifx\stp@tmp\stp@empty\else
@@ -1009,11 +1113,12 @@
   \fi}
 
 %=============================================================================
-% Internal force diagrams (stanli-compatible envelope)
+% Internal force diagrams (envelope)
 % \stpInternalForces{A}{B}{vA}{vB}[parabola][color][bendpos]
-% values in cm of offset (stanli convention)
+% values in cm of offset (perpendicular distance from member to diagram)
+% Stroke: thin diagram colour — never beam weight / member colour
 %=============================================================================
-\NewDocumentCommand{\stpInternalForces}{m m m m O{0} O{\stpClrMoment} O{0.6667}}{%
+\NewDocumentCommand{\stpInternalForces}{m m m m O{0} O{\stpClrShear} O{0.6667}}{%
   \coordinate (stp@ifa) at ($ (#1)!#3cm!-90:(#2)$);%
   \coordinate (stp@ifb) at ($ (#2)!#4cm!90:(#1)$);%
   \coordinate (stp@ifab) at ($ (stp@ifa)!.5!(stp@ifb)$);%
@@ -1021,18 +1126,18 @@
   \coordinate (stp@ifac) at ($ (stp@ifa)!#7!(stp@ifc)$);%
   \coordinate (stp@ifbc) at ($ (stp@ifb)!#7!(stp@ifc)$);%
   \ifthenelse{\equal{#5}{0}}{%
-    \draw[stpBig, color=#6]
+    \draw[stpShear, color=#6]
       (#1)--(stp@ifa)--(stp@ifb)--(#2);%
   }{%
-    \draw[stpBig, color=#6]
+    \draw[stpShear, color=#6]
       (#1)--(stp@ifa)
       (stp@ifa) .. controls (stp@ifac) and (stp@ifbc) .. (stp@ifb)
       (stp@ifb)--(#2);%
   }%
-  \fill[color=#6] (stp@ifa) circle (\stpBigLW/2);%
-  \fill[color=#6] (stp@ifb) circle (\stpBigLW/2);%
-  \fill[color=#6] (#1) circle (\stpBigLW/2);%
-  \fill[color=#6] (#2) circle (\stpBigLW/2);%
+  \fill[color=#6] (stp@ifa) circle (\stpTinyLW);%
+  \fill[color=#6] (stp@ifb) circle (\stpTinyLW);%
+  \fill[color=#6] (#1) circle (\stpTinyLW);%
+  \fill[color=#6] (#2) circle (\stpTinyLW);%
 }
 
 %=============================================================================
@@ -1164,7 +1269,7 @@
     % Offset may be unitless (fraction of |AB|) or a length (e.g. -5ex)
     \coordinate (stp@da) at ($ (#2)!{#4}!90:(#3)$);%
     \coordinate (stp@db) at ($ (#3)!{#4}!-90:(#2)$);%
-    % stanli-style end marks: short bar + diagonal tick
+    % End marks: short bar + diagonal tick
     \draw[stpDim]
       ($ (stp@da)!{-\stpDimBar/2}!90:(stp@db)$)--($ (stp@da)!{\stpDimBar/2}!90:(stp@db)$)
       ($ (stp@da)!{\stpDimBar/4}!45:(stp@db)$)--($ (stp@da)!{\stpDimBar/4}!225:(stp@db)$)
@@ -1318,7 +1423,7 @@
 %   \stpDsetViewDir{dx}{dy}{dz}[sx][sy][sz][ux,uy,uz]  ≡ VIEWDIR
 %   last optional = up vector (omit → use \stpDsetUp / default +Z)
 %   Y-up example: \stpDsetView{1}{-1}{1}[1][1][1][0,1,0]
-% Legacy paper-angle (stanli-style oblique):
+% Legacy paper-angle (oblique axes):
 %   \stpDsetCoords{x-ang}{y-ang}[Dx][Dy][Dz][z-ang]
 % Then: \begin{tikzpicture}[stpDCoords]
 %=============================================================================
@@ -1366,6 +1471,8 @@
   % 3D: members thin; BC rods thinner than members (never heavier than beams)
   stpDmember/.style={draw=\stpClrMember, line width=\stpNormalLW, line cap=round},
   stpDtruss/.style={draw=\stpClrMember, line width=\stpSmallLW, line cap=round},
+  stpDrod/.style={draw=\stpClrRod, line width=\stpSmallLW, line cap=round},
+  stpDrodPin/.style={draw=\stpClrRod, line width=\stpTinyLW},
   stpDghost/.style={draw=\stpClrMember, line width=\stpTinyLW, dashed},
   stpDbc/.style={draw=\stpClrGray!55, line width=\stpTinyLW},
   % Short rot-only stub (u free, r fixed): dense dashes so short rods still read as dashed
@@ -1501,7 +1608,7 @@
 }
 
 % \stpDsetCoords{x-ang}{y-ang}[Dx][Dy][Dz][z-ang]
-% Paper angles of the three axes (stanli-style oblique). Lengths are
+% Paper angles of the three axes (oblique projection). Lengths are
 % foreshortening; a negative length is folded into angle+180.
 % Right-hand rule: with z pointing “up” on the page (sin z-ang > 0),
 % +x→+y must be CCW; if the given angles are CW, y is mirrored across
@@ -1591,14 +1698,20 @@
 \def\stp@dnodeA#1#2{\stp@dnodeB#1\@nil{#2}}
 \def\stp@dnodeB#1,#2,#3\@nil#4{\stpDpoint{#4}{#1}{#2}{#3}}
 
-% \stpDmember{beam|truss|ghost}{A}{B}[endA][endB]
+% \stpDmember{beam|truss|rod|ghost}{A}{B}[endA][endB]
 %   beam: thick; optional solid end dots (1=dot)
 %   truss: medium; optional hollow hinges (0=draw default)
+%   rod: dark-blue axial; thin full DOF circles at ends by default (0);
+%        for multi-beam joints use \stpDrodPin{gap}{…} and pass [1] on that end
 %   ghost: dashed
+\newcommand{\stp@DrodPinFull}[1]{%
+  \fill[white] (#1) circle[radius=\stpDhingeR];%
+  \draw[stpDrodPin] (#1) circle[radius=\stpDhingeR];%
+}
 \NewDocumentCommand{\stpDmember}{m m m O{0} O{0}}{%
   \stpValidTypefalse
   \def\stp@t{#1}%
-  \def\stp@tb{beam}\def\stp@tt{truss}\def\stp@tg{ghost}%
+  \def\stp@tb{beam}\def\stp@tt{truss}\def\stp@tr{rod}\def\stp@tg{ghost}%
   \ifx\stp@t\stp@tb
     \draw[stpDmember] (#2)--(#3);%
     \ifthenelse{\equal{#4}{0}}{}{\fill[color=\stpClrMember] (#2) circle (\stpNormalLW/2);}%
@@ -1617,11 +1730,50 @@
     }{}%
     \stpValidTypetrue
   \fi
+  \ifx\stp@t\stp@tr
+    \draw[stpDrod] (#2)--(#3);%
+    \ifthenelse{\equal{#4}{0}}{\stp@DrodPinFull{#2}}{}%
+    \ifthenelse{\equal{#5}{0}}{\stp@DrodPinFull{#3}}{}%
+    \stpValidTypetrue
+  \fi
   \ifx\stp@t\stp@tg
     \draw[stpDghost] (#2)--(#3);%
     \stpValidTypetrue
   \fi
   \ifstpValidType\else\stp@typeerr{Dmember}{#1}\fi
+}
+\newcommand{\stpDrod}[2]{\stpDmember{rod}{#1}{#2}}
+
+% \stpDrodPin{full|gap}{point}[beamA][beamB][orient]
+%   full — thin solid hollow circle (default)
+%   gap  — partial circle; orient 0|1 selects which side (same as \stpDhinge{gap})
+\NewDocumentCommand{\stpDrodPin}{m m O{0} O{0} O{0}}{%
+  \stpValidTypefalse
+  \def\stp@t{#1}%
+  \def\stp@rf{full}\def\stp@rg{gap}%
+  \ifx\stp@t\stp@rf
+    \stp@DrodPinFull{#2}%
+    \stpValidTypetrue
+  \fi
+  \ifx\stp@t\stp@rg
+    \pgfmathsetlengthmacro{\stp@dhr}{\stpDhingeBigR+\stpTinyLW}%
+    \begin{scope}[even odd rule]
+      \begin{pgfinterruptboundingbox}
+      \ifthenelse{\equal{#5}{1}}{%
+        \clip (#2) circle (\stp@dhr)
+          (#2)--(#3)--($(#3)!\stp@dhr!-90:(#2)$)--
+          ($(#4)!\stp@dhr!90:(#2)$)--(#4)--cycle;%
+      }{%
+        \clip (#2)--(#3)--($(#3)!\stp@dhr!-90:(#2)$)--
+          ($(#4)!\stp@dhr!90:(#2)$)--(#4)--cycle;%
+      }%
+      \end{pgfinterruptboundingbox}%
+      \filldraw[fill=white,stpDrodPin] (#2) circle[radius=\stpDhingeBigR];%
+    \end{scope}%
+    \draw[stpDmember] ($ (#2)!\stpDhingeBigR!(#3)$)--(#2)--($ (#2)!\stpDhingeBigR!(#4)$);%
+    \stpValidTypetrue
+  \fi
+  \ifstpValidType\else\stp@typeerr{DrodPin}{#1}\fi
 }
 
 % \stpDaxis{point}[labX][labY][labZ]
@@ -1637,7 +1789,7 @@
 %     u≠0 → solid rod + circle (fill by r); u=0 & r≠0 → dashed stub + solid circle
 %     solid circle = rotation about that axis constrained
 %     hollow circle = rotation about that axis free
-%   fixed — plane cross (stanli /2); [plane][normal-coord] (legacy)
+%   fixed — plane cross; [plane][normal-coord] (legacy)
 % Hollow black circle at the support node (same size/LW as rot-end BC marks)
 \newcommand{\stp@DnodeMark}[1]{%
   \fill[white] (#1) circle[radius=0.5*\stpDhingeR];%
@@ -1763,7 +1915,7 @@
 }
 
 % \stpDhinge{full|gap|corner}{point}[beamA][beamB][orient]
-%   gap orient: 0 = one side, 1 = other (stanli sa3hinge/2)
+%   gap orient: 0 = one side, 1 = other
 \NewDocumentCommand{\stpDhinge}{m m O{0} O{0} O{0}}{%
   \stpValidTypefalse
   \def\stp@t{#1}%
@@ -1776,6 +1928,8 @@
   \ifx\stp@t\stp@hGap
     \pgfmathsetlengthmacro{\stp@dhr}{\stpDhingeBigR+\stpNormalLW}%
     \begin{scope}[even odd rule]
+      % Clip polygon may reference far orient points — keep them out of the bbox
+      \begin{pgfinterruptboundingbox}
       \ifthenelse{\equal{#5}{1}}{%
         \clip (#2) circle (\stp@dhr)
           (#2)--(#3)--($(#3)!\stp@dhr!-90:(#2)$)--
@@ -1784,6 +1938,7 @@
         \clip (#2)--(#3)--($(#3)!\stp@dhr!-90:(#2)$)--
           ($(#4)!\stp@dhr!90:(#2)$)--(#4)--cycle;%
       }%
+      \end{pgfinterruptboundingbox}%
       \filldraw[fill=white,stpNormal] (#2) circle[radius=\stpDhingeBigR];%
     \end{scope}%
     \draw[stpDmember] ($ (#2)!\stpDhingeBigR!(#3)$)--(#2)--($ (#2)!\stpDhingeBigR!(#4)$);%
@@ -2038,7 +2193,7 @@
     \stpDdimSeg{stp@da}{stp@db}[#7]%
   \fi
 }
-% stanli-like ticks + dimension line between two named 3D points
+% Ticks + dimension line between two named 3D points
 \NewDocumentCommand{\stpDdimSeg}{m m O{}}{%
   \draw[stpDim]
     ($ (#1)!{-\stpDimBar/2}!90:(#2)$)--($ (#1)!{\stpDimBar/2}!90:(#2)$)
@@ -2063,5 +2218,59 @@
     {#1\\[0.15em]#2};%
 }
 \newcommand{\stpDstructInfo}[2]{\stpStructInfo{#1}{#2}}
+
+%=============================================================================
+% Welds — Spot (点焊) & Seam (满焊)
+% 2D:  \stpSpotWeld{node}[radius][label]
+%      \stpSeamWeld{A}{B}[label]
+%      \stpSeamWeldPath{N1,N2,...}[label]
+% 3D:  \stpDspotWeld / \stpDseamWeld / \stpDseamWeldPath  (same args; follow view)
+% Radius / zigzag amplitude are paper mm — not scaled by \stpDscale.
+%=============================================================================
+\newcommand{\stpWeldR}{1.35mm}
+\NewDocumentCommand{\stpSpotWeld}{m O{\stpWeldR} O{}}{%
+  \fill[white] (#1) circle[radius=#2];%
+  \draw[stpSpotWeld] (#1) circle[radius=#2];%
+  \draw[draw=\stpClrWeld, line width=\stpTinyLW]
+    ($ (#1)+(-#2,0)$)--($ (#1)+(#2,0)$)
+    ($ (#1)+(0,-#2)$)--($ (#1)+(0,#2)$);%
+  \def\stp@wlab{#3}%
+  \ifx\stp@wlab\stp@empty\else
+    \node[stpLabel, text=\stpClrWeld, above right=1mm] at (#1) {#3};%
+  \fi
+}
+\NewDocumentCommand{\stpDspotWeld}{m O{\stpWeldR} O{}}{%
+  \stpSpotWeld{#1}[#2][#3]%
+}
+\NewDocumentCommand{\stpSeamWeld}{m m O{}}{%
+  \draw[stpSeamWeld] (#1)--(#2);%
+  \def\stp@wlab{#3}%
+  \ifx\stp@wlab\stp@empty\else
+    \node[stpLabel, text=\stpClrWeld, above=1.2mm] at ($ (#1)!0.5!(#2)$) {#3};%
+  \fi
+}
+\NewDocumentCommand{\stpDseamWeld}{m m O{}}{%
+  \stpSeamWeld{#1}{#2}[#3]%
+}
+\NewDocumentCommand{\stpSeamWeldPath}{m O{}}{%
+  \gdef\stp@wpath{}%
+  \foreach \stp@wp [count=\stp@wi] in {#1} {%
+    \ifnum\stp@wi=1
+      \xdef\stp@wpath{(\stp@wp)}%
+      \coordinate (stp@wmid) at (\stp@wp);%
+    \else
+      \xdef\stp@wpath{\stp@wpath--(\stp@wp)}%
+    \fi
+  }%
+  \edef\stp@wdcmd{\noexpand\draw[stpSeamWeld] \stp@wpath;}%
+  \stp@wdcmd
+  \def\stp@wlab{#2}%
+  \ifx\stp@wlab\stp@empty\else
+    \node[stpLabel, text=\stpClrWeld, above=1.2mm] at (stp@wmid) {#2};%
+  \fi
+}
+\NewDocumentCommand{\stpDseamWeldPath}{m O{}}{%
+  \stpSeamWeldPath{#1}[#2]%
+}
 
 \endinput

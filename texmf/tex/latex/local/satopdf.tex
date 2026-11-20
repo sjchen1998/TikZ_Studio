@@ -1,0 +1,1041 @@
+%%
+%% This is file `satopdf.tex',
+%% documentation for the satopdf package.
+%%
+%% Copyright (C) 2026 Shijin Chen
+%%
+%% This work may be distributed and/or modified under the conditions of the
+%% LaTeX Project Public License, either version 1.3c of this license or (at
+%% your option) any later version.
+%%
+%% Build: pdflatex satopdf && pdflatex satopdf
+%%
+\documentclass[a4paper]{ltxdoc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{satopdf}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={The satopdf package},
+  pdfauthor={Shijin Chen},
+  pdfsubject={Structural analysis diagrams for CAE to PDF (TikZ)},
+}
+
+\GetFileInfo{satopdf.sty}
+
+\title{%
+  The \textsf{satopdf} package%
+  \thanks{This file describes version~\fileversion\ from \filedate.}%
+}
+\author{%
+  Shijin Chen\\
+  \texttt{sjchen1998@gmail.com}%
+}
+\date{Printed \today\\[0.5em] Package date: \filedate\ (v\fileversion)}
+
+% Compact figure + optional caption text (standard doc style, not dual-column)
+\newcommand{\STPfig}[1]{%
+  \par\medskip
+  \begin{center}#1\end{center}%
+  \par\medskip}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The \textsf{satopdf} package is an independent TikZ-based library for drawing
+\textbf{structural analysis diagrams} for materials mechanics and CAE
+workflows (AutoCAD \texttt{LoadXData} $\rightarrow$ DXF import $\rightarrow$ PDF).
+It provides a consistent 2D/3D command set under the prefix
+\texttt{\textbackslash stp\ldots{}} for members (beam, truss, rod, fiber, ghost),
+supports, hinges, loads, springs, internal-force envelopes, dimensioning,
+welds, and shell faces.  CAE units are millimetres, newtons, and derived units
+(N-mm, N$\cdot$mm, \ldots).
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+\textsf{satopdf} draws publication-quality line figures of frames, trusses,
+axial rods, and shell sketches that accompany CAE models.  Typical uses:
+
+\begin{itemize}[nosep]
+  \item Manual TikZ figures in lecture notes and reports;
+  \item Auto-generated fragments from DXF via
+        \texttt{dxf\_to\_satopdf2d.py} / \texttt{dxf\_to\_satopdf3d.py};
+  \item Per-picture colour or black-and-white schemes.
+\end{itemize}
+
+\noindent\textbf{Licence.}
+Copyright \textcopyright\ 2026 Shijin Chen.
+Distributed under the LPPL~1.3c or later.
+The Current Maintainer is Shijin Chen.
+This work consists of \texttt{satopdf.sty} and \texttt{satopdf.pdf}
+(documentation generated from \texttt{satopdf.tex}).
+
+Control-sequence names never contain digits (TeX limitation).
+User macros use the \texttt{stp}/\texttt{stpD} prefixes.
+
+%==============================================================================
+\section{Installation and requirements}
+%==============================================================================
+
+Place \texttt{satopdf.sty} on the \TeX{} search path
+(e.g.\ \path{texmf/tex/latex/local/satopdf.sty}) and refresh the filename
+database if required.  Dependencies:
+
+\begin{itemize}[nosep]
+  \item \LaTeXe{} with \textsf{xparse} (kernel);
+  \item \textsf{tikz} with
+        \texttt{calc}, \texttt{arrows.meta},
+        \texttt{decorations.pathmorphing},
+        \texttt{decorations.pathreplacing},
+        \texttt{patterns}, \texttt{positioning},
+        \texttt{backgrounds}, \texttt{3d};
+  \item \textsf{amsmath}, \textsf{amssymb}, \textsf{ifthen}, \textsf{pgfkeys}.
+\end{itemize}
+
+\begin{verbatim}
+\usepackage{satopdf}
+\end{verbatim}
+
+There are currently \textbf{no package options}.
+Appearance is controlled by TikZ picture keys and \cs{stpset}.
+
+%==============================================================================
+\section{Getting started}
+%==============================================================================
+
+\subsection{Minimal 2D (millimetre canvas)}
+
+\begin{verbatim}
+\begin{tikzpicture}[x=1mm,y=1mm,stpScheme=color]
+  \stpNode{A}{0,0}
+  \stpNode{B}{1000,0}
+  \stpNode{C}{2000,0}
+  \stpBeam{A}{B}
+  \stpBeam{B}{C}
+  \stpSupport{A}[type=wall, angle=270]
+  \stpSupport{C}[type=pin]
+  \stpPointLoad{B}{0,-1}[$F$]
+\end{tikzpicture}
+\end{verbatim}
+
+\STPfig{%
+\begin{tikzpicture}[x=0.015mm,y=0.015mm,stpScheme=color]
+  \stpNode{A}{0,0}
+  \stpNode{B}{1000,0}
+  \stpNode{C}{2000,0}
+  \stpBeam{A}{B}
+  \stpBeam{B}{C}
+  \stpSupport{A}[type=wall, angle=270, size=8mm]
+  \stpSupport{C}[type=pin, size=8mm]
+  \stpset{force length=6mm}
+  \stpPointLoad{B}{0,-1}[$F$]
+\end{tikzpicture}}
+
+\subsection{Scaled sketch coordinates}
+
+\DescribeMacro{\stpScaling}
+\cs{stpScaling}\marg{factor} multiplies subsequent \cs{stpPoint} inputs.
+Default factor is~$1$ (TikZ centimetres).  Always set a scale when model
+numbers are large, or coordinates are treated as centimetres.
+
+\begin{verbatim}
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.08}
+  \stpPoint{A}{0}{0}
+  \stpPoint{B}{40}{0}
+  \stpBeam{A}{B}
+  \stpSupport{A}[type=pin, size=8mm]
+  \stpPointLoad{B}{0,-1}[$F$]
+\end{tikzpicture}
+\end{verbatim}
+
+\subsection{Minimal 3D}
+
+\begin{verbatim}
+\stpDsetView{1}{-1}{1}
+\renewcommand{\stpDscale}{0.08}
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{A}{0}{0}{0}
+  \stpDpoint{B}{28}{0}{0}
+  \stpDmember{beam}{A}{B}
+  \stpDaxis{A}
+\end{tikzpicture}
+\end{verbatim}
+
+\STPfig{%
+\stpDsetView{1}{-1}{1}%
+\renewcommand{\stpDscale}{0.08}%
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{A}{0}{0}{0}
+  \stpDpoint{B}{28}{0}{0}
+  \stpDmember{beam}{A}{B}
+  \stpDaxis{A}
+\end{tikzpicture}}
+
+%==============================================================================
+\section{Colour schemes and \texttt{\textbackslash stpset}}
+\label{sec:scheme}
+%==============================================================================
+
+\subsection{Picture schemes}
+
+On each \texttt{tikzpicture}, set \texttt{stpScheme=color} or
+\texttt{stpScheme=bw} (aliases \texttt{stpColor}, \texttt{stpBW},
+\texttt{mono}).  In black-and-white mode structural stroke colours become
+black.  Soft-red \textbf{shell face fills} are unchanged.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.055}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
+  \stpBeam{A}{B}
+  \stpSupport{A}[type=pin, size=8mm]
+  \stpset{force length=6mm}
+  \stpPointLoad{B}{0,-1}[$F$]
+\end{tikzpicture}
+\qquad
+\begin{tikzpicture}[stpScheme=bw]
+  \stpScaling{0.055}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
+  \stpBeam{A}{B}
+  \stpSupport{A}[type=pin, size=8mm]
+  \stpset{force length=6mm}
+  \stpPointLoad{B}{0,-1}[$F$]
+\end{tikzpicture}
+\par\smallskip
+{\footnotesize colour \qquad\qquad\qquad black-and-white}}
+
+\subsection{\cs{stpset}}
+
+\DescribeMacro{\stpset}
+\cs{stpset}\marg{key=value,\ldots} adjusts defaults under \texttt{/stp}.
+
+\begin{center}
+\begin{tabular}{@{}llp{0.42\textwidth}@{}}
+\toprule
+Key & Typical & Effect \\
+\midrule
+\texttt{scaling} & \texttt{0.08} & Same as \cs{stpScaling} \\
+\texttt{support size} & \texttt{12mm} & BC glyph base length \\
+\texttt{hinge radius} & \texttt{1.5mm} & Hinge / rod-pin radius \\
+\texttt{force length} & \texttt{10mm} & Point-load shaft \\
+\texttt{lineload length} & \texttt{11mm} & Line-load arrow length \\
+\texttt{lineload count} & \texttt{5} & Number of arrows \\
+\texttt{moment radius} & \texttt{4mm} & Couple arc radius \\
+\texttt{moment scale} & \texttt{0.015} & Envelope mm per $M$ unit \\
+\texttt{moment segments} & \texttt{16} & Envelope polyline density \\
+\texttt{deform scale} & \texttt{30} & Deformed-shape factor \\
+\texttt{scheme} & \texttt{color}/\texttt{bw} & Prefer picture key \\
+\texttt{dface shaft} & \texttt{0.55} & 3D face-load factor \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================================
+\section{Two-dimensional interface}
+\label{sec:2d}
+%==============================================================================
+
+\subsection{Points}
+
+\DescribeMacro{\stpPoint}
+\cs{stpPoint}\marg{name}\marg{x}\marg{y} defines a coordinate multiplied by
+the current \cs{stpScaling} factor.
+
+\DescribeMacro{\stpNode}
+\cs{stpNode}\marg{name}\marg{x,y} accepts CAE comma syntax.
+
+\subsection{Members}
+
+\DescribeMacro{\stpMember}
+\cs{stpMember}\marg{type}\marg{A}\marg{B}\oarg{endA}\oarg{endB}
+
+\begin{center}
+\begin{tabular}{@{}llp{0.46\textwidth}@{}}
+\toprule
+Type & Stroke & End marks \\
+\midrule
+\texttt{beam}  & Thick black & \texttt{1} = solid joint dots \\
+\texttt{fiber} & Thick + fibre & same as beam \\
+\texttt{truss} & Medium & \texttt{0} = hollow hinges (default) \\
+\texttt{rod}   & Medium dark blue & \texttt{0} = thin full pin circles;
+  nonzero suppresses (use \cs{stpRodPin}) \\
+\texttt{ghost} & Dashed & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Shortcuts: \cs{stpBeam}, \cs{stpBeamFiber}, \cs{stpTruss}, \cs{stpRod},
+\cs{stpGhost}.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.055}
+  \stpPoint{A}{0}{0}\stpPoint{B}{35}{0}
+  \stpPoint{C}{70}{0}\stpPoint{D}{105}{0}\stpPoint{E}{140}{0}
+  \stpBeam{A}{B}
+  \stpMember{fiber}{B}{C}
+  \stpTruss{C}{D}
+  \stpRod{D}{E}
+  \stpNotation{node}{A}{beam}[below]
+  \stpNotation{node}{B}{fiber}[below]
+  \stpNotation{node}{C}{truss}[below]
+  \stpNotation{node}{D}{rod}[below]
+\end{tikzpicture}}
+
+\paragraph{Rod end pins.}
+\DescribeMacro{\stpRodPin}
+\cs{stpRodPin}\marg{full\textbar gap}\marg{point}\oarg{beamA}\oarg{beamB}\oarg{rodOther}
+\begin{itemize}[nosep]
+  \item \texttt{full} --- thin hollow circle (default end mark);
+  \item \texttt{gap} --- partial circle on the rod side of a multi-beam joint.
+\end{itemize}
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.055}
+  \stpPoint{R1}{-80}{0}\stpPoint{J}{0}{0}\stpPoint{R2}{80}{0}
+  \stpPoint{B1}{0}{50}\stpPoint{B2}{0}{-50}
+  \stpMember{beam}{B1}{J}\stpMember{beam}{J}{B2}
+  \stpMember{rod}{R1}{J}[0][1]\stpMember{rod}{J}{R2}[1][0]
+  \stpRodPin{gap}{J}[B1][B2][R1]
+  \stpSupport{R1}[type=pin, size=8mm]
+  \stpSupport{R2}[type=roller, size=8mm]
+\end{tikzpicture}}
+
+\begin{verbatim}
+\stpMember{rod}{R1}{J}[0][1]
+\stpRodPin{gap}{J}[B1][B2][R1]
+\end{verbatim}
+
+\subsection{Supports and BC marks}
+
+\DescribeMacro{\stpSupport}
+\begin{verbatim}
+\stpSupport{<node>}[type=..., angle=..., size=..., soft=..., fill=..., label=...]
+\end{verbatim}
+Types: \texttt{wall}, \texttt{fixed}, \texttt{pin}, \texttt{roller},
+\texttt{rollerX}, \texttt{slider}, \texttt{spring}/\texttt{elastic},
+\texttt{springCoil}, \texttt{torsion}, \texttt{torsionCW}.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.07}
+  \stpPoint{A}{0}{0}\stpPoint{B}{25}{0}
+  \stpPoint{C}{50}{0}\stpPoint{D}{75}{0}
+  \stpPoint{E}{100}{0}\stpPoint{F}{125}{0}
+  \stpGhost{A}{B}\stpGhost{B}{C}\stpGhost{C}{D}
+  \stpGhost{D}{E}\stpGhost{E}{F}
+  \stpSupport{A}[type=wall, size=8mm]
+  \stpSupport{B}[type=fixed, size=8mm]
+  \stpSupport{C}[type=pin, size=8mm]
+  \stpSupport{D}[type=roller, size=8mm]
+  \stpSupport{E}[type=slider, size=8mm]
+  \stpSupport{F}[type=spring, size=8mm]
+\end{tikzpicture}}
+
+\DescribeMacro{\stpSupportFromMask}
+\cs{stpSupportFromMask}\marg{UXUYUZRXRYRZ}\marg{node}\oarg{angle}
+maps a six-bit CAE mask to pin, fixed, roller, or slider.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{C}{0}{0}
+  \stpPoint{T}{0}{30}
+  \stpBeam{C}{T}
+  \stpSupportFromMask{110000}{C}[0]
+\end{tikzpicture}}
+
+\DescribeMacro{\stpBCMark}
+\cs{stpBCMark}\marg{node}\marg{dx,dy}\oarg{label} --- CAE two-circle glyph
+along a unit direction (paper millimetres).
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpPoint{N}{0}{0}
+  \stpBCMark{N}{0,-1}[$BC$]
+\end{tikzpicture}}
+
+\subsection{Hinges}
+
+\DescribeMacro{\stpHinge}
+\cs{stpHinge}\marg{type}\marg{point}\oarg{\ldots}
+Types: \texttt{full}, \texttt{gap}, \texttt{guide}, \texttt{axial},
+\texttt{corner}.
+For \texttt{gap}:
+\cs{stpHinge}\texttt{\{gap\}\{J\}[beamA][beamB][trussOther]}
+draws a half-hinge on the truss/rod side.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
+  \stpPoint{C}{70}{0}\stpPoint{T}{40}{35}
+  \stpBeam{A}{B}\stpBeam{B}{C}\stpTruss{B}{T}
+  \stpHinge{full}{A}
+  \stpHinge{gap}{B}[A][C][T]
+\end{tikzpicture}}
+
+\subsection{Loads and springs}
+
+\DescribeMacro{\stpLoad}
+\cs{stpLoad}\marg{force\textbar moment\textbar momentCW}\marg{point}%
+\oarg{rot}\oarg{len/sweep}\oarg{gap/radius}\oarg{label}
+Radius arguments need an explicit unit (e.g.\ \texttt{13mm}); a bare
+\texttt{4} is interpreted as $4\,\mathrm{cm}$.
+
+\DescribeMacro{\stpPointLoad}
+\cs{stpPointLoad}\marg{point}\marg{dx,dy}\oarg{label}
+
+\DescribeMacro{\stpCouple}
+\cs{stpCouple}\marg{point}\marg{cw\textbar ccw}\oarg{label}
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{A}{0}{0}\stpPoint{B}{45}{0}\stpPoint{C}{90}{0}
+  \stpGhost{A}{B}\stpGhost{B}{C}
+  \stpset{force length=6mm}
+  \stpPointLoad{A}{0,-1}[$F$]
+  \stpLoad{moment}{B}[0][200][13mm][$M$]
+  \stpCouple{C}{ccw}[$M_c$]
+\end{tikzpicture}}
+
+\DescribeMacro{\stpLineLoad}
+\cs{stpLineLoad}\marg{local\textbar global}\marg{A}\marg{B}%
+\oarg{endA}\oarg{endB}\oarg{interval}\oarg{label}
+draws a \textbf{double-rail} envelope (inner tip rail above the member,
+outer head rail) with arrows between the rails.  Optional \texttt{endA}/
+\texttt{endB} are centimetres added to the shaft; there are \emph{no}
+tip circles on the member.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{A}{0}{0}\stpPoint{B}{50}{0}
+  \stpBeam{A}{B}
+  \stpLineLoad{global}{A}{B}[0.35][0.35][0.2][$q$]
+\end{tikzpicture}
+\par\smallskip{\footnotesize\texttt{\textbackslash stpLineLoad\{global\}\ldots}}}
+
+\DescribeMacro{\stpLineLoadCAE}
+\cs{stpLineLoadCAE}\marg{A}\marg{B}\marg{dx,dy}\oarg{label}\oarg{count}
+is the CAE vector form: tip circles sit on the member, a single rail
+connects the arrow tails, and \texttt{count} sets the number of arrows
+(default \cs{stpLineCount}).
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{A}{0}{0}\stpPoint{B}{50}{0}
+  \stpBeam{A}{B}
+  \stpLineLoadCAE{A}{B}{0,-1}[$q$][5]
+\end{tikzpicture}
+\par\smallskip{\footnotesize\texttt{\textbackslash stpLineLoadCAE}\ldots}}
+
+\DescribeMacro{\stpSpringK}
+\cs{stpSpringK}\marg{point}\marg{angle}\oarg{label}
+
+\DescribeMacro{\stpSpringKR}
+\cs{stpSpringKR}\marg{point}\oarg{label}
+(arc uses a simple \texttt{->} tip).
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpPoint{A}{0}{0}\stpPoint{B}{3}{0}
+  \stpSpringK{A}{-90}[$K$]
+  \stpSpringKR{B}[$K_R$]
+\end{tikzpicture}}
+
+\subsection{Internal forces and deformation}
+
+\DescribeMacro{\stpMomentDiagram}
+\cs{stpMomentDiagram}\oarg{qy=,scale=,label=,color=}\marg{A}\marg{B}\marg{Ms}\marg{Me}
+builds
+\[
+  M(\xi)=M_s(1-\xi)+M_e\xi-\tfrac12 q_y L^2\xi(1-\xi),
+\]
+where $L$ is the drawn member length in millimetres and offsets are
+$M\cdot\texttt{scale}$ in millimetres.  Verticals at the ends close the
+envelope to the beam; they are not extra kinks in $M(x)$.
+Diagram strokes use thin \texttt{stpMoment}/\texttt{stpShear} styles
+(never beam weight).
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.06}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
+  \stpBeam{A}{B}
+  \stpMomentDiagram[qy=0.08,scale=1.2]{A}{B}{0}{0}
+\end{tikzpicture}}
+
+\DescribeMacro{\stpInternalForces}
+\cs{stpInternalForces}\marg{A}\marg{B}\marg{vA}\marg{vB}\oarg{parabola}%
+\oarg{color}\oarg{bendpos}
+--- offsets in centimetres of paper.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.06}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
+  \stpBeam{A}{B}
+  \stpInternalForces{A}{B}{0.55}{-0.4}[0][\stpClrShear]
+\end{tikzpicture}}
+
+\DescribeMacro{\stpDeform}
+\cs{stpDeform}\marg{A}\marg{B}\marg{uxA,uyA}\marg{uxB,uyB}\oarg{scale}
+displacements are multiplied by the deform scale (default~$30$).
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.06}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
+  \stpBeam{A}{B}
+  \stpDeform{A}{B}{0,0}{0,-0.12}[1]
+\end{tikzpicture}}
+
+\subsection{Dimensioning and notation}
+
+\DescribeMacro{\stpDimensioning}
+\cs{stpDimensioning}\marg{horiz\textbar vert\textbar parallel}\marg{A}\marg{B}%
+\marg{offset}\oarg{label}
+--- \texttt{horiz}/\texttt{vert} offsets are absolute TikZ coordinates.
+
+\DescribeMacro{\stpDimX}\DescribeMacro{\stpDimY}
+Envelope dimensions with optional paper $\Delta$ in parentheses.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{SW}{0}{0}\stpPoint{SE}{40}{0}
+  \stpPoint{NW}{0}{25}\stpPoint{NE}{40}{25}
+  \stpGhost{SW}{SE}\stpGhost{SE}{NE}\stpGhost{NE}{NW}\stpGhost{NW}{SW}
+  \stpDimX{SW}{SE}(0.35cm)[$L_x$]
+  \stpDimY{SW}{NW}[$L_y$]
+\end{tikzpicture}}
+
+\DescribeMacro{\stpNotation}
+\DescribeMacro{\stpTemperature}
+\DescribeMacro{\stpInfluenceLine}
+\DescribeMacro{\stpAddon}
+\DescribeMacro{\stpAxisXY}
+Auxiliary annotations.
+
+\subsection{Welds and mass box}
+
+\DescribeMacro{\stpSpotWeld}
+\cs{stpSpotWeld}\marg{node}\oarg{radius}\oarg{label}
+
+\DescribeMacro{\stpSeamWeld}
+\cs{stpSeamWeld}\marg{A}\marg{B}\oarg{label}
+
+\DescribeMacro{\stpSeamWeldPath}
+\cs{stpSeamWeldPath}\marg{N1,N2,\ldots}\oarg{label}
+
+Weld colour is \cs{stpClrWeld}.  Radii are paper millimetres.
+
+\STPfig{%
+\begin{tikzpicture}[stpScheme=color]
+  \stpScaling{0.065}
+  \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}\stpPoint{C}{20}{25}
+  \stpBeam{A}{B}\stpBeam{B}{C}
+  \stpSpotWeld{B}[\stpWeldR][$w$]
+  \stpSeamWeld{A}{B}
+\end{tikzpicture}}
+
+\DescribeMacro{\stpStructInfo}
+\cs{stpStructInfo}\marg{$V=\ldots$}\marg{$m=\ldots$}
+places a small box at the upper-right of the current picture bbox.
+
+\DescribeMacro{\stpFace}
+\cs{stpFace}\marg{N1,N2,\ldots} --- soft-red 2D plate fill
+(scheme-independent).
+
+%==============================================================================
+\section{Three-dimensional interface}
+\label{sec:3d}
+%==============================================================================
+
+\subsection{View and coordinates}
+
+Call \textbf{before} \texttt{\textbackslash begin\{tikzpicture\}}:
+
+\DescribeMacro{\stpDsetView}
+\cs{stpDsetView}\marg{vx}\marg{vy}\marg{vz}\oarg{\ldots}
+--- AutoCAD-style VPOINT.
+
+\DescribeMacro{\stpDsetViewDir}
+Alternative direction setter.
+
+\DescribeMacro{\stpDsetCoords}
+\cs{stpDsetCoords}\marg{x-ang}\marg{y-ang}\oarg{Dx}\oarg{Dy}\oarg{Dz}\oarg{z-ang}
+--- legacy paper-angle oblique projection.
+
+\DescribeMacro{\stpDsetAxis}
+\cs{stpDsetAxis}\marg{xyz\textbar XYZ\textbar custom}\oarg{labels\ldots}
+
+\DescribeMacro{\stpInitDimDelta}
+Initialises paper $\Delta$ for envelope dimensions (run outside the
+picture, before \texttt{tikzpicture}).
+
+Picture options: \texttt{[stpDCoords,stpScheme=color]}.
+Scale model units with \cs{stpDscale}.
+
+\subsection{Points and members}
+
+\DescribeMacro{\stpDpoint}
+\cs{stpDpoint}\marg{name}\marg{x}\marg{y}\marg{z}
+
+\DescribeMacro{\stpDnode}
+\cs{stpDnode}\marg{name}\marg{x,y,z}
+
+\DescribeMacro{\stpDmember}
+\cs{stpDmember}\marg{beam\textbar truss\textbar rod\textbar ghost}\marg{A}\marg{B}%
+\oarg{endA}\oarg{endB}
+
+Shortcut: \cs{stpDrod}.
+
+\DescribeMacro{\stpDrodPin}
+\cs{stpDrodPin}\marg{full\textbar gap}\marg{point}\oarg{beamA}\oarg{beamB}\oarg{orient}
+
+\DescribeMacro{\stpDaxis}
+\cs{stpDaxis}\marg{point}\oarg{labX}\oarg{labY}\oarg{labZ}
+
+\STPfig{%
+\stpDsetView{1}{-1}{1}%
+\renewcommand{\stpDscale}{0.08}%
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{R1}{-10}{0}{0}\stpDpoint{J}{0}{0}{0}
+  \stpDpoint{R2}{10}{0}{0}\stpDpoint{B1}{0}{12}{0}\stpDpoint{B2}{0}{-12}{0}
+  \stpDmember{beam}{B1}{J}\stpDmember{beam}{J}{B2}
+  \stpDmember{rod}{R1}{J}[0][1]\stpDmember{rod}{J}{R2}[1][0]
+  \stpDrodPin{gap}{J}[B1][B2][0]
+\end{tikzpicture}}
+
+\subsection{Supports, hinges, loads, faces}
+
+\DescribeMacro{\stpDsupport}
+\cs{stpDsupport}\marg{pin\textbar wall\textbar spring\textbar fork\textbar fixed}%
+\marg{point}\oarg{ux}\oarg{uy}\oarg{uz}\oarg{rx}\oarg{ry}\oarg{rz}
+
+\DescribeMacro{\stpDhinge}
+\cs{stpDhinge}\marg{full\textbar gap\textbar corner}\marg{point}\oarg{\ldots}
+For \texttt{gap}, pass named nearby points (not raw \texttt{0,15,0} model
+coordinates) so the clip path does not inflate the bounding box.
+
+\STPfig{%
+\stpDsetView{1}{-1}{1}%
+\renewcommand{\stpDscale}{0.08}%
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{A}{0}{0}{0}\stpDpoint{B}{28}{0}{0}
+  \stpDpoint{G}{28}{6}{0}
+  \stpDmember{beam}{A}{B}
+  \stpDhinge{full}{A}
+  \stpDhinge{gap}{B}[A][G][0]
+\end{tikzpicture}}
+
+\DescribeMacro{\stpDlineload}
+\cs{stpDlineload}\marg{A}\marg{B}\oarg{dx,dy,dz}\oarg{count}\oarg{shaft}\oarg{label}
+draws the same \textbf{tip rail + head rail} comb as \cs{stpLineLoad}
+(not the CAE tip-circle style).
+
+\DescribeMacro{\stpDpointload}
+\DescribeMacro{\stpDface}
+\cs{stpDface}\marg{N1,N2,\ldots} --- soft-red shell fill.
+
+\DescribeMacro{\stpDfaceload}
+Face pressure / traction glyph.
+
+\STPfig{%
+\stpDsetView{1}{-1}{1}%
+\renewcommand{\stpDscale}{0.08}%
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{A}{0}{0}{0}\stpDpoint{B}{30}{0}{0}
+  \stpDmember{beam}{A}{B}
+  \stpDlineload{A}{B}[0,0,-1][4][0.5][$q$]
+\end{tikzpicture}
+\par\smallskip{\footnotesize\texttt{\textbackslash stpDlineload} (tip+head rails)}}
+
+\subsection{3D dimensions and welds}
+
+\DescribeMacro{\stpDdimEnv}
+\cs{stpDdimEnv}\marg{x\textbar y\textbar z}\marg{x0}\marg{y0}\marg{z0}\marg{L}%
+\oarg{$\Delta$}\oarg{label}
+
+\DescribeMacro{\stpDdimSeg}
+\DescribeMacro{\stpDspotWeld}
+\DescribeMacro{\stpDseamWeld}
+\DescribeMacro{\stpDseamWeldPath}
+Same roles as the 2D weld commands; follow the current view.
+
+\DescribeMacro{\stpDstructInfo}
+Alias of \cs{stpStructInfo}.
+
+%==============================================================================
+\section{Complete examples}
+\label{sec:examples}
+%==============================================================================
+
+\subsection{2D SA template (\texttt{satopdf-frame.tex} / \texttt{2d\_example.dxf})}
+
+The TikZ Studio 2D structural-analysis template (also written as
+\texttt{satopdf-frame.tex}):
+
+\STPfig{%
+\begin{tikzpicture}[x=0.09mm,y=0.09mm,stpScheme=color]
+  \stpset{support size=12mm, hinge radius=1.5mm}
+  \stpNode{N0}{50.9619,0.0000}
+  \stpNode{N1}{350.9619,0.0000}
+  \stpNode{N2}{350.9619,116.6667}
+  \stpNode{N3}{650.9619,0.0000}
+  \stpNode{N4}{650.9619,233.3333}
+  \stpNode{N5}{950.9619,0.0000}
+  \stpNode{N6}{950.9619,350.0000}
+  \stpNode{N7}{1250.9619,0.0000}
+  \stpNode{N8}{1250.9619,180.0000}
+  \stpMember{beam}{N6}{N5}
+  \stpMember{beam}{N5}{N8}
+  \stpMember{beam}{N5}{N7}
+  \stpMember{beam}{N8}{N6}
+  \stpMember{beam}{N4}{N3}
+  \stpMember{beam}{N2}{N1}
+  \stpMember{beam}{N0}{N1}
+  \stpMember{beam}{N1}{N3}
+  \stpMember{beam}{N3}{N5}
+  \stpMember{beam}{N6}{N0}
+  \stpMember{beam}{N5}{N4}
+  \stpMember{beam}{N3}{N2}
+  \stpMember{beam}{N8}{N7}
+  \stpSupport{N0}[type=fixed, angle=0, size=12mm]
+  \stpSupport{N7}[type=roller, angle=0, size=12mm]
+  \stpLineLoad{global}{N6}{N0}[0.85][0.85][0.1667][$q=10$]
+  \stpLoad{moment}{N8}[30][200][0][$M=1000$]
+  \stpNode{DimSW}{50.9619,0.0000}
+  \stpNode{DimSE}{1250.9619,0.0000}
+  \stpNode{DimNW}{50.9619,350.0000}
+  \stpDimX{DimSW}{DimSE}[$L_x=1200\,\mathrm{mm}$]
+  \stpDimY{DimSW}{DimNW}[$L_y=350\,\mathrm{mm}$]
+  \stpStructInfo{$V=8.72\times 10^{-3}\,\mathrm{m}^{3}$}{$m=68.5\,\mathrm{kg}$}
+\end{tikzpicture}}
+
+\begin{verbatim}
+\begin{tikzpicture}[x=0.117mm,y=0.117mm,stpScheme=color]
+  \stpset{support size=12mm, hinge radius=1.5mm}
+  \stpNode{N0}{50.9619,0.0000}
+  ...
+  \stpMember{beam}{N6}{N0}
+  \stpSupport{N0}[type=fixed, angle=0, size=12mm]
+  \stpSupport{N7}[type=roller, angle=0, size=12mm]
+  \stpLineLoad{global}{N6}{N0}[0.85][0.85][0.1667][$q=10$]
+  \stpLoad{moment}{N8}[30][200][0][$M=1000$]
+  \stpDimX{DimSW}{DimSE}[$L_x=1200\,\mathrm{mm}$]
+  \stpStructInfo{$V=\ldots$}{$m=\ldots$}
+\end{tikzpicture}
+\end{verbatim}
+
+\subsection{3D SA template (\texttt{satopdf-SA3D.tex} / \texttt{3d\_example.dxf})}
+
+The TikZ Studio 3D structural-analysis template with
+\texttt{\textbackslash stpDscale}=0.002:
+
+\STPfig{%
+% Drawing scale 1:5 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
+\stpDsetView{1}{-1}{1}
+\stpDsetAxis{xyz}
+\renewcommand{\stpDscale}{0.002}
+\renewcommand{\stpDsupLen}{0.35}
+\renewcommand{\stpDhingeR}{0.9mm}
+\renewcommand{\stpDaxLen}{1.2}
+% Δ before tikzpicture (nullfont inside would zero char height)
+\stpInitDimDelta
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{N0}{0.0000}{0.0000}{0.0000}
+  \stpDpoint{N1}{200.0000}{0.0000}{0.0000}
+  \stpDpoint{N2}{600.0000}{0.0000}{0.0000}
+  \stpDpoint{N3}{800.0000}{0.0000}{0.0000}
+  \stpDpoint{N4}{0.0000}{1000.0000}{0.0000}
+  \stpDpoint{N5}{0.0000}{1000.0000}{1200.0000}
+  \stpDpoint{N6}{800.0000}{1000.0000}{0.0000}
+  \stpDpoint{N7}{800.0000}{1000.0000}{1200.0000}
+  \stpDpoint{N8}{0.0000}{2000.0000}{0.0000}
+  \stpDpoint{N9}{0.0000}{2000.0000}{1200.0000}
+  \stpDpoint{N10}{800.0000}{2000.0000}{0.0000}
+  \stpDpoint{N11}{800.0000}{2000.0000}{1200.0000}
+  \stpDpoint{N12}{0.0000}{3000.0000}{0.0000}
+  \stpDpoint{N13}{0.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N14}{800.0000}{3000.0000}{0.0000}
+  \stpDpoint{N15}{800.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N16}{0.0000}{4000.0000}{0.0000}
+  \stpDpoint{N17}{0.0000}{4000.0000}{1200.0000}
+  \stpDpoint{N18}{800.0000}{4000.0000}{0.0000}
+  \stpDpoint{N19}{800.0000}{4000.0000}{1200.0000}
+  \stpDpoint{N20}{0.0000}{5000.0000}{0.0000}
+  \stpDpoint{N21}{0.0000}{5000.0000}{1200.0000}
+  \stpDpoint{N22}{800.0000}{5000.0000}{0.0000}
+  \stpDpoint{N23}{800.0000}{5000.0000}{1200.0000}
+  \stpDpoint{N24}{0.0000}{6000.0000}{0.0000}
+  \stpDpoint{N25}{200.0000}{6000.0000}{0.0000}
+  \stpDpoint{N26}{600.0000}{6000.0000}{0.0000}
+  \stpDpoint{N27}{800.0000}{6000.0000}{0.0000}
+  \stpDaxis{N0}
+  \stpDmember{beam}{N0}{N4}
+  \stpDmember{beam}{N4}{N8}
+  \stpDmember{beam}{N8}{N12}
+  \stpDmember{beam}{N12}{N16}
+  \stpDmember{beam}{N16}{N20}
+  \stpDmember{beam}{N20}{N24}
+  \stpDmember{beam}{N4}{N5}
+  \stpDmember{beam}{N8}{N9}
+  \stpDmember{beam}{N12}{N13}
+  \stpDmember{beam}{N16}{N17}
+  \stpDmember{beam}{N20}{N21}
+  \stpDmember{truss}{N0}{N5}[1][1]
+  \stpDmember{beam}{N9}{N13}
+  \stpDmember{beam}{N13}{N17}
+  \stpDmember{beam}{N17}{N21}
+  \stpDmember{truss}{N21}{N24}[1][1]
+  \stpDmember{beam}{N3}{N6}
+  \stpDmember{beam}{N6}{N10}
+  \stpDmember{beam}{N10}{N14}
+  \stpDmember{beam}{N14}{N18}
+  \stpDmember{beam}{N18}{N22}
+  \stpDmember{beam}{N22}{N27}
+  \stpDmember{beam}{N6}{N7}
+  \stpDmember{beam}{N10}{N11}
+  \stpDmember{beam}{N14}{N15}
+  \stpDmember{beam}{N18}{N19}
+  \stpDmember{beam}{N22}{N23}
+  \stpDmember{truss}{N3}{N7}[1][1]
+  \stpDmember{beam}{N11}{N15}
+  \stpDmember{beam}{N15}{N19}
+  \stpDmember{beam}{N19}{N23}
+  \stpDmember{truss}{N23}{N27}[1][1]
+  \stpDmember{beam}{N0}{N1}
+  \stpDmember{beam}{N1}{N2}
+  \stpDmember{beam}{N2}{N3}
+  \stpDmember{beam}{N4}{N6}
+  \stpDmember{beam}{N8}{N10}
+  \stpDmember{beam}{N12}{N14}
+  \stpDmember{beam}{N16}{N18}
+  \stpDmember{beam}{N21}{N23}
+  \stpDmember{beam}{N17}{N19}
+  \stpDmember{beam}{N20}{N22}
+  \stpDmember{beam}{N24}{N25}
+  \stpDmember{beam}{N25}{N26}
+  \stpDmember{beam}{N26}{N27}
+  \stpDmember{beam}{N13}{N15}
+  \stpDmember{truss}{N7}{N10}[1][1]
+  \stpDmember{truss}{N10}{N15}[1][1]
+  \stpDmember{truss}{N15}{N18}[1][1]
+  \stpDmember{truss}{N18}{N23}[1][1]
+  \stpDmember{truss}{N5}{N8}[1][1]
+  \stpDmember{truss}{N8}{N13}[1][1]
+  \stpDmember{truss}{N13}{N16}[1][1]
+  \stpDmember{truss}{N16}{N21}[1][1]
+  \stpDmember{beam}{N1}{N25}
+  \stpDmember{beam}{N2}{N26}
+  \stpDmember{beam}{N7}{N11}
+  \stpDmember{beam}{N11}{N9}
+  \stpDmember{beam}{N9}{N5}
+  \stpDmember{beam}{N5}{N7}
+  \stpDface{N21,N5,N7,N23}
+  \stpDface{N23,N7,N6,N22}
+  \stpDface{N21,N5,N4,N20}
+  \stpDsupport{pin}{N24}[1][0][1][0][0][0]  % BC GLOBAL[101000]
+  \stpDsupport{pin}{N27}[1][0][1][0][0][0]  % BC GLOBAL[101000]
+  \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDsupport{pin}{N3}[1][1][1][1][1][1]  % BC GLOBAL[111111]
+  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDpointload{N5}{0,0,-1}[0.55][$F=1000\,\mathrm{N}$]
+  \stpDfaceload{N21,N5,N7,N23}{0,0,-1}[0.55][$P_{\mathrm{face}}=-1\,\mathrm{MPa}$]
+  \node[stpLabel, below left=1.5mm] at (N0) {$A$};
+  \node[stpLabel, below right=1.5mm] at (N3) {$B$};
+  \node[stpLabel, above left=1.5mm] at (N24) {$D$};
+  \node[stpLabel, above right=1.5mm] at (N27) {$C$};
+  \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}[$L_x=800\,\mathrm{mm}$]
+  \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}[$L_y=6000\,\mathrm{mm}$]
+  \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}[$L_z=1200\,\mathrm{mm}$]
+  % Structure mass properties (UR of current figure bbox)
+  \stpStructInfo{$V=2.7\times 10^{-1}\,\mathrm{m}^{3}$}{$m=2.12\,\mathrm{t}$}
+\end{tikzpicture}
+}
+
+\begin{verbatim}
+\stpDsetView{1}{-1}{1}
+\stpDsetAxis{xyz}
+\renewcommand{\stpDscale}{0.002}
+\stpInitDimDelta
+\begin{tikzpicture}[stpDCoords,stpScheme=color]
+  \stpDpoint{N0}{0}{0}{0}
+  ...
+  \stpDmember{beam}{N0}{N4}
+  \stpDface{N21,N5,N7,N23}
+  \stpDsupport{pin}{N0}[1][1][1][1][1][1]
+  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDfaceload{N21,N5,N7,N23}{0,0,-1}[0.55][$P_{\mathrm{face}}$]
+  \stpDdimEnv{y}{0}{0}{0}{6000}[$L_y=6000\,\mathrm{mm}$]
+  \stpStructInfo{$V=\ldots$}{$m=\ldots$}
+\end{tikzpicture}
+\end{verbatim}
+
+\subsection{Distribution examples}
+
+Further sources next to the package:
+
+\begin{itemize}[nosep]
+  \item \texttt{satopdf-frame.tex} --- 2D SA template (above);
+  \item \texttt{satopdf-example-2d.tex} --- additional 2D gallery;
+  \item \texttt{satopdf-SA3D.tex} --- 3D SA template (above);
+  \item \texttt{satopdf-frame-3d.tex} --- additional 3D demo;
+  \item \texttt{satopdf-face-demo.tex} --- shell faces.
+\end{itemize}
+
+%==============================================================================
+\section{CAE / DXF conventions}
+\label{sec:cae}
+%==============================================================================
+
+Python importers emit \textsf{satopdf} fragments from DXF entities tagged by
+\texttt{LoadXData.lsp}:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+XData / concept & Drawing effect \\
+\midrule
+\texttt{MY\_CAE\_MEMBER\_KIND=ROD} &
+  \texttt{\textbackslash stpMember\{rod\}} / \texttt{\textbackslash stpDmember\{rod\}} \\
+\texttt{MY\_CAE\_SEC} & Section; rods drop orient/offset \\
+\texttt{MY\_CAE\_LOAD} & Distributed $q$ (beams; span follows mesh) \\
+\texttt{MY\_CAE\_POINT\_LOAD} & \cs{stpPointLoad} / \cs{stpDpointload} \\
+\texttt{MY\_CAE\_BC} & Supports / \cs{stpDsupport} \\
+\texttt{MY\_CAE\_SPOT\_WELD} / \texttt{SEAM} & Weld macros \\
+Beam intersections \& mid-span welds &
+  Split beams; \textbf{rods never split} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Drawing heuristic (non-rod 3D only): axis-aligned segments draw as
+\texttt{beam}; skewed as \texttt{truss}.  This is visual only, not an FE
+classification.  Explicit \texttt{ROD} XData always selects \texttt{rod}.
+
+%==============================================================================
+\section{Units}
+\label{sec:units}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item Geometry in the CAE pipeline: \textbf{mm};
+  \item Forces: \textbf{N} (point); distributed often \textbf{N-mm}
+        ($\equiv$~N/mm);
+  \item Moments: \textbf{N$\cdot$mm};
+  \item Springs: $K$ in N-mm, $K_R$ in Nmm/rad.
+\end{itemize}
+
+Paper sizes of hinges, weld marks, and tip circles are millimetres of
+drawing paper and are independent of \cs{stpDscale}.
+
+%==============================================================================
+\section{Parameter defaults}
+\label{sec:params}
+%==============================================================================
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Macro / key & Default \\
+\midrule
+\cs{stpHugeLW} / member & $2.0\,\mathrm{pt}$ \\
+\cs{stpTipR} & $1.35\,\mathrm{mm}$ \\
+\cs{stpForceL} & $10\,\mathrm{mm}$ \\
+\cs{stpHingeR} & $1.5\,\mathrm{mm}$ \\
+\cs{stpMomScale} & $0.015$ \\
+\cs{stpDefScale} & $30$ \\
+\cs{stpDimOff} & $1.6\,\mathrm{cm}$ \\
+\cs{stpDscale} & $1$ \\
+\cs{stpFaceOpacity} & $0.45$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================================
+\section{Command summary}
+\label{sec:summary}
+%==============================================================================
+
+{\small
+\begin{longtable}{@{}p{0.42\textwidth}p{0.50\textwidth}@{}}
+\toprule
+Command & Role \\
+\midrule
+\endfirsthead
+\toprule
+Command & Role \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\cs{stpset} & Global keys \\
+\cs{stpScaling} & 2D input scale \\
+\cs{stpPoint}, \cs{stpNode} & 2D points \\
+\cs{stpMember}, \cs{stpBeam}, \cs{stpTruss}, \cs{stpRod}, \ldots & 2D members \\
+\cs{stpRodPin} & Rod end full/gap pins \\
+\cs{stpSupport}, \cs{stpSupportFromMask}, \cs{stpBCMark} & 2D BC \\
+\cs{stpHinge} & 2D hinges \\
+\cs{stpLoad}, \cs{stpPointLoad}, \cs{stpCouple} & Point loads / couples \\
+\cs{stpLineLoad}, \cs{stpLineLoadCAE} & Line loads \\
+\cs{stpSpringK}, \cs{stpSpringKR} & Springs \\
+\cs{stpInternalForces}, \cs{stpMomentDiagram}, \cs{stpDeform} & Diagrams \\
+\cs{stpDimensioning}, \cs{stpDimX}, \cs{stpDimY} & Dimensions \\
+\cs{stpSpotWeld}, \cs{stpSeamWeld}, \cs{stpSeamWeldPath} & 2D welds \\
+\cs{stpFace}, \cs{stpStructInfo} & Faces / $V$/$m$ box \\
+\cs{stpDsetView}, \cs{stpDsetCoords}, \cs{stpDsetAxis} & 3D view \\
+\cs{stpInitDimDelta} & 3D dim $\Delta$ init \\
+\cs{stpDpoint}, \cs{stpDnode}, \cs{stpDmember}, \cs{stpDrod} & 3D geometry \\
+\cs{stpDrodPin} & 3D rod pins \\
+\cs{stpDsupport}, \cs{stpDhinge} & 3D BC / hinges \\
+\cs{stpDlineload}, \cs{stpDpointload}, \cs{stpDfaceload} & 3D loads \\
+\cs{stpDface} & Shell faces \\
+\cs{stpDdimEnv}, \cs{stpDdimSeg} & 3D dimensions \\
+\cs{stpDspotWeld}, \cs{stpDseamWeld}, \ldots & 3D welds \\
+\end{longtable}
+}
+
+%==============================================================================
+\section{Change history}
+\label{sec:changes}
+%==============================================================================
+
+\begin{description}
+  \item[v0.4.13 (2026-11-21)]
+        Rod end options \cs{stpRodPin}/\cs{stpDrodPin} (\texttt{full}/\texttt{gap});
+        thin diagram strokes; BC-mark unit fix; documentation \texttt{satopdf.pdf}.
+  \item[v0.4.12]
+        Independent package header; author \& LPPL copyright;
+        removed legacy third-party attribution comments.
+  \item[v0.4.11]
+        Welds, dim $\Delta$ hooks, rod member type foundations.
+  \item[earlier]
+        2D/3D core, supports, loads, shells, CAE contracts.
+\end{description}
+
+\end{document}
