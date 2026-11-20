@@ -1,0 +1,387 @@
+%%
+%% This is file `TikZ_Studio_cn.tex',
+%% 中文使用说明：TikZ Studio（含编辑操作详解）。
+%%
+%% Copyright (C) 2026 Shijin Chen
+%%
+%% Build: xelatex TikZ_Studio_cn && xelatex TikZ_Studio_cn
+%%
+\documentclass[a4paper]{ltxdoc}
+\usepackage[UTF8,fontset=windows,scheme=plain]{ctex}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={TikZ Studio 使用说明（中文）},
+  pdfauthor={Shijin Chen},
+  pdfsubject={本机 TikZ / circuitikz 可视化编辑器},
+}
+
+\newcommand{\fileversion}{2026-11}
+\newcommand{\filedate}{2026-11-21}
+\newcommand{\appname}{\textsf{TikZ Studio}}
+\newcommand{\ui}[1]{\textbf{#1}}
+\newcommand{\key}[1]{\texttt{#1}}
+
+\title{%
+  \appname\ 使用说明%
+  \thanks{本文档对应版本~\fileversion{}（\filedate）。}%
+}
+\author{%
+  Shijin Chen\\
+  \texttt{sjchen1998@gmail.com}%
+}
+\date{排版日期：\today\\[0.5em] 文档日期：\filedate{}（v\fileversion）}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\appname\ 是本机桌面 / 浏览器应用，用于编辑 \textbf{TikZ} 与
+\textbf{circuitikz}。左侧源码，右侧 XeLaTeX / pdfLaTeX 预览。
+可在画布上点选放置元件、拖动红点改坐标、框选后整体变换、事后改尺寸样式，
+并把 DXF 导入为几何或 \textsf{satopdf} 结构图。本文重点说明\textbf{如何编辑}。
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+%==============================================================================
+\section{引言}
+%==============================================================================
+
+\appname\ 面向讲义、报告与本机 CAE$\rightarrow$PDF 流程。
+许可：GPL-3.0（\texttt{LICENSE}）。
+Copyright \textcopyright\ 2026 Shijin Chen。
+
+仓库相关工具：\path{lisp/LoadXData.lsp}（AutoCAD 标注）、
+\path{texmf/tex/latex/local/satopdf.sty}（结构分析 TikZ）。
+
+%==============================================================================
+\section{安装与启动}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item Python~3；\texttt{pip install -r requirements.txt}
+        （\texttt{fastapi}、\texttt{uvicorn}、\texttt{python-multipart}、
+        \texttt{pymupdf}、\texttt{pywebview}、\texttt{ezdxf}）；
+  \item TeX~Live，含 XeLaTeX、pdfLaTeX、\textsf{ctex}、\textsf{circuitikz}、
+        \textsf{tikz-3dplot}、\textsf{pgfplots}；
+  \item 工程内 \textsf{satopdf}：\path{texmf/tex/latex/local/}。
+\end{itemize}
+
+\begin{verbatim}
+python -m tikzstudio          # 桌面窗口（推荐）
+python -m tikzstudio.server   # 仅网页 → http://127.0.0.1:8765
+\end{verbatim}
+也可双击 \path{start_tikz_studio.bat}（始终从脚本所在目录启动）。
+
+%==============================================================================
+\section{界面分区}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{左 --- 工具栏：}编译、撤销、打开 \texttt{.tex}、导入 DXF、
+        保存、模板、编译器（XeLaTeX/pdfLaTeX）、语言（中/EN）、状态。
+  \item \textbf{左 --- 元件栏：}当前面板按钮，以及 \ui{＋} 元件库。
+  \item \textbf{左 --- 编辑器：}TeX 源码；预览选中点会高亮对应行。
+  \item \textbf{右 --- 预览条：}缩放、点识别、红/蓝/紫显隐、联动、
+        整体平移、吸附网格、正交吸附、导出 PDF/PNG/SVG。
+  \item \textbf{右 --- 编辑条：}全选、放置提示与表单、尺寸样式、
+        X/Y（或多选时的 $\Delta$X/$\Delta$Y）、应用、删除、缩放/旋转/变换。
+  \item \textbf{右 --- 画布：}SVG 预览与可拖动叠加点。
+\end{itemize}
+
+%==============================================================================
+\section{基本编辑循环}
+%==============================================================================
+
+\begin{enumerate}[nosep]
+  \item 选一个\ui{模板}（或继续编辑当前图）。
+  \item 点元件栏按钮 $\rightarrow$ 进入放置模式（编辑条出现提示）。
+  \item 在预览上点够所需点数（$0$ 点工具则填表单）。
+  \item 点\ui{确认}、在输入框按 Enter，或在画布上\textbf{右键}结束。
+  \item \ui{编译}（成功放置后常会自动编译）以刷新句柄点。
+  \item 拖红点，或框选后变换；完成后导出。
+\end{enumerate}
+
+\noindent\textbf{取消放置：}\key{Esc} 或\ui{取消}。\\
+\textbf{在编辑器中编译：}\key{Ctrl}+\key{Enter}。\\
+\textbf{撤销：}工具栏\ui{撤销}（回到上一份缓冲区快照）。\\
+\textbf{编译失败：}自动退回上一份能通过的源码。
+
+%==============================================================================
+\section{模板与图类型面板}
+%==============================================================================
+
+元件栏随源码推断的\emph{图类型}切换：
+
+\begin{center}
+{\small
+\begin{tabular}{@{}llp{0.40\linewidth}@{}}
+\toprule
+类型 & 判定依据 & 常住工具 \\
+\midrule
+电路 & \texttt{circuitikz} & 文字、线、R/C/L、V/I、开关、尺寸 \\
+框图 & 带 \texttt{draw} 的命名节点 & 方框/圆角/椭圆/圆柱/梯形/判断、箭头、填充 \\
+曲线 & \texttt{axis}/\texttt{addplot} & 函数、散点、标注、尺寸 \\
+二维 & 平面风格 \texttt{tikzpicture} & 点、线段、函数、尺寸 \\
+三维 & \texttt{tikz-3dplot} 特征 & 三维线段/箭头/圆/弧、尺寸 \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+内置模板：RC 滤波、Buck、运放、框图、\textbf{2D 结构分析}、
+\textbf{3D 结构分析}、曲线、二维坐标、CMS 三维、高斯、频率响应。
+2D/3D 结构分析使用 \textsf{satopdf}。
+
+切换模板会\emph{替换}当前缓冲区，请先保存需要保留的内容。
+
+%==============================================================================
+\section{如何放置元件}
+\label{sec:place}
+%==============================================================================
+
+\subsection{通则}
+每个工具声明需要多少次画布点击（$n=0/1/2$，折线与尺寸可更多）：
+
+\begin{itemize}[nosep]
+  \item $n=0$ --- 在编辑条填表，再\ui{确认}
+        （如曲线函数、坐标轴范围、三维圆参数）。
+  \item $n=1$ 或 $2$ --- 点够点数；标题显示「点击 $k/n$」。
+        末点之后仍可改字段，再 Enter / \ui{确认}。
+  \item 吸附：优先靠近的命名端口/坐标；否则取光标下的 TikZ 数值坐标。
+\end{itemize}
+
+生成的代码插在
+\texttt{\textbackslash end\{tikzpicture\}}、
+\texttt{\textbackslash end\{circuitikz\}}，
+或（曲线工具）\texttt{\textbackslash end\{axis\}} 之前。
+
+\subsection{电路面板}
+二端元件（R、C、L、V、I、开关、二极管、电流表等）点两个端点。
+一端器件（接地、MOS、运放等）点一个位置，可改旋转与标注。
+标注在确认前填入文字栏。
+
+\subsection{框图}
+\begin{itemize}[nosep]
+  \item 带文字的形状必须填\textbf{代号}（字母开头）；重复会提示
+        「代号已存在」。
+  \item 编译后命名节点出现吸附端口；画箭头时尽量吸附，源码可写成
+        \texttt{(id.east)} 等形式。
+  \item \ui{折线箭头}：点起点再点转折点；右键或\ui{确认}结束（至少两点）。
+        开启\ui{正交吸附}时，接近水平/竖直的段会对齐。
+\end{itemize}
+
+\subsection{曲线 / 二维 / 三维表单工具}
+在表单中输入表达式、定义域或三维圆心/平面。
+三维圆/弧的 \texttt{plane} 可为 \texttt{xy}/\texttt{xz}/\texttt{yz}、
+一个法向，或两个方向（第一方向为 $0^\circ$）。圆心可以是
+\texttt{(0,0,1.55)} 或已有名字如 \texttt{(O)}。
+
+\subsection{通用几何（多数面板）}
+元件栏或 \ui{＋} 库：直线、箭头、虚线、矩形（两角点）、填充、网格、
+圆、弧、椭圆线、坐标等。
+
+\paragraph{圆。}
+先点圆心，再点第二点（或悬停切线/圆弧/过点），半径实时更新；再点一次确认。
+
+\paragraph{弧。}
+圆心 $\rightarrow$ 起点 $\rightarrow$ 终点（自动算角度）。
+
+\paragraph{椭圆线。}
+中心 $\rightarrow$ 横轴端点 $\rightarrow$ 纵轴端点。
+
+\subsection{尺寸类}
+\begin{itemize}[nosep]
+  \item \ui{尺寸} --- 起点、终点、文字位置。两点之后可用快捷键：
+        \key{H}/\key{V}/\key{R}＝水平/竖直/对齐；
+        \key{I}/\key{O}＝箭头在内/外；
+        \key{1}/\key{2}＝抑制起点/终点一侧。
+  \item \ui{半径}/\ui{直径} --- 先点已有圆或弧，再点文字位置。
+  \item \ui{角度} --- 点第一条直线、第二条直线、文字位置；
+        \key{I}/\key{O} 切换箭头样式。
+\end{itemize}
+放置后，选中尺寸相关句柄可再开样式条（水平/竖直/对齐、内外、抑边、标签）。
+在标签框按 Enter 应用。
+
+\subsection{自定义元件库}
+打开 \ui{＋}：
+\begin{enumerate}[nosep]
+  \item 从库里添加尚未钉在栏上的内置工具；或
+  \item 自定义按钮：名称、取点数（0/1/2）、可选文字栏，以及含
+        \texttt{\{\{1\}\}}、\texttt{\{\{2\}\}}、\texttt{\{\{文字\}\}}、
+        \texttt{\{\{角度\}\}} 的 TikZ 模板。
+\end{enumerate}
+布局保存在浏览器 \texttt{localStorage}。
+
+%==============================================================================
+\section{如何改已有图形}
+\label{sec:edit}
+%==============================================================================
+
+\subsection{点的颜色}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+颜色 & 含义 \\
+\midrule
+红点 & 绝对数值坐标 --- 拖动即改写源码 \\
+蓝点 & 具名节点 / 相对位置 / 类端口位置 \\
+紫点 & 比例或插值点 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+关闭\ui{点识别}可跳过句柄解析（大图更快）。红/蓝/紫可分别显隐。
+
+\subsection{拖动单点}
+\begin{enumerate}[nosep]
+  \item 打开\ui{点识别}并显示红点。
+  \item 按住红点拖动，松开后把新的 \texttt{(x,y)} 写回源码并重编译。
+  \item \ui{联动}（默认开）：相同数值对一起移动。
+  \item \ui{整体平移}：拖一个绝对点时，同一 TeX 语句（到 \texttt{;}）
+        内所有数值坐标同幅度平移。
+\end{enumerate}
+吸附网格：自由 / $0.05$ / $0.1$ / $0.25$。
+
+\subsection{数值框（单选）}
+点击句柄后，编辑条出现 \ui{X}/\ui{Y}。改完点\ui{应用}或 Enter。
+特例：
+\begin{itemize}[nosep]
+  \item 椭圆线 --- 还可改半轴与转角。
+  \item 封装平面坐标轴 --- 在附加栏改轴范围与刻度
+        （轴上的点不进框选）。
+\end{itemize}
+
+\subsection{多选、框选、全选}
+\begin{itemize}[nosep]
+  \item \key{Ctrl} 或 \key{Shift} 点击句柄增减选择。
+  \item 在空白画布拖拽进行框选。
+  \item \ui{全选}，或焦点不在输入框时 \key{Ctrl}+\key{A}。
+  \item 多选时 X/Y 变为 \textbf{$\Delta$X / $\Delta$Y}；
+        \ui{应用}对整组平移。
+\end{itemize}
+
+\noindent\textbf{受保护（不进多选）：}
+\texttt{planeaxes} 与网格点；尺寸/半径/直径/角度构造点。
+请用专用字段或样式条修改。
+
+\subsection{缩放与旋转}
+有选区时，填\ui{缩放}与\ui{旋转}（度），再点\ui{变换}。
+\begin{itemize}[nosep]
+  \item \ui{全选}后的缩放作用于整幅图：坐标、圆/弧半径、
+        \texttt{--++} 长度、\texttt{\textbackslash tdplotsetcoord} 向量长。
+  \item 只框选一部分时，仅改框内数值坐标。
+\end{itemize}
+
+\subsection{删除}
+有选区时，\ui{删除}会尽量去掉对应源码结构。不确定时先\ui{撤销}。
+
+\subsection{源码编辑}
+\begin{itemize}[nosep]
+  \item 可随时手改 TikZ；\ui{编译}或 \key{Ctrl}+\key{Enter} 刷新。
+  \item \key{Tab} / \key{Shift}+\key{Tab} 缩进/反缩进
+        （宽度来自 \texttt{.editorconfig}）。
+  \item 选中预览点会滚动并高亮源码行。
+\end{itemize}
+
+%==============================================================================
+\section{预览导航}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item 缩放滑条 $5\%$--$800\%$；滚轮以光标为中心缩放。
+  \item 点预览空白处清除选择。
+\end{itemize}
+
+%==============================================================================
+\section{导入 DXF}
+%==============================================================================
+
+\ui{导入 DXF} 按\emph{当前模板}分流：
+
+\begin{itemize}[nosep]
+  \item \textbf{2D 结构分析} --- 带约束/载荷的 \textsf{satopdf}
+        （来自 \texttt{LoadXData} XData）；
+  \item \textbf{3D 结构分析} --- 板壳 $\rightarrow$
+        \texttt{\textbackslash stpDface}；面载荷 $\rightarrow$
+        \texttt{\textbackslash stpDfaceload}；
+  \item \textbf{其它} --- 仅几何；跳过 \texttt{CAE\_VIS\_*}；
+        大图缩到约 16\,cm，左下角到原点。
+\end{itemize}
+上限 20\,MB。导入 CAE 数据前请先打开结构分析模板。
+
+%==============================================================================
+\section{保存与导出}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \ui{保存} --- 桌面版另存为 \texttt{.tex}；浏览器版下载。
+  \item \ui{PDF} / \ui{PNG} / \ui{SVG} --- PNG 为 600\,dpi。
+\end{itemize}
+
+%==============================================================================
+\section{快捷键与鼠标}
+%==============================================================================
+
+\begin{center}
+{\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+操作 & 作用 \\
+\midrule
+\key{Ctrl}+\key{Enter}（编辑器） & 编译 \\
+\key{Esc} & 取消放置 / 关闭元件库 \\
+放置时右键 & 确认放置 \\
+放置/编辑框 Enter & 确认 / 应用 \\
+\key{Ctrl}/\key{Shift} 点句柄 & 多选 \\
+空白处拖拽 & 框选 \\
+\key{Ctrl}+\key{A}（非输入框） & 全选句柄 \\
+预览滚轮 & 光标处缩放 \\
+\key{H}/\key{V}/\key{R}（尺寸放置） & 水平 / 竖直 / 对齐 \\
+\key{I}/\key{O}（尺寸/角度） & 箭头内 / 外 \\
+\key{1}/\key{2}（尺寸放置） & 抑起点 / 抑终点 \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+%==============================================================================
+\section{推荐工作流}
+%==============================================================================
+
+\subsection{从零画电路}
+模板\ui{RC 滤波}（或空 circuitikz）$\rightarrow$ 放导线与 R/C $\rightarrow$
+拖红点整理 $\rightarrow$ 加尺寸 $\rightarrow$ 导出 PDF。
+
+\subsection{框图}
+模板\ui{框图} $\rightarrow$ 放带唯一代号的方框 $\rightarrow$
+先编译一次露出端口 $\rightarrow$ 箭头/折线吸附端口 $\rightarrow$ 导出。
+
+\subsection{CAE 图}
+AutoCAD + \texttt{LoadXData} $\rightarrow$ DXF $\rightarrow$ 打开
+\ui{2D/3D 结构分析} $\rightarrow$ 导入 DXF $\rightarrow$
+用句柄或 \textsf{satopdf} 源码微调 $\rightarrow$ 导出。
+
+%==============================================================================
+\section{故障排除}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item 没有句柄 --- 打开\ui{点识别}与红点，并先成功编译一次。
+  \item 放置点击无效 --- 先结束或 \key{Esc} 当前放置；确保已编译出预览标定。
+  \item 拖不动 --- 蓝/紫点不像红点那样直接改写；请改源码名，或拖相关红点。
+  \item 找不到 \textsf{satopdf} --- 从项目根启动，使 \texttt{TEXINPUTS}
+        包含 \path{texmf/tex/latex/local/}。
+  \item 大图很慢 --- 关闭点识别，隐藏不需要的颜色点。
+\end{itemize}
+
+\end{document}

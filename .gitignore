@@ -21,3 +21,23 @@ texmf/tex/latex/local/Example.pdf.locked
 # Ignore demo PDFs; keep the package manual
 texmf/tex/latex/local/satopdf-*.pdf
 !texmf/tex/latex/local/satopdf.pdf
+
+# LoadXData guide build leftovers (keep .tex + LoadXData_*.pdf)
+lisp/LoadXData_*.aux
+lisp/LoadXData_*.log
+lisp/LoadXData_*.out
+lisp/LoadXData_*.toc
+lisp/LoadXData_*.hd
+lisp/LoadXData_*.idx
+lisp/LoadXData_*.ilg
+lisp/LoadXData_*.ind
+
+# TikZ Studio guide build leftovers (keep .tex + TikZ_Studio_*.pdf)
+TikZ_Studio_*.aux
+TikZ_Studio_*.log
+TikZ_Studio_*.out
+TikZ_Studio_*.toc
+TikZ_Studio_*.hd
+TikZ_Studio_*.idx
+TikZ_Studio_*.ilg
+TikZ_Studio_*.ind

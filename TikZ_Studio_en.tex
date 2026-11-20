@@ -1,0 +1,435 @@
+%%
+%% This is file `TikZ_Studio_en.tex',
+%% English user guide for TikZ Studio.
+%%
+%% Copyright (C) 2026 Shijin Chen
+%%
+%% Build: pdflatex TikZ_Studio_en && pdflatex TikZ_Studio_en
+%%
+\documentclass[a4paper]{ltxdoc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={TikZ Studio --- User Guide (English)},
+  pdfauthor={Shijin Chen},
+  pdfsubject={Local TikZ / circuitikz editor with interactive preview},
+}
+
+\newcommand{\fileversion}{2026-11}
+\newcommand{\filedate}{2026-11-21}
+\newcommand{\appname}{\textsf{TikZ Studio}}
+\newcommand{\ui}[1]{\textbf{#1}}
+\newcommand{\key}[1]{\texttt{#1}}
+
+\title{%
+  \appname\ --- User Guide%
+  \thanks{This file describes version~\fileversion{} (\filedate).}%
+}
+\author{%
+  Shijin Chen\\
+  \texttt{sjchen1998@gmail.com}%
+}
+\date{Printed \today\\[0.5em] Guide date: \filedate{} (v\fileversion)}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\appname\ is a local desktop / browser application for editing
+\textbf{TikZ} and \textbf{circuitikz}.  Source is on the left; XeLaTeX or
+pdfLaTeX draws the preview on the right.  You place components by
+clicking the canvas, drag red handles to rewrite coordinates, box-select
+and transform groups, edit dimensions after the fact, and import DXF
+into geometry or \textsf{satopdf} structural figures.  This guide focuses
+on \emph{how to edit}.
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+\appname\ targets lecture notes, reports, and a CAE$\rightarrow$PDF
+pipeline on one machine.  Licence: GPL-3.0 (\texttt{LICENSE}).
+Copyright \textcopyright\ 2026 Shijin Chen.
+
+Related tools in this repository: \path{lisp/LoadXData.lsp} (AutoCAD
+annotation), \path{texmf/tex/latex/local/satopdf.sty} (structural TikZ).
+
+%==============================================================================
+\section{Install and start}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item Python~3; \texttt{pip install -r requirements.txt}
+        (\texttt{fastapi}, \texttt{uvicorn}, \texttt{python-multipart},
+        \texttt{pymupdf}, \texttt{pywebview}, \texttt{ezdxf});
+  \item TeX~Live with XeLaTeX, pdfLaTeX, \textsf{ctex}, \textsf{circuitikz},
+        \textsf{tikz-3dplot}, \textsf{pgfplots};
+  \item In-tree \textsf{satopdf} under \path{texmf/tex/latex/local/}.
+\end{itemize}
+
+\begin{verbatim}
+python -m tikzstudio          # desktop window (recommended)
+python -m tikzstudio.server   # browser only -> http://127.0.0.1:8765
+\end{verbatim}
+Or double-click \path{start_tikz_studio.bat} (always starts from its own
+folder).
+
+%==============================================================================
+\section{Window layout}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{Left --- toolbar:} Compile, Undo, Open \texttt{.tex},
+        Import DXF, Save, Template menu, compiler (XeLaTeX/pdfLaTeX),
+        language (EN/ZH), status text.
+  \item \textbf{Left --- component bar:} buttons for the current panel,
+        plus a \ui{+} library button.
+  \item \textbf{Left --- editor:} TeX source; selected preview points
+        highlight the matching line.
+  \item \textbf{Right --- preview bar:} zoom, point pick on/off, show
+        red/blue/purple, Link, Move-all, snap grid, ortho-snap, export
+        PDF/PNG/SVG.
+  \item \textbf{Right --- edit bar:} Select-all, placement prompts,
+        dimension style controls, X/Y (or $\Delta$X/$\Delta$Y) inputs,
+        Apply, Delete, Scale/Rotate/Transform.
+  \item \textbf{Right --- canvas:} SVG preview with draggable overlays.
+\end{itemize}
+
+%==============================================================================
+\section{Basic editing loop}
+%==============================================================================
+
+\begin{enumerate}[nosep]
+  \item Pick a \ui{template} (or keep the current figure).
+  \item Click a component on the bar $\rightarrow$ placement mode starts
+        (banner on the edit bar).
+  \item Click the required points on the preview (or fill form fields for
+        0-point tools).
+  \item Press \ui{Confirm}, press Enter in a field, or
+        \textbf{right-click} the canvas to finish.
+  \item \ui{Compile} (or wait for auto-compile after a successful place)
+        to refresh handles.
+  \item Drag red points, or select several and transform; export when done.
+\end{enumerate}
+
+\noindent\textbf{Cancel placement:} \key{Esc}, or \ui{Cancel}.\\
+\textbf{Compile from the editor:} \key{Ctrl}+\key{Enter}.\\
+\textbf{Undo:} toolbar \ui{Undo} (restores previous buffer snapshot).\\
+\textbf{Failed compile:} the editor reverts to the last source that
+compiled cleanly.
+
+%==============================================================================
+\section{Templates and picture panels}
+%==============================================================================
+
+The component bar follows the \emph{picture kind} inferred from the
+source:
+
+\begin{center}
+{\small
+\begin{tabular}{@{}llp{0.40\linewidth}@{}}
+\toprule
+Kind & Detected by & Core tools \\
+\midrule
+Circuit & \texttt{circuitikz} & Text, wire, R/C/L, V/I, switch, dims \\
+Blocks & named \texttt{draw} nodes & Box, round, ellipse, cylinder,
+  trap, decision, arrows, fill \\
+Plot & \texttt{axis}/\texttt{addplot} & Function, marks, label, dims \\
+Plane & plane-style \texttt{tikzpicture} & Point, segment, function, dims \\
+3D & \texttt{tikz-3dplot} markers & 3D segment/arrow/circle/arc, dims \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+Built-in templates: RC filter, Buck, op-amp, block diagram, \textbf{2D SA},
+\textbf{3D SA}, plot, 2D axes, CMS~3D, Gaussian, frequency response.
+2D/3D SA use \textsf{satopdf}.
+
+Changing the template \emph{replaces} the editor buffer.  Save first if
+you need the old figure.
+
+%==============================================================================
+\section{How to place components}
+\label{sec:place}
+%==============================================================================
+
+\subsection{General rule}
+Each tool declares how many canvas clicks it needs ($n=0$, $1$, $2$,
+or more for polylines / dimensions):
+
+\begin{itemize}[nosep]
+  \item $n=0$ --- fill the form on the edit bar, then \ui{Confirm}
+        (examples: plot function, plane axes ranges, 3D circle fields).
+  \item $n=1$ or $2$ --- click that many points; the live title shows
+        ``click $k/n$''.  After the last point you can still edit fields
+        and press Enter / \ui{Confirm}.
+  \item Snap: clicks prefer nearby named ports / coordinates when
+        available; otherwise numeric TikZ units under the cursor.
+\end{itemize}
+
+Inserted code is appended just before
+\texttt{\textbackslash end\{tikzpicture\}},
+\texttt{\textbackslash end\{circuitikz\}}, or
+\texttt{\textbackslash end\{axis\}} (for plot tools).
+
+\subsection{Circuit panel}
+Click two endpoints for two-terminal parts (R, C, L, V, I, switch,
+diode, meter, \ldots).  One-terminal devices (ground, MOS, op-amp, \ldots)
+need a single placement point and optional rotation / label.  Labels go
+into the text field before Confirm.
+
+\subsection{Block diagram}
+\begin{itemize}[nosep]
+  \item Shapes with text require an \textbf{ID} (letter + alphanumerics).
+        A duplicate shows ``ID already exists''.
+  \item After compile, ports appear on named nodes --- use them when
+        placing arrows so the source stores \texttt{(id.east)} style
+        anchors instead of raw numbers when possible.
+  \item \ui{Polyline arrow}: click start, then corners; finish with
+        right-click or \ui{Confirm} (minimum two points).  With
+        \ui{Ortho snap} on, nearly horizontal/vertical segments lock.
+\end{itemize}
+
+\subsection{Plot / plane / 3D field tools}
+Enter expressions, domains, or 3D centre/plane strings in the form.
+For 3D circle/arc, \texttt{plane} may be \texttt{xy}/\texttt{xz}/\texttt{yz},
+a normal, or two directions (first direction $=0^\circ$).  Centre may be
+\texttt{(0,0,1.55)} or a name such as \texttt{(O)}.
+
+\subsection{Shared geometry (most panels)}
+Available from the bar or via \ui{+} library: line, arrow, dashed,
+rectangle (two corners), fill, grid, circle, arc, ellipse path,
+coordinate, \ldots
+
+\paragraph{Circle.}
+Click centre, then a second point (or hover a tangent line / curve /
+through-point); radius updates live.  Second click confirms.
+
+\paragraph{Arc.}
+Centre $\rightarrow$ start $\rightarrow$ end (angles computed).
+
+\paragraph{Ellipse path.}
+Centre $\rightarrow$ horizontal-axis end $\rightarrow$ vertical-axis end.
+
+\subsection{Dimensions}
+\begin{itemize}[nosep]
+  \item \ui{Dimension} --- click start, end, then label position.
+        While placing (after two points):
+        \key{H}/\key{V}/\key{R} = horizontal / vertical / aligned;
+        \key{I}/\key{O} = arrows inside / outside;
+        \key{1}/\key{2} = hide start / end extension.
+  \item \ui{Radius} / \ui{Diameter} --- click an existing circle or arc,
+        then the label position.
+  \item \ui{Angle} --- click first line, second line, then label
+        position; \key{I}/\key{O} for arrow style.
+\end{itemize}
+After placement, select a dimension handle to reopen the style bar
+(horizontal / vertical / aligned, in/out, suppress sides, label).
+Press Enter in the label field to apply.
+
+\subsection{Custom library}
+Open \ui{+}:
+\begin{enumerate}[nosep]
+  \item Add a built-in tool that is not pinned yet, or
+  \item Define a custom button: name, click count (0/1/2), optional text
+        field, and a TikZ template using
+        \texttt{\{\{1\}\}}, \texttt{\{\{2\}\}},
+        \texttt{\{\{text\}\}} / Chinese field name, and
+        \texttt{\{\{angle\}\}}.
+\end{enumerate}
+Library layout is stored in the browser (\texttt{localStorage}).
+
+%==============================================================================
+\section{How to edit existing geometry}
+\label{sec:edit}
+%==============================================================================
+
+\subsection{Handle colours}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Colour & Meaning \\
+\midrule
+Red & Absolute numeric coordinate --- drag to rewrite the source \\
+Blue & Named node / relative / port-like position \\
+Purple & Ratio / interpolated point \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Turn \ui{Point pick} off to skip parsing handles (faster on huge figures).
+Toggle red/blue/purple visibility independently.
+
+\subsection{Drag one point}
+\begin{enumerate}[nosep]
+  \item Ensure \ui{Point pick} is on and red points are visible.
+  \item Press and drag a red handle; release to write the new
+        \texttt{(x,y)} into the source and recompile.
+  \item \ui{Link} (default on): other occurrences of the same numeric pair
+        move together.
+  \item \ui{Move all}: while dragging one absolute point, every numeric
+        pair on the same TeX statement (line through \texttt{;}) shifts
+        by the same $\Delta$.
+\end{enumerate}
+Snap grid: free / $0.05$ / $0.1$ / $0.25$.
+
+\subsection{Numeric fields (single selection)}
+Click a handle.  The edit bar shows \ui{X}/\ui{Y} (TikZ units).  Edit and
+press \ui{Apply} or Enter.  Special cases:
+\begin{itemize}[nosep]
+  \item Ellipse path --- also edit semi-axes and rotation.
+  \item Packaged plane axes --- edit axis and tick ranges in the extra
+        fields (handles themselves are not box-selected).
+\end{itemize}
+
+\subsection{Multi-select, box select, select all}
+\begin{itemize}[nosep]
+  \item \key{Ctrl}-click or \key{Shift}-click adds/removes handles.
+  \item Drag on empty canvas to rubber-band select.
+  \item \ui{Select all} or \key{Ctrl}+\key{A} (when focus is not in an
+        input) selects all movable handles.
+  \item With a multi-selection, X/Y become \textbf{$\Delta$X / $\Delta$Y};
+        \ui{Apply} translates the group.
+\end{itemize}
+
+\noindent\textbf{Protected (never multi-selected):}
+\texttt{planeaxes} and grid points; dimension / radius / diameter /
+angle construction points.  Edit those via their dedicated fields or
+style bar.
+
+\subsection{Scale and rotate}
+With a selection, enter \ui{Scale} and \ui{Rotate} (degrees), then
+\ui{Transform}.
+\begin{itemize}[nosep]
+  \item After \ui{Select all}, scale applies to the whole picture:
+        coordinates, circle/arc radii, \texttt{--++} lengths, and
+        \texttt{\textbackslash tdplotsetcoord} vector lengths.
+  \item A partial box only rewrites numeric coordinates inside the box.
+\end{itemize}
+
+\subsection{Delete}
+With an active selection, \ui{Delete} removes the corresponding source
+construct when supported (e.g.\ a placed statement / scope).  Prefer
+Undo if unsure.
+
+\subsection{Source editor}
+\begin{itemize}[nosep]
+  \item Edit TikZ by hand at any time; \ui{Compile} or
+        \key{Ctrl}+\key{Enter} to refresh.
+  \item \key{Tab} / \key{Shift}+\key{Tab} indent / dedent (width from
+        \texttt{.editorconfig}).
+  \item Selecting a preview point scrolls/highlights its source line.
+\end{itemize}
+
+%==============================================================================
+\section{Preview navigation}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item Zoom slider $5\%$--$800\%$; mouse wheel zooms toward the cursor.
+  \item Click empty preview space to clear the selection.
+\end{itemize}
+
+%==============================================================================
+\section{Import DXF}
+%==============================================================================
+
+\ui{Import DXF} follows the \emph{active template}:
+
+\begin{itemize}[nosep]
+  \item \textbf{2D SA} --- \textsf{satopdf} with supports/loads from
+        \texttt{LoadXData} XData;
+  \item \textbf{3D SA} --- shells $\rightarrow$
+        \texttt{\textbackslash stpDface}; face loads $\rightarrow$
+        \texttt{\textbackslash stpDfaceload};
+  \item \textbf{Other} --- geometry only; skip \texttt{CAE\_VIS\_*};
+        scale large drawings to $\approx$16\,cm, origin at lower-left.
+\end{itemize}
+Limit 20\,MB.  For CAE data, open the SA template \emph{before} importing.
+
+%==============================================================================
+\section{Save and export}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \ui{Save} --- desktop: Save~As \texttt{.tex}; browser: download.
+  \item \ui{PDF} / \ui{PNG} / \ui{SVG} --- PNG at 600\,dpi.
+\end{itemize}
+
+%==============================================================================
+\section{Keyboard and mouse cheatsheet}
+%==============================================================================
+
+\begin{center}
+{\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Input & Action \\
+\midrule
+\key{Ctrl}+\key{Enter} (editor) & Compile \\
+\key{Esc} & Cancel placement / close library \\
+Right-click (while placing) & Confirm place \\
+Enter (place/edit fields) & Confirm / Apply \\
+\key{Ctrl}/\key{Shift}-click handle & Multi-select \\
+Drag empty canvas & Box select \\
+\key{Ctrl}+\key{A} (outside inputs) & Select all handles \\
+Wheel on preview & Zoom at cursor \\
+\key{H}/\key{V}/\key{R} (dim place) & Horizontal / vertical / aligned \\
+\key{I}/\key{O} (dim/angle place) & Arrows in / out \\
+\key{1}/\key{2} (dim place) & Hide start / end side \\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+%==============================================================================
+\section{Recommended workflows}
+%==============================================================================
+
+\subsection{Circuit from scratch}
+Template \ui{RC filter} (or empty circuitikz) $\rightarrow$ place wires and
+R/C $\rightarrow$ drag red ends to tidy $\rightarrow$ add dimensions $\rightarrow$
+export PDF.
+
+\subsection{Block diagram}
+Template \ui{Blocks} $\rightarrow$ place boxes with unique IDs $\rightarrow$
+Compile once so ports appear $\rightarrow$ arrows / polyline arrows snapping
+to ports $\rightarrow$ export.
+
+\subsection{CAE figure}
+AutoCAD + \texttt{LoadXData} $\rightarrow$ DXF $\rightarrow$ open
+\ui{2D SA} or \ui{3D SA} $\rightarrow$ Import DXF $\rightarrow$ adjust with
+handles / \textsf{satopdf} source $\rightarrow$ export.
+
+%==============================================================================
+\section{Troubleshooting}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item No handles --- enable \ui{Point pick} and red points; compile
+        successfully first.
+  \item Placement clicks ignored --- finish or \key{Esc} the current
+        place mode; ensure compile produced a calibration (cal).
+  \item Drag does nothing --- blue/purple points are not freely rewritten
+        like red absolutes; edit names in source or drag a related red
+        point.
+  \item \textsf{satopdf} not found --- start from the project root so
+        \texttt{TEXINPUTS} includes \path{texmf/tex/latex/local/}.
+  \item Slow large figure --- disable point pick; hide unused colours.
+\end{itemize}
+
+\end{document}

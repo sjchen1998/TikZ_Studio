@@ -1,0 +1,418 @@
+%%
+%% This is file `LoadXData_cn.tex',
+%% 中文使用说明：LoadXData.lsp（AutoCAD / AutoLISP）。
+%%
+%% Copyright (C) 2026 Shijin Chen
+%%
+%% Build: xelatex LoadXData_cn && xelatex LoadXData_cn
+%%
+\documentclass[a4paper]{ltxdoc}
+\usepackage[UTF8,fontset=windows,scheme=plain]{ctex}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={LoadXData.lsp 使用说明（中文）},
+  pdfauthor={Shijin Chen},
+  pdfsubject={AutoCAD 梁/板壳/焊缝 CAE XData 标注工具},
+}
+
+\newcommand{\fileversion}{2026-11}
+\newcommand{\filedate}{2026-11-21}
+\newcommand{\cadcmd}[1]{\texttt{\textbf{#1}}}
+\newcommand{\appid}[1]{\texttt{#1}}
+\newcommand{\caevar}[1]{\texttt{#1}}
+
+\title{%
+  \textsf{LoadXData} AutoLISP 工具使用说明%
+  \thanks{本文档对应版本~\fileversion{}（\filedate）。}%
+}
+\author{%
+  Shijin Chen\\
+  \texttt{sjchen1998@gmail.com}%
+}
+\date{排版日期：\today\\[0.5em] 脚本日期：\filedate{}（v\fileversion）}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\textsf{LoadXData.lsp} 是一套 AutoCAD AutoLISP 工具，用于为
+\textbf{梁}、\textbf{杆}、\textbf{板壳}与\textbf{焊缝}写入面向 CAE 的
+扩展实体数据（XData），并生成配套可视化符号块。图中数据可导出为 DXF，
+经 TikZ~Studio
+（\path{dxf_to_satopdf2d.py}、\path{dxf_to_satopdf3d.py}）
+导入后，用 \textsf{satopdf} 宏包生成出版级插图。
+默认工程单位为毫米、牛顿及其导出单位（\texttt{N-mm}、\texttt{Nmm}、
+\texttt{MPa} 等）。
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+%==============================================================================
+\section{引言}
+%==============================================================================
+
+\textsf{LoadXData} 把结构分析元数据挂到普通 AutoCAD 几何上，并在专用图层
+绘制锁定的可视化符号。典型流程：
+
+\begin{enumerate}[nosep]
+  \item 构件用 \texttt{LINE} 绘制；板壳用
+        \texttt{MESH}/\texttt{REGION}/\texttt{SURFACE}/\texttt{3DFACE} 等；
+  \item 运行交互命令（\cadcmd{SETSEC}、\cadcmd{SETLOAD}、
+        \cadcmd{SETBC} 等）写入 XData 并生成符号；
+  \item 导出 DXF，在 TikZ~Studio 中导入并生成 \textsf{satopdf} TikZ。
+\end{enumerate}
+
+\noindent\textbf{许可与维护。}
+Copyright \textcopyright\ 2026 Shijin Chen。
+当前维护者为Shijin Chen。
+本文档描述 \texttt{lisp/LoadXData.lsp}。
+
+%==============================================================================
+\section{安装与加载}
+%==============================================================================
+
+\begin{enumerate}[nosep]
+  \item 将仓库中的 \texttt{lisp/} 目录加入 AutoCAD 可信支持文件搜索路径
+        （选项 $\rightarrow$ 文件）。
+  \item 在命令行执行：
+\begin{verbatim}
+(load "LoadXData.lsp")
+\end{verbatim}
+        成功后会打印命令摘要并注册全部 CAE APPID。
+  \item 可选：将上述 \texttt{(load \ldots)} 写入
+        \texttt{acaddoc.lsp}，使每个新图自动加载。
+\end{enumerate}
+
+依赖：带 Visual~LISP（\texttt{vl-load-com}）的 AutoCAD；在较新的
+Windows 版 AutoCAD 上测试。无需额外 ARX 模块。
+
+%==============================================================================
+\section{语言、全局变量与单位}
+%==============================================================================
+
+\subsection{界面语言}
+提示为中英双语。全局变量 \caevar{*CAE\_LANG*} 取 \texttt{"ZH"} 或
+\texttt{"EN"}（默认中文）。命令 \cadcmd{SETLANG} 一键切换。
+菜单中的单位关键字保持 ASCII（受 AutoCAD \texttt{initget} 限制）。
+
+\subsection{显示比例}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+变量 & 控制对象 \\
+\midrule
+\caevar{*CAE\_SCALE\_LOAD*} & 梁/板壳载荷箭头 \\
+\caevar{*CAE\_SCALE\_BC*}   & 支座 / 弹簧 / 板壳约束符号 \\
+\caevar{*CAE\_SCALE\_SEC*}  & 截面与板壳属性符号 \\
+\bottomrule
+\end{tabular}
+\end{center}
+用 \cadcmd{SETSCALE} 修改三者，并经 \cadcmd{REFRESH\_ALL} 重绘。
+
+\subsection{默认工程单位}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+物理量 & 默认菜单记号（含义） \\
+\midrule
+分布/边线载荷 & \texttt{N-mm}（$=$~N/mm）；另有 \texttt{kN-m} \\
+集中力       & \texttt{N}；另有 \texttt{kN} \\
+集中弯矩     & \texttt{Nmm}（$=$~N$\cdot$mm）；\texttt{Nm}、\texttt{kNm} \\
+面压         & \texttt{MPa}；另有 \texttt{kPa} \\
+线刚度 $K$   & \texttt{N-mm}（$=$~N/mm） \\
+角刚度 $K_R$ & \texttt{Nmm/rad}（菜单：\texttt{Nmm-rad}） \\
+长度（厚度、焊缝） & 毫米 \\
+\bottomrule
+\end{tabular}
+\end{center}
+读取时会规范化旧串 \texttt{N/mm}、\texttt{Nmm}、\texttt{kN/m}。
+
+%==============================================================================
+\section{图层与可视化}
+%==============================================================================
+
+四个锁定的可视化图层（刷新时仍会清理旧图层 \texttt{CAE\_LOAD\_VIS}）：
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+图层 & 颜色 & 内容 \\
+\midrule
+\texttt{CAE\_VIS\_LOAD} & 红 (1)     & 载荷（梁 + 板壳） \\
+\texttt{CAE\_VIS\_BC}   & 青 (4)     & 约束、弹簧、板壳约束 \\
+\texttt{CAE\_VIS\_SEC}  & 品红 (6)   & 截面 / 板壳属性 \\
+\texttt{CAE\_VIS\_WELD} & 黄 (2)     & 点焊 / 满焊标记 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+显隐切换（翻转图层颜色符号，避免命令行刷屏）：
+\cadcmd{TOGGLELOAD}、\cadcmd{TOGGLEBC}、\cadcmd{TOGGLESEC}、
+\cadcmd{TOGGLEWELD}。
+
+符号为匿名块，通过句柄 XData 与宿主实体双向关联。删除命令可点选宿主
+几何或符号块。改比例或符号损坏后请运行 \cadcmd{REFRESH\_ALL}。
+
+%==============================================================================
+\section{命令一览}
+%==============================================================================
+
+{\small
+\begin{longtable}{@{}>{\ttfamily\raggedright\arraybackslash}p{0.38\linewidth}
+                  >{\raggedright\arraybackslash}p{0.54\linewidth}@{}}
+\toprule
+\normalfont\textbf{命令} & \textbf{用途} \\
+\midrule
+\endfirsthead
+\toprule
+\normalfont\textbf{命令} & \textbf{用途} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+SETLANG & 切换中/英文提示 \\
+SETROD / SETBEAM / DELKIND
+  & 将 LINE 标为杆/梁；清除类型（默认梁） \\
+SETLOAD / DELLOAD
+  & 梁均布载荷（杆不可用） \\
+SETPTLOAD / DELPTLOAD
+  & 端点集中力（杆仅轴向 $+/-$） \\
+SETMOMENT / DELMOMENT
+  & 端点弯矩（仅梁） \\
+SETBC / DELBC
+  & 简单端约束（掩码 / 平面 / 滑移 / 转轴） \\
+ADDBC & 端点复合约束增量叠加 \\
+SETSPRING / DELSPRING
+  & 端点线弹簧 / 角弹簧 \\
+SETSEC / DELSEC
+  & 截面类型、材料、姿态、偏置 \\
+SETSHELLLOAD / DELSHELLLOAD
+  & 板壳边线载荷或面压/面力 \\
+SETSHELL & 板壳理论、厚度、偏置、材料 \\
+ADDSHELLBC / DELSHELLBC
+  & 板壳边线或整面约束 \\
+SETSPOTWELD / DELSPOTWELD
+  & 点焊（POINT + 黄色标记） \\
+SETSEAMWELD / DELSEAMWELD
+  & 满焊轨迹 LINE/LWPOLYLINE/ARC \\
+SETSCALE & 修改显示比例并刷新 \\
+REFRESH\_ALL & 按 XData 重建全部可视化 \\
+TOGGLELOAD / TOGGLEBC / TOGGLESEC / TOGGLEWELD
+  & 显示/隐藏可视化图层 \\
+\end{longtable}}
+
+%==============================================================================
+\section{构件类型：梁与杆}
+%==============================================================================
+
+APPID \appid{MY\_CAE\_MEMBER\_KIND}：字符串 \texttt{BEAM} 或 \texttt{ROD}
+（无 XData 时默认梁）。仅适用于 \texttt{LINE}。
+
+\begin{itemize}[nosep]
+  \item \cadcmd{SETROD} --- 杆：不可分割；仅允许轴向端点力
+        （\texttt{SETPTLOAD}，$+$拉 / $-$压）；分布载荷、弯矩、截面姿态与
+        偏置被忽略或拒绝。
+  \item \cadcmd{SETBEAM} --- 恢复为梁。
+  \item \cadcmd{DELKIND} --- 清除类型标记（恢复默认梁）。
+\end{itemize}
+
+%==============================================================================
+\section{梁载荷}
+%==============================================================================
+
+\subsection{\cadcmd{SETLOAD} / \cadcmd{DELLOAD}}
+选择一根或多根 \texttt{LINE}（杆自动跳过）。输入集度、单位
+（\texttt{N-mm}/\texttt{kN-m}），再以 \texttt{Vector}（XYZ）或
+\texttt{Pick}（两点）给定方向。写入 \appid{MY\_CAE\_LOAD}，并在
+\texttt{CAE\_VIS\_LOAD} 生成红色分布载荷块。
+
+\subsection{\cadcmd{SETPTLOAD} / \cadcmd{DELPTLOAD}}
+点选 LINE，再捕捉端点（\texttt{START}/\texttt{END}）。
+\begin{itemize}[nosep]
+  \item 梁：任意空间方向（\texttt{Vector}/\texttt{Pick}）。
+  \item 杆：仅轴向；符号表示拉/压。
+\end{itemize}
+APPID \appid{MY\_CAE\_POINT\_LOAD}。
+
+\subsection{\cadcmd{SETMOMENT} / \cadcmd{DELMOMENT}}
+仅梁。端点弯矩大小、单位、轴
+（\texttt{BeamAxis}/\texttt{Vector}/\texttt{Pick}）与转向
+\texttt{CCW}/\texttt{CW}。按右手系存储（CW 时反转轴向量）。
+APPID \appid{MY\_CAE\_MOMENT}。
+
+%==============================================================================
+\section{梁约束与弹簧}
+%==============================================================================
+
+\subsection{\cadcmd{SETBC} / \cadcmd{DELBC}}
+简单端约束，APPID \appid{MY\_CAE\_BC}：
+\begin{itemize}[nosep]
+  \item \texttt{Mask} --- 六位掩码 \texttt{UXUYUZRXRYRZ}
+        （默认 \texttt{111111}）；全局坐标。
+  \item \texttt{Plane} --- 约束平面法向平动（三点定面）。
+  \item \texttt{Slide} --- 约束垂直于滑移轴的两个平动方向。
+  \item \texttt{RotAxis} --- 约束绕梁轴或拾取轴线的转动。
+\end{itemize}
+
+\subsection{\cadcmd{ADDBC}}
+复合约束增量，APPID \appid{MY\_CAE\_COMP\_BC}。
+可在同一端反复叠加 \texttt{Plane}/\texttt{Slide}/\texttt{RotAxis}/
+\texttt{FixAll}；符号显示合成的 $U$/$R$ 掩码。
+
+\subsection{\cadcmd{SETSPRING} / \cadcmd{DELSPRING}}
+弹性端支撑，APPID \appid{MY\_CAE\_SPRING}：
+\texttt{Trans}（$K_x,K_y,K_z$）、\texttt{Rot}（$KR_x,\ldots$）或
+\texttt{Both}。刚度用逗号分隔数字输入（不用点选，避免 OSNAP 干扰）。
+
+%==============================================================================
+\section{截面与材料}
+%==============================================================================
+
+\subsection{\cadcmd{SETSEC} / \cadcmd{DELSEC}}
+批量为所选 \texttt{LINE} 写入截面数据（\appid{MY\_CAE\_SEC}）。
+
+\paragraph{截面类型。}
+\texttt{Angle}、\texttt{Channel}、\texttt{IBeam}、\texttt{Pipe}、
+\texttt{RectTube}、\texttt{Circle}、\texttt{Rect}、\texttt{Custom}
+（关键字缩写避免字母冲突：\texttt{cHannel}、\texttt{rTube}、
+\texttt{custoM}）。
+
+\paragraph{材料。}
+\texttt{Q235B}、\texttt{Q355B}、\texttt{45Steel}、\texttt{Al6061}、
+\texttt{Concrete}，或 \texttt{Other}（自定义名）。
+
+\paragraph{姿态与偏置。}
+非轴对称截面需拾取梁外一点定义局部 $Y$ 轴。可选偏置：方向点 + 距离（mm）。
+圆管/实心圆及杆忽略姿态与偏置。
+
+%==============================================================================
+\section{板壳}
+%==============================================================================
+
+支持的宿主类型（载荷/属性/约束）：\texttt{MESH}、\texttt{REGION}、
+\texttt{SURFACE}、\texttt{3DSOLID}、\texttt{3DFACE}、\texttt{LWPOLYLINE}。
+
+\subsection{\cadcmd{SETSHELL}}
+写入 \appid{MY\_CAE\_SHELL\_PROP} 与几何辅助
+\appid{MY\_CAE\_SHELL\_GEOM}：
+\begin{itemize}[nosep]
+  \item 理论：\texttt{Shell3D} / \texttt{PlaneStress} / \texttt{PlaneStrain}；
+  \item 厚度（mm）；可选中面偏置
+        （\texttt{Mid}/\texttt{Top}/\texttt{Bottom}/\texttt{Custom}）；
+  \item 材料（与梁相同目录）。
+\end{itemize}
+
+\subsection{\cadcmd{SETSHELLLOAD} / \cadcmd{DELSHELLLOAD}}
+APPID \appid{MY\_CAE\_SHELL\_LOAD}。
+\begin{itemize}[nosep]
+  \item \texttt{Edge} --- 直边（两点）或圆弧（三点）线载荷；
+        单位 \texttt{N-mm}/\texttt{kN-m}；全局方向。
+  \item \texttt{Face} --- \texttt{Pressure}（MPa/kPa）或
+        \texttt{Total} 总合力（N/kN）；方向取 \texttt{Normal}
+        或全局 \texttt{Vector}。
+\end{itemize}
+
+\subsection{\cadcmd{ADDSHELLBC} / \cadcmd{DELSHELLBC}}
+APPID \appid{MY\_CAE\_SHELL\_BC}。优先边线或整面约束（避免单点奇异）：
+\texttt{FixAll}、\texttt{PinPlane}、\texttt{SlideLine}、
+\texttt{RotAxis}。
+
+%==============================================================================
+\section{焊缝}
+%==============================================================================
+
+\subsection{\cadcmd{SETSPOTWELD} / \cadcmd{DELSPOTWELD}}
+在 0 层创建 \texttt{POINT} 宿主，并生成黄色十字圆标记。
+模式：\texttt{Single} 或 \texttt{Along}（沿线等距）。
+焊核直径（mm）；单元类型 \texttt{Acm}/\texttt{Cweld}/\texttt{Rbe}
+$\rightarrow$ ACM / CWELD / RBE2。
+APPID \appid{MY\_CAE\_SPOT\_WELD}。
+
+\subsection{\cadcmd{SETSEAMWELD} / \cadcmd{DELSEAMWELD}}
+恰好选择一条轨迹（\texttt{LINE}/\texttt{LWPOLYLINE}/\texttt{ARC}）。
+类型 \texttt{Fillet}/\texttt{Butt}；焊脚与离散步长（mm）。
+黄色锯齿可视化。
+APPID \appid{MY\_CAE\_SEAM\_WELD}。
+
+%==============================================================================
+\section{显示工具}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \cadcmd{SETSCALE} --- 依次输入载荷 / 约束 / 截面比例（$>0$），
+        再调用 \cadcmd{REFRESH\_ALL}。
+  \item \cadcmd{REFRESH\_ALL} --- 删除全部 CAE 可视化块，按当前 XData
+        重建（梁、板壳、焊缝）。
+\end{itemize}
+
+%==============================================================================
+\section{已注册 APPID}
+%==============================================================================
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+APPID & 用途 \\
+\midrule
+\appid{MY\_CAE\_LOAD}         & 梁分布载荷 \\
+\appid{MY\_CAE\_POINT\_LOAD}  & 端点集中力 \\
+\appid{MY\_CAE\_MOMENT}       & 端点弯矩 \\
+\appid{MY\_CAE\_BC}           & 简单端约束 \\
+\appid{MY\_CAE\_COMP\_BC}     & 复合端约束 \\
+\appid{MY\_CAE\_SPRING}       & 端点弹簧 \\
+\appid{MY\_CAE\_SEC}          & 梁截面 / 材料 \\
+\appid{MY\_CAE\_MEMBER\_KIND} & BEAM / ROD \\
+\appid{MY\_CAE\_SHELL\_LOAD}  & 板壳边/面载荷 \\
+\appid{MY\_CAE\_SHELL\_PROP}  & 板壳属性 \\
+\appid{MY\_CAE\_SHELL\_GEOM}  & 板壳环线 / 法向 \\
+\appid{MY\_CAE\_SHELL\_BC}    & 板壳约束 \\
+\appid{MY\_CAE\_SPOT\_WELD}   & 点焊 \\
+\appid{MY\_CAE\_SEAM\_WELD}   & 满焊 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+宿主与可视化实体互相保存对方句柄（\texttt{1005}），保证双向删除一致。
+
+%==============================================================================
+\section{推荐工作流}
+%==============================================================================
+
+\begin{enumerate}[nosep]
+  \item 按毫米建模；端点与边线建议打开 OSNAP。
+  \item 按需 \cadcmd{SETBEAM}/\cadcmd{SETROD}；用 \cadcmd{SETSEC} /
+        \cadcmd{SETSHELL} 写属性。
+  \item 施加载荷与约束；板壳尽量用边/面约束而非单顶点。
+  \item 用 \cadcmd{SETSCALE} 调符号大小；用 \texttt{TOGGLE*} 隐藏干扰。
+  \item 保存/导出 DXF，在 TikZ~Studio 中导入生成 \textsf{satopdf} 插图。
+\end{enumerate}
+
+%==============================================================================
+\section{故障排除}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{杆拒绝载荷或弯矩} --- 设计如此；仅用轴向
+        \cadcmd{SETPTLOAD}。
+  \item \textbf{图层尚未创建} --- 先执行任意一次 SET* 标注以注册
+        APPID/图层。
+  \item \textbf{符号过时} --- \cadcmd{REFRESH\_ALL}。
+  \item \textbf{批量写截面时按 Esc} --- 下次注册 / 批处理开始会自动
+        收尾残留解锁状态。
+  \item \textbf{关键字冲突} --- 输入括号中大写缩写（如槽钢 \texttt{H}，
+        钢材 \texttt{Q2}/\texttt{Q3}）。
+\end{itemize}
+
+\end{document}

@@ -1,0 +1,441 @@
+%%
+%% This is file `LoadXData_en.tex',
+%% English user guide for LoadXData.lsp (AutoCAD / AutoLISP).
+%%
+%% Copyright (C) 2026 Shijin Chen
+%%
+%% Build: pdflatex LoadXData_en && pdflatex LoadXData_en
+%%
+\documentclass[a4paper]{ltxdoc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={LoadXData.lsp --- User Guide (English)},
+  pdfauthor={Shijin Chen},
+  pdfsubject={AutoCAD CAE XData annotation for beams, shells, and welds},
+}
+
+\newcommand{\fileversion}{2026-11}
+\newcommand{\filedate}{2026-11-21}
+\newcommand{\cadcmd}[1]{\texttt{\textbf{#1}}}
+\newcommand{\appid}[1]{\texttt{#1}}
+\newcommand{\caevar}[1]{\texttt{#1}}
+
+\title{%
+  The \textsf{LoadXData} AutoLISP toolkit%
+  \thanks{This file describes version~\fileversion\ (\filedate).}%
+}
+\author{%
+  Shijin Chen\\
+  \texttt{sjchen1998@gmail.com}%
+}
+\date{Printed \today\\[0.5em] Script date: \filedate\ (v\fileversion)}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\textsf{LoadXData.lsp} is an AutoCAD AutoLISP toolkit for annotating
+\textbf{beams}, \textbf{rods}, \textbf{shells}, and \textbf{welds} with
+CAE-oriented Extended Entity Data (XData) and matching visualisation
+blocks.  Data written into the drawing can be exported as DXF and consumed
+by TikZ~Studio
+(\path{dxf_to_satopdf2d.py}, \path{dxf_to_satopdf3d.py})
+to produce publication figures with the \textsf{satopdf} package.
+Default engineering units are millimetres, newtons, and derived forms
+(\texttt{N-mm}, \texttt{Nmm}, \texttt{MPa}, \ldots).
+\end{abstract}
+
+\tableofcontents
+\clearpage
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+\textsf{LoadXData} attaches structural analysis metadata to ordinary AutoCAD
+geometry and draws locked visualisation symbols on dedicated layers.  Typical
+pipeline:
+
+\begin{enumerate}[nosep]
+  \item Draw members as \texttt{LINE}s; shells as
+        \texttt{MESH}/\texttt{REGION}/\texttt{SURFACE}/\texttt{3DFACE}/\ldots;
+  \item Run interactive commands (\cadcmd{SETSEC}, \cadcmd{SETLOAD},
+        \cadcmd{SETBC}, \ldots) to store XData and create symbols;
+  \item Export DXF; import in TikZ~Studio to emit \textsf{satopdf} TikZ.
+\end{enumerate}
+
+\noindent\textbf{Licence / maintainer.}
+Copyright \textcopyright\ 2026 Shijin Chen.
+The Current Maintainer is Shijin Chen.
+This documentation describes \texttt{lisp/LoadXData.lsp}.
+
+%==============================================================================
+\section{Installation and loading}
+%==============================================================================
+
+\begin{enumerate}[nosep]
+  \item Add the repository \texttt{lisp/} folder to AutoCAD's trusted
+        support file search path (Options $\rightarrow$ Files).
+  \item In the AutoCAD command line:
+\begin{verbatim}
+(load "LoadXData.lsp")
+\end{verbatim}
+        On success the console prints a bilingual command summary and
+        registers all CAE APPIDs.
+  \item Optional: add the \texttt{(load \ldots)} form to
+        \texttt{acaddoc.lsp} for every new drawing.
+\end{enumerate}
+
+Requirements: AutoCAD with Visual~LISP (\texttt{vl-load-com}); tested on
+recent Windows AutoCAD releases.  No external ARX modules are required.
+
+%==============================================================================
+\section{Language, globals, and units}
+%==============================================================================
+
+\subsection{UI language}
+Prompts are bilingual.  Global \caevar{*CAE\_LANG*} is \texttt{"ZH"} or
+\texttt{"EN"} (default Chinese).  Command \cadcmd{SETLANG} toggles the
+language.  Unit tokens in menus remain ASCII (AutoCAD \texttt{initget}
+restriction).
+
+\subsection{Display scale globals}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Variable & Controls \\
+\midrule
+\caevar{*CAE\_SCALE\_LOAD*} & Beam/shell load arrows \\
+\caevar{*CAE\_SCALE\_BC*}   & Supports / springs / shell BC marks \\
+\caevar{*CAE\_SCALE\_SEC*}  & Section and shell-property glyphs \\
+\bottomrule
+\end{tabular}
+\end{center}
+Use \cadcmd{SETSCALE} to edit all three and rebuild symbols via
+\cadcmd{REFRESH\_ALL}.
+
+\subsection{Default engineering units}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Quantity & Default menu token (meaning) \\
+\midrule
+Distributed / edge line load & \texttt{N-mm} ($=$~N/mm); also \texttt{kN-m} \\
+Concentrated force           & \texttt{N}; also \texttt{kN} \\
+Concentrated moment          & \texttt{Nmm} ($=$~N$\cdot$mm); \texttt{Nm}, \texttt{kNm} \\
+Face pressure                & \texttt{MPa}; also \texttt{kPa} \\
+Translational spring $K$     & \texttt{N-mm} ($=$~N/mm) \\
+Rotational spring $K_R$      & \texttt{Nmm/rad} (menu: \texttt{Nmm-rad}) \\
+Lengths (thickness, welds)   & millimetres \\
+\bottomrule
+\end{tabular}
+\end{center}
+Legacy strings \texttt{N/mm}, \texttt{Nmm}, \texttt{kN/m} are normalised when
+read.
+
+%==============================================================================
+\section{Layers and visualisation}
+%==============================================================================
+
+Four locked visualisation layers (legacy \texttt{CAE\_LOAD\_VIS} is still
+cleared by refresh):
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Layer & Colour & Contents \\
+\midrule
+\texttt{CAE\_VIS\_LOAD} & red (1)     & Loads (beam + shell) \\
+\texttt{CAE\_VIS\_BC}   & cyan (4)    & BC, springs, shell BC \\
+\texttt{CAE\_VIS\_SEC}  & magenta (6) & Sections / shell props \\
+\texttt{CAE\_VIS\_WELD} & yellow (2)  & Spot / seam weld marks \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Toggle visibility (layer colour sign flip, no command-line spam):
+\cadcmd{TOGGLELOAD}, \cadcmd{TOGGLEBC}, \cadcmd{TOGGLESEC},
+\cadcmd{TOGGLEWELD}.
+
+Symbols are anonymous blocks linked bidirectionally to host entities by
+handle XData.  Delete commands accept either the host geometry or the
+symbol insert.  After scale changes or symbol corruption, run
+\cadcmd{REFRESH\_ALL}.
+
+%==============================================================================
+\section{Command overview}
+%==============================================================================
+
+{\small
+\begin{longtable}{@{}>{\ttfamily\raggedright\arraybackslash}p{0.38\linewidth}
+                  >{\raggedright\arraybackslash}p{0.54\linewidth}@{}}
+\toprule
+\normalfont\textbf{Command} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\normalfont\textbf{Command} & \textbf{Purpose} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+SETLANG & Toggle ZH/EN prompts \\
+SETROD / SETBEAM / DELKIND
+  & Mark LINE as rod / beam; clear kind (default beam) \\
+SETLOAD / DELLOAD
+  & Uniform distributed load on beams (not rods) \\
+SETPTLOAD / DELPTLOAD
+  & End point force (rod: axial $+/-$ only) \\
+SETMOMENT / DELMOMENT
+  & End moment (beams only) \\
+SETBC / DELBC
+  & Simple end BC (mask / plane / slide / rot.\ axis) \\
+ADDBC & Incremental compound BC at an end \\
+SETSPRING / DELSPRING
+  & End translational / rotational springs \\
+SETSEC / DELSEC
+  & Section type, material, orientation, offset \\
+SETSHELLLOAD / DELSHELLLOAD
+  & Shell edge line load or face pressure/force \\
+SETSHELL & Shell theory, thickness, offset, material \\
+ADDSHELLBC / DELSHELLBC
+  & Edge or face shell BC \\
+SETSPOTWELD / DELSPOTWELD
+  & Spot welds (POINT + yellow mark) \\
+SETSEAMWELD / DELSEAMWELD
+  & Seam weld on LINE/LWPOLYLINE/ARC \\
+SETSCALE & Edit display scales and refresh \\
+REFRESH\_ALL & Rebuild all CAE visualisation from XData \\
+TOGGLELOAD / TOGGLEBC / TOGGLESEC / TOGGLEWELD
+  & Show/hide visualisation layers \\
+\end{longtable}}
+
+%==============================================================================
+\section{Member kind: beam vs rod}
+%==============================================================================
+
+APPID \appid{MY\_CAE\_MEMBER\_KIND}: string \texttt{BEAM} or \texttt{ROD}
+(default if absent: beam).  Only \texttt{LINE} entities.
+
+\begin{itemize}[nosep]
+  \item \cadcmd{SETROD} --- rod: indivisible; only axial end forces
+        (\texttt{SETPTLOAD}, $+\,$tension / $-\,$compression along the
+        member); distributed load, moment, section orientation and offset
+        are ignored or refused.
+  \item \cadcmd{SETBEAM} --- restore beam behaviour.
+  \item \cadcmd{DELKIND} --- remove the kind XData (defaults to beam).
+\end{itemize}
+
+%==============================================================================
+\section{Beam loads}
+%==============================================================================
+
+\subsection{\cadcmd{SETLOAD} / \cadcmd{DELLOAD}}
+Select one or more \texttt{LINE}s (rods skipped).  Enter magnitude, unit
+(\texttt{N-mm}/\texttt{kN-m}), then direction via
+\texttt{Vector} (XYZ) or \texttt{Pick} (two points).  Writes
+\appid{MY\_CAE\_LOAD} and a red distributed-load block on
+\texttt{CAE\_VIS\_LOAD}.
+
+\subsection{\cadcmd{SETPTLOAD} / \cadcmd{DELPTLOAD}}
+Pick a LINE, then an endpoint (\texttt{START}/\texttt{END}).
+\begin{itemize}[nosep]
+  \item Beam: free-space force direction (\texttt{Vector}/\texttt{Pick}).
+  \item Rod: axial only; sign is tension/compression.
+\end{itemize}
+APPID \appid{MY\_CAE\_POINT\_LOAD}.
+
+\subsection{\cadcmd{SETMOMENT} / \cadcmd{DELMOMENT}}
+Beams only.  Endpoint moment magnitude, unit, axis
+(\texttt{BeamAxis}/\texttt{Vector}/\texttt{Pick}), and sense
+\texttt{CCW}/\texttt{CW}.  Stored with right-hand rule (CW flips the
+stored axis).  APPID \appid{MY\_CAE\_MOMENT}.
+
+%==============================================================================
+\section{Beam supports and springs}
+%==============================================================================
+
+\subsection{\cadcmd{SETBC} / \cadcmd{DELBC}}
+Simple end restraint, APPID \appid{MY\_CAE\_BC}:
+\begin{itemize}[nosep]
+  \item \texttt{Mask} --- six-bit string \texttt{UXUYUZRXRYRZ}
+        (default \texttt{111111}); global axes.
+  \item \texttt{Plane} --- fix translation normal to a plane (three points).
+  \item \texttt{Slide} --- fix the two directions orthogonal to a slide axis.
+  \item \texttt{RotAxis} --- fix rotation about beam axis or a picked line.
+\end{itemize}
+
+\subsection{\cadcmd{ADDBC}}
+Incremental compound restraint, APPID \appid{MY\_CAE\_COMP\_BC}.
+Repeatedly merge \texttt{Plane}/\texttt{Slide}/\texttt{RotAxis}/
+\texttt{FixAll} constraints at one end; visualisation shows combined
+$U$/$R$ masks.
+
+\subsection{\cadcmd{SETSPRING} / \cadcmd{DELSPRING}}
+Elastic end support, APPID \appid{MY\_CAE\_SPRING}:
+\texttt{Trans} ($K_x,K_y,K_z$), \texttt{Rot} ($KR_x,\ldots$), or
+\texttt{Both}.  Stiffnesses are entered as comma-separated numbers (not
+points, to avoid OSNAP pollution).
+
+%==============================================================================
+\section{Sections and materials}
+%==============================================================================
+
+\subsection{\cadcmd{SETSEC} / \cadcmd{DELSEC}}
+Batch-assign section data to selected \texttt{LINE}s
+(\appid{MY\_CAE\_SEC}).
+
+\paragraph{Section types.}
+\texttt{Angle}, \texttt{Channel}, \texttt{IBeam}, \texttt{Pipe},
+\texttt{RectTube}, \texttt{Circle}, \texttt{Rect}, \texttt{Custom}
+(keyword abbreviations avoid AutoCAD letter clashes:
+\texttt{cHannel}, \texttt{rTube}, \texttt{custoM}).
+
+\paragraph{Materials.}
+\texttt{Q235B}, \texttt{Q355B}, \texttt{45Steel}, \texttt{Al6061},
+\texttt{Concrete}, or \texttt{Other} (custom name).
+
+\paragraph{Orientation and offset.}
+For non-axisymmetric sections, pick a point off the beam that defines the
+local $Y$ axis.  Optional offset: direction point + distance~(mm).
+Pipes/circles and rods skip orientation/offset in the stored frame.
+
+%==============================================================================
+\section{Shells}
+%==============================================================================
+
+Supported host types (loads/props/BC): \texttt{MESH}, \texttt{REGION},
+\texttt{SURFACE}, \texttt{3DSOLID}, \texttt{3DFACE}, \texttt{LWPOLYLINE}.
+
+\subsection{\cadcmd{SETSHELL}}
+Writes \appid{MY\_CAE\_SHELL\_PROP} and geometry helper
+\appid{MY\_CAE\_SHELL\_GEOM}:
+\begin{itemize}[nosep]
+  \item Theory: \texttt{Shell3D} / \texttt{PlaneStress} / \texttt{PlaneStrain};
+  \item Thickness~(mm); optional mid-surface offset
+        (\texttt{Mid}/\texttt{Top}/\texttt{Bottom}/\texttt{Custom});
+  \item Material (same catalogue as beams).
+\end{itemize}
+
+\subsection{\cadcmd{SETSHELLLOAD} / \cadcmd{DELSHELLLOAD}}
+APPID \appid{MY\_CAE\_SHELL\_LOAD}.
+\begin{itemize}[nosep]
+  \item \texttt{Edge} --- line load along a straight edge (2~pts) or arc
+        (3~pts); unit \texttt{N-mm}/\texttt{kN-m}; global direction.
+  \item \texttt{Face} --- \texttt{Pressure} (MPa/kPa) or \texttt{Total}
+        force (N/kN); direction \texttt{Normal} or global
+        \texttt{Vector}.
+\end{itemize}
+
+\subsection{\cadcmd{ADDSHELLBC} / \cadcmd{DELSHELLBC}}
+APPID \appid{MY\_CAE\_SHELL\_BC}.  Prefer edge or face restraints (avoid
+single-node singularities):
+\texttt{FixAll}, \texttt{PinPlane}, \texttt{SlideLine},
+\texttt{RotAxis}.
+
+%==============================================================================
+\section{Welds}
+%==============================================================================
+
+\subsection{\cadcmd{SETSPOTWELD} / \cadcmd{DELSPOTWELD}}
+Creates a \texttt{POINT} host on layer~0 plus a yellow cross/circle mark.
+Modes: \texttt{Single} or \texttt{Along} (spacing along a segment).
+Nugget diameter~(mm); FE type \texttt{Acm}/\texttt{Cweld}/\texttt{Rbe}
+$\rightarrow$ ACM / CWELD / RBE2.
+APPID \appid{MY\_CAE\_SPOT\_WELD}.
+
+\subsection{\cadcmd{SETSEAMWELD} / \cadcmd{DELSEAMWELD}}
+Select exactly one path (\texttt{LINE}/\texttt{LWPOLYLINE}/\texttt{ARC}).
+Type \texttt{Fillet}/\texttt{Butt}; leg size and discretisation spacing
+in~mm.  Yellow zigzag visualisation.
+APPID \appid{MY\_CAE\_SEAM\_WELD}.
+
+%==============================================================================
+\section{Display utilities}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \cadcmd{SETSCALE} --- prompt for load / BC / section scales $(>0)$,
+        then call \cadcmd{REFRESH\_ALL}.
+  \item \cadcmd{REFRESH\_ALL} --- delete all CAE visualisation inserts and
+        rebuild from current XData (beams, shells, welds).
+\end{itemize}
+
+%==============================================================================
+\section{Registered APPIDs}
+%==============================================================================
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+APPID & Domain \\
+\midrule
+\appid{MY\_CAE\_LOAD}         & Distributed beam load \\
+\appid{MY\_CAE\_POINT\_LOAD}  & End point force \\
+\appid{MY\_CAE\_MOMENT}       & End moment \\
+\appid{MY\_CAE\_BC}           & Simple end BC \\
+\appid{MY\_CAE\_COMP\_BC}     & Compound end BC \\
+\appid{MY\_CAE\_SPRING}       & End springs \\
+\appid{MY\_CAE\_SEC}          & Beam section / material \\
+\appid{MY\_CAE\_MEMBER\_KIND} & BEAM / ROD \\
+\appid{MY\_CAE\_SHELL\_LOAD}  & Shell edge/face loads \\
+\appid{MY\_CAE\_SHELL\_PROP}  & Shell properties \\
+\appid{MY\_CAE\_SHELL\_GEOM}  & Shell loops / normal \\
+\appid{MY\_CAE\_SHELL\_BC}    & Shell BC \\
+\appid{MY\_CAE\_SPOT\_WELD}   & Spot weld \\
+\appid{MY\_CAE\_SEAM\_WELD}   & Seam weld \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Host and visualisation entities store each other's handles (\texttt{1005})
+so deletions stay consistent in both directions.
+
+%==============================================================================
+\section{Recommended workflow}
+%==============================================================================
+
+\begin{enumerate}[nosep]
+  \item Model geometry in millimetres; keep OSNAP on for ends and edges.
+  \item \cadcmd{SETBEAM}/\cadcmd{SETROD} as needed; \cadcmd{SETSEC} /
+        \cadcmd{SETSHELL} for properties.
+  \item Apply loads and BCs; use edge/face shell restraints rather than
+        single vertices.
+  \item Adjust symbol size with \cadcmd{SETSCALE}; hide clutter with
+        \texttt{TOGGLE*} commands.
+  \item Save / export DXF; import in TikZ~Studio for \textsf{satopdf}
+        figures.
+\end{enumerate}
+
+%==============================================================================
+\section{Troubleshooting}
+%==============================================================================
+
+\begin{itemize}[nosep]
+  \item \textbf{Rod refused a load or moment} --- by design; use axial
+        \cadcmd{SETPTLOAD} only.
+  \item \textbf{Layer not created yet} --- create any CAE annotation once,
+        or run a SET* command that registers apps and layers.
+  \item \textbf{Symbols out of date} --- \cadcmd{REFRESH\_ALL}.
+  \item \textbf{Esc during batch section write} --- next
+        \texttt{register-all-cae-apps} / batch begin cleans a leftover
+        unlock state.
+  \item \textbf{Keyword clash} --- enter the capitalised abbreviation
+        shown in brackets (e.g.\ \texttt{H} for Channel, \texttt{Q2}/\texttt{Q3}
+        for steels).
+\end{itemize}
+
+\end{document}
