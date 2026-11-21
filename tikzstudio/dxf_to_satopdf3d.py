@@ -20,6 +20,13 @@ from .cae_section_mass import (
     emit_struct_info_tex,
     format_length_mm_tex as _fmt_len_mm,
 )
+from .cae_face_curves import (
+    analytic_faces_from_entity,
+    curve_loops_as_polylines,
+    cylinder_extent_pts,
+    face_curve_loops_from_entity,
+    format_stp_analytic_face,
+)
 from .cae_welds import emit_weld_tex_3d, parse_seam_welds, parse_spot_welds
 from .dxf_import import _A0, _SCALE_N, _TO_CM, _sheet_scale
 
@@ -390,36 +397,50 @@ def dxf_to_satopdf3d(
         nodes[s.a] = s.a
         nodes[s.b] = s.b
 
-    # Shell faces (REGION / 3DFACE / MESH / …) + SETSHELLLOAD Face XDATA
+    # Shell faces: exact curve equations (line/arc/circle/spline), NOT FE tessellation.
     faces: list[dict] = []
     face_loads_by_idx: dict[int, dict] = {}
+    # Sampled boundary points for scale / envelope only (never emitted as FE nodes).
+    extent_pts: list[tuple] = []
+    _FACE_TYPES = (
+        "REGION",
+        "SURFACE",
+        "3DSOLID",
+        "3DFACE",
+        "MESH",
+        "LWPOLYLINE",
+        "CIRCLE",
+        "ELLIPSE",
+        "SPLINE",
+        "HATCH",
+    )
     for e in msp:
         layer = (e.dxf.layer or "").upper()
         if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
             continue
-        if e.dxftype() not in (
-            "REGION",
-            "SURFACE",
-            "3DSOLID",
-            "3DFACE",
-            "MESH",
-            "LWPOLYLINE",
-        ):
+        if e.dxftype() not in _FACE_TYPES:
             continue
-        loops = _face_loops_from_entity(e)
-        if not loops:
+        analytic = analytic_faces_from_entity(e)
+        if not analytic:
             continue
         shell_ld = None
         try:
             shell_ld = _parse_shell_load_xdata(e.get_xdata("MY_CAE_SHELL_LOAD"))
         except Exception:
             shell_ld = None
-        for loop in loops:
-            for p in loop:
-                nodes[p] = p
+        for af in analytic:
+            cen = _k(af.get("cen") or (0.0, 0.0, 0.0))
+            if af.get("kind") == "cylinder":
+                extent_pts.extend(cylinder_extent_pts(af, n=24))
+            else:
+                # plane / wire: use boundary samples
+                for poly in curve_loops_as_polylines(af.get("loops") or [], n=24):
+                    extent_pts.extend(_k(p) for p in poly)
             fi = len(faces)
-            faces.append({"pts": loop, "cen": _centroid(loop), "handle": e.dxf.handle})
+            faces.append({**af, "cen": cen, "handle": e.dxf.handle})
+            # Centroid node only when a face load needs an arrow tip
             if shell_ld is not None:
+                nodes[cen] = cen
                 face_loads_by_idx[fi] = shell_ld
 
     # Beam XDATA → vis-handle map for SETPTLOAD direction (fallback)
@@ -600,17 +621,29 @@ def dxf_to_satopdf3d(
     ]
 
     ordered = sorted(nodes.keys(), key=lambda t: (t[1], t[0], t[2]))
-    if not ordered:
+    if not ordered and not faces:
         raise ValueError("没有可转换的结构线段或板壳面")
+    # Axis / dim anchor: prefer structural nodes; else bbox corner of shell extents
+    if not ordered:
+        if extent_pts:
+            xs = [p[0] for p in extent_pts]
+            ys = [p[1] for p in extent_pts]
+            zs = [p[2] for p in extent_pts]
+            anchor = _k((min(xs), min(ys), min(zs)))
+        else:
+            anchor = (0.0, 0.0, 0.0)
+        nodes[anchor] = anchor
+        ordered = [anchor]
     nid = {p: f"N{i}" for i, p in enumerate(ordered)}
 
+    span_pts = list(ordered) + extent_pts
     if scale is None:
         scale, scale_n, to_cm, span_x_cm, span_y_cm = _auto_stp_dscale(
-            doc, ordered, view, coords
+            doc, span_pts, view, coords
         )
     else:
-        to_cm, _ins = _cae_unit_to_cm(doc, ordered)
-        span_x_cm, span_y_cm = _project_span_cm(ordered, to_cm, view, coords)
+        to_cm, _ins = _cae_unit_to_cm(doc, span_pts)
+        span_x_cm, span_y_cm = _project_span_cm(span_pts, to_cm, view, coords)
         if to_cm > 0 and scale > 0:
             approx = max(1, int(round(to_cm / scale)))
             scale_n = approx if approx in _SCALE_N else approx
@@ -689,8 +722,7 @@ def dxf_to_satopdf3d(
             )
 
     for face in faces:
-        names = ",".join(nid[p] for p in face["pts"])
-        L.append(f"  \\stpDface{{{names}}}")
+        L.extend(format_stp_analytic_face(face))
 
     # Welds after faces/members (above shell fill, before BC/loads)
     L.extend(emit_weld_tex_3d(spot_welds, seam_welds, nid))
@@ -726,11 +758,14 @@ def dxf_to_satopdf3d(
 
     for fi, info in sorted(face_loads_by_idx.items()):
         face = faces[fi]
-        names = ",".join(nid[p] for p in face["pts"])
+        # Tip at analytic centroid node (not a tessellated boundary)
+        cname = nid.get(face["cen"])
+        if not cname:
+            continue
         ddx, ddy, ddz = info["dir"]
         label = _face_load_label(info)
         L.append(
-            f"  \\stpDfaceload{{{names}}}{{{ddx:g},{ddy:g},{ddz:g}}}"
+            f"  \\stpDpointload{{{cname}}}{{{ddx:g},{ddy:g},{ddz:g}}}"
             f"[{load_shaft:g}][{label}]"
         )
 
@@ -746,12 +781,12 @@ def dxf_to_satopdf3d(
                 f"  \\node[stpLabel, {pos}=1.5mm] at ({nid[xyz]}) {{${lab}$}};"
             )
 
-    # Overall envelope dims — per-axis Δ via (…), default \stpDimOff
+    # Overall envelope dims from true shell extents (not load centroids alone)
     #   \stpDdimEnv{x}{x0}{y0}{z0}{Lx}[$L_x$]
-    #   \stpDdimEnv{y}{…}{Ly}(0.4cm)[$L_y$]
-    xs = [p[0] for p in ordered]
-    ys = [p[1] for p in ordered]
-    zs = [p[2] for p in ordered]
+    box_pts = span_pts if span_pts else ordered
+    xs = [p[0] for p in box_pts]
+    ys = [p[1] for p in box_pts]
+    zs = [p[2] for p in box_pts]
     xmin, xmax = min(xs), max(xs)
     ymin, ymax = min(ys), max(ys)
     zmin, zmax = min(zs), max(zs)
@@ -777,7 +812,7 @@ def dxf_to_satopdf3d(
                 + f"}}{{{lz:.4f}}}[$L_z={_fmt_len_mm(lz)}$]"
             )
 
-    mass_info = accumulate_from_dxf(doc, face_loops_fn=_face_loops_from_entity)
+    mass_info = accumulate_from_dxf(doc, face_loops_fn=face_curve_loops_from_entity)
     if mass_info["volume_mm3"] > 0:
         L.append(emit_struct_info_tex(mass_info["volume_mm3"], mass_info["mass_kg"]))
 

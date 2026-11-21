@@ -256,7 +256,9 @@ const EN = {
   '文件超过 20MB': 'File is larger than 20 MB',
   '无法读取这个 DXF': 'Cannot read this DXF',
   '文件是空的': 'The file is empty',
-  '没有可转换的直线、圆、弧或文字': 'No lines, circles, arcs, or text to convert'
+  '没有可转换的直线、圆、弧或文字': 'No lines, circles, arcs, or text to convert',
+  '没有可转换的直线、圆、弧、样条或文字': 'No lines, circles, arcs, splines, or text to convert',
+  '没有可转换的结构线段或板壳面': 'No structural members or shell faces to convert'
 };
 
 function t(s) {

@@ -75,12 +75,13 @@
 
 ### 导入 DXF 与 CAE 流程
 
-「导入 DXF」按**当前模板**分流：
+「导入 DXF」按**当前模板**分流，并会按文件内容自动升级：
 
-- **2D/3D 结构分析** → `satopdf`（含约束与载荷）；3D 还将板壳 `REGION`/`3DFACE`/`MESH` 转为 `\stpDface`，面载荷转为 `\stpDfaceload`
-- **其它模板** → 仅几何（线、多段线、圆、弧、椭圆、样条、文字），忽略 `CAE_VIS_*`；大图缩到约 16 cm，左下角到原点
+- **2D/3D 结构分析** → `satopdf`（含约束与载荷）；3D 将板壳 `REGION`/`SURFACE`/`3DFACE`/`MESH` 等转为方程边 `\stpDfaceEnv`（line/arc/circle/spline），面载荷落在形心
+- **其它模板** → 仅几何（线、多段线、圆、弧、椭圆、样条、文字），忽略 `CAE_VIS_*`；大图缩到约 A0 比例尺
+- **自动识别**：若 DXF 含 `REGION`/`SURFACE` 等板壳（或 CAE XData），即使当前是几何模板也会改走 3D/2D 结构导入，无需先手动切换模板
 
-推荐 CAE 管线：AutoCAD 中加载 `lisp/LoadXData.lsp`（`(load "LoadXData.lsp")`，需把 `lisp/` 加入支持路径）标注梁/杆/板壳/焊缝 → 导出 DXF → 在本应用打开 2D/3D 结构分析模板 → 导入 DXF → 编辑导出。
+推荐 CAE 管线：AutoCAD 中加载 `lisp/LoadXData.lsp`（`(load "LoadXData.lsp")`，需把 `lisp/` 加入支持路径）标注梁/杆/板壳/焊缝 → 导出 DXF → 在本应用「导入 DXF」→ 编辑导出。
 
 ### 快捷键（摘要）
 
@@ -191,12 +192,13 @@ Export PDF, 600 dpi PNG, or SVG. Desktop Save opens Save As for `.tex`.
 
 ### DXF import and CAE pipeline
 
-**Import DXF** follows the **active template**:
+**Import DXF** follows the **active template**, with content-based auto-upgrade:
 
-- **2D/3D SA** → `satopdf` (supports and loads); 3D also maps shell `REGION`/`3DFACE`/`MESH` to `\stpDface` and face loads to `\stpDfaceload`
-- **Other templates** → geometry only (lines, polylines, circles, arcs, ellipses, splines, text); skip `CAE_VIS_*`; scale large drawings to about 16 cm with the lower-left at the origin
+- **2D/3D SA** → `satopdf` (supports and loads); 3D maps shell `REGION`/`SURFACE`/`3DFACE`/`MESH` to equation edges `\stpDfaceEnv` (line/arc/circle/spline)
+- **Other templates** → geometry only (lines, polylines, circles, arcs, ellipses, splines, text); skip `CAE_VIS_*`; sheet scale fits A0
+- **Auto-detect**: shell or CAE DXFs are routed to struct3d/struct2d even from a geometry template
 
-Recommended CAE path: in AutoCAD, add `lisp/` to the support path and `(load "LoadXData.lsp")` to annotate beams/rods/shells/welds → export DXF → open the 2D/3D SA template here → Import DXF → edit and export.
+Recommended CAE path: in AutoCAD, add `lisp/` to the support path and `(load "LoadXData.lsp")` to annotate beams/rods/shells/welds → export DXF → Import DXF here → edit and export.
 
 ### Shortcuts (summary)
 

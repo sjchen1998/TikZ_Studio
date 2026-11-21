@@ -1,6 +1,7 @@
 import math
 import os
 import re
+from collections import Counter
 from io import BytesIO
 
 import ezdxf
@@ -43,6 +44,55 @@ def _sheet_scale(span_x, span_y):
 def _is_cae_vis_layer(layer: str) -> bool:
     u = (layer or "").upper()
     return u.startswith("CAE_VIS") or u.startswith("CAE_LOAD_VIS") or u == "CAE_LOAD_VIS"
+
+
+_SHELL_TYPES = ("REGION", "SURFACE", "3DSOLID", "3DFACE", "MESH")
+
+
+def sniff_dxf_import_mode(data: bytes) -> str | None:
+    """Suggest satopdf mode for shell / CAE DXFs; None → keep plain geometry import.
+
+    REGION / SURFACE / 3DFACE / MESH → struct3d (equation faces via satopdf).
+    CAE_VIS_* / MY_CAE_* without shells → struct2d, or struct3d if Z span is large.
+    """
+    if not data:
+        return None
+    try:
+        doc = _read(data)
+    except Exception:
+        return None
+    msp = doc.modelspace()
+    kinds: Counter[str] = Counter()
+    has_cae_layer = False
+    has_cae_xdata = False
+    zmin = zmax = None
+    for e in msp:
+        kinds[e.dxftype()] += 1
+        layer = (e.dxf.layer or "").upper()
+        if layer.startswith("CAE_"):
+            has_cae_layer = True
+        try:
+            xd = e.xdata
+            if xd is not None:
+                for app in xd.keys():
+                    if str(app).upper().startswith("MY_CAE"):
+                        has_cae_xdata = True
+                        break
+        except Exception:
+            pass
+        if e.dxftype() == "LINE":
+            for z in (float(e.dxf.start.z), float(e.dxf.end.z)):
+                zmin = z if zmin is None else min(zmin, z)
+                zmax = z if zmax is None else max(zmax, z)
+
+    shell_n = sum(kinds[t] for t in _SHELL_TYPES)
+    if shell_n > 0:
+        return "struct3d"
+    if has_cae_layer or has_cae_xdata:
+        if zmin is not None and zmax is not None and (zmax - zmin) > 1.0:
+            return "struct3d"
+        return "struct2d"
+    return None
 
 
 def dxf_to_tikz(data: bytes, name: str = "drawing.dxf", lang: str = "zh", *, skip_cae: bool = True):

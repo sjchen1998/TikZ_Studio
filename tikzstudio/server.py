@@ -840,6 +840,10 @@ async def import_dxf(
 ):
     """mode: struct2d | struct3d | geom (default).
     struct* → satopdf with BC/loads; geom → lines/arcs/splines only (skip CAE VIS).
+
+    When the client asks for geom (or 2D) but the DXF is shells / CAE 3D
+    (REGION, SURFACE, …), auto-upgrade to the matching satopdf importer so
+    files like Desktop/3d.dxf import without switching templates first.
     """
     data = await file.read()
     if len(data) > 20 * 1024 * 1024:
@@ -847,6 +851,13 @@ async def import_dxf(
     name = file.filename or "drawing.dxf"
     loc = "en" if lang == "en" else "zh"
     mode = (mode or "geom").strip().lower()
+    from .dxf_import import sniff_dxf_import_mode
+
+    sniffed = sniff_dxf_import_mode(data)
+    if sniffed == "struct3d" and mode in ("geom", "struct2d"):
+        mode = "struct3d"
+    elif sniffed == "struct2d" and mode == "geom":
+        mode = "struct2d"
     try:
         if mode == "struct2d":
             from .dxf_to_satopdf2d import dxf_to_satopdf2d

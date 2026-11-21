@@ -42,11 +42,36 @@
 }
 \date{Printed \today\\[0.5em] Package date: \filedate\ (v\fileversion)}
 
-% Compact figure + optional caption text (standard doc style, not dual-column)
+\usepackage{fancyvrb}
+\usepackage{verbatim}
+% Compact figure wrapper
 \newcommand{\STPfig}[1]{%
   \par\medskip
   \begin{center}#1\end{center}%
   \par\medskip}
+% Single-source example: body is written once, then typeset AND shown verbatim.
+% Figure and listing are always the same file (no duplicate / mismatched code).
+\newcounter{stpexn}
+\newenvironment{STPexample}{%
+  \par
+  \stepcounter{stpexn}%
+  \xdef\STPexfile{\jobname-stp\thestpexn.tex}%
+  \VerbatimEnvironment
+  \begin{VerbatimOut}{\STPexfile}%
+}{%
+  \end{VerbatimOut}%
+  \STPfig{\input{\STPexfile}}%
+  \par\smallskip
+  {\footnotesize\textit{TikZ source (generates the figure above):}}\par\nopagebreak
+  \verbatiminput{\STPexfile}%
+  \par\medskip
+}
+% Per-argument lists (every public command should use these)
+\newcommand{\STParg}[2]{\item \texttt{#1} --- #2}
+\newenvironment{STPargs}{%
+  \par\nopagebreak
+  \textit{Arguments:}\par\nopagebreak
+  \begin{itemize}[nosep,leftmargin=1.4em]}{\end{itemize}\par}
 
 \begin{document}
 \maketitle
@@ -89,6 +114,9 @@ This work consists of \texttt{satopdf.sty} and \texttt{satopdf.pdf}
 Control-sequence names never contain digits (TeX limitation).
 User macros use the \texttt{stp}/\texttt{stpD} prefixes.
 
+Every public command below lists \textbf{each} argument (required and
+optional) with its meaning and default.  Signatures alone are not enough.
+
 %==============================================================================
 \section{Installation and requirements}
 %==============================================================================
@@ -121,20 +149,10 @@ Appearance is controlled by TikZ picture keys and \cs{stpset}.
 
 \subsection{Minimal 2D (millimetre canvas)}
 
-\begin{verbatim}
-\begin{tikzpicture}[x=1mm,y=1mm,stpScheme=color]
-  \stpNode{A}{0,0}
-  \stpNode{B}{1000,0}
-  \stpNode{C}{2000,0}
-  \stpBeam{A}{B}
-  \stpBeam{B}{C}
-  \stpSupport{A}[type=wall, angle=270]
-  \stpSupport{C}[type=pin]
-  \stpPointLoad{B}{0,-1}[$F$]
-\end{tikzpicture}
-\end{verbatim}
+Paper scale \texttt{x=0.015mm} fits a 2000\,mm span on the page; supports use
+an explicit \texttt{size}.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[x=0.015mm,y=0.015mm,stpScheme=color]
   \stpNode{A}{0,0}
   \stpNode{B}{1000,0}
@@ -145,16 +163,23 @@ Appearance is controlled by TikZ picture keys and \cs{stpset}.
   \stpSupport{C}[type=pin, size=8mm]
   \stpset{force length=6mm}
   \stpPointLoad{B}{0,-1}[$F$]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Scaled sketch coordinates}
 
 \DescribeMacro{\stpScaling}
-\cs{stpScaling}\marg{factor} multiplies subsequent \cs{stpPoint} inputs.
+\cs{stpScaling}\marg{factor}\\*
+\textit{Purpose:} map large model coordinates into centimetre-scale TikZ
+units for sketch figures (paper glyph sizes stay independent).
+\begin{STPargs}
+  \STParg{factor}{multiplies subsequent \cs{stpPoint}/\cs{stpNode} inputs
+    (model units $\rightarrow$ TikZ units).  Does not affect paper-mm glyph sizes.}
+\end{STPargs}
 Default factor is~$1$ (TikZ centimetres).  Always set a scale when model
 numbers are large, or coordinates are treated as centimetres.
 
-\begin{verbatim}
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.08}
   \stpPoint{A}{0}{0}
@@ -163,11 +188,11 @@ numbers are large, or coordinates are treated as centimetres.
   \stpSupport{A}[type=pin, size=8mm]
   \stpPointLoad{B}{0,-1}[$F$]
 \end{tikzpicture}
-\end{verbatim}
+\end{STPexample}
 
 \subsection{Minimal 3D}
 
-\begin{verbatim}
+\begin{STPexample}
 \stpDsetView{1}{-1}{1}
 \renewcommand{\stpDscale}{0.08}
 \begin{tikzpicture}[stpDCoords,stpScheme=color]
@@ -176,17 +201,7 @@ numbers are large, or coordinates are treated as centimetres.
   \stpDmember{beam}{A}{B}
   \stpDaxis{A}
 \end{tikzpicture}
-\end{verbatim}
-
-\STPfig{%
-\stpDsetView{1}{-1}{1}%
-\renewcommand{\stpDscale}{0.08}%
-\begin{tikzpicture}[stpDCoords,stpScheme=color]
-  \stpDpoint{A}{0}{0}{0}
-  \stpDpoint{B}{28}{0}{0}
-  \stpDmember{beam}{A}{B}
-  \stpDaxis{A}
-\end{tikzpicture}}
+\end{STPexample}
 
 %==============================================================================
 \section{Colour schemes and \texttt{\textbackslash stpset}}
@@ -200,7 +215,7 @@ On each \texttt{tikzpicture}, set \texttt{stpScheme=color} or
 \texttt{mono}).  In black-and-white mode structural stroke colours become
 black.  Soft-red \textbf{shell face fills} are unchanged.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.055}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
@@ -209,7 +224,9 @@ black.  Soft-red \textbf{shell face fills} are unchanged.
   \stpset{force length=6mm}
   \stpPointLoad{B}{0,-1}[$F$]
 \end{tikzpicture}
-\qquad
+\end{STPexample}
+
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=bw]
   \stpScaling{0.055}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
@@ -218,8 +235,7 @@ black.  Soft-red \textbf{shell face fills} are unchanged.
   \stpset{force length=6mm}
   \stpPointLoad{B}{0,-1}[$F$]
 \end{tikzpicture}
-\par\smallskip
-{\footnotesize colour \qquad\qquad\qquad black-and-white}}
+\end{STPexample}
 
 \subsection{\cs{stpset}}
 
@@ -255,36 +271,62 @@ Key & Typical & Effect \\
 \subsection{Points}
 
 \DescribeMacro{\stpPoint}
-\cs{stpPoint}\marg{name}\marg{x}\marg{y} defines a coordinate multiplied by
-the current \cs{stpScaling} factor.
+\cs{stpPoint}\marg{name}\marg{x}\marg{y}\\*
+\textit{Purpose:} define a named 2D structural node in model units.
+\begin{STPargs}
+  \STParg{name}{TikZ coordinate name (e.g.\ \texttt{A}).}
+  \STParg{x}{horizontal model coordinate (scaled by \cs{stpScaling}).}
+  \STParg{y}{vertical model coordinate (scaled by \cs{stpScaling}).}
+\end{STPargs}
 
 \DescribeMacro{\stpNode}
-\cs{stpNode}\marg{name}\marg{x,y} accepts CAE comma syntax.
+\cs{stpNode}\marg{name}\marg{x,y}\\*
+\textit{Purpose:} same as \cs{stpPoint}, but with a CAE-style comma pair.
+DXF import (\texttt{dxf\_to\_satopdf2d}) emits \cs{stpNode} for mesh
+vertices.
+\begin{STPargs}
+  \STParg{name}{TikZ coordinate name.}
+  \STParg{x,y}{CAE comma pair; same meaning as \cs{stpPoint}'s $x$ and $y$.}
+\end{STPargs}
 
 \subsection{Members}
 
 \DescribeMacro{\stpMember}
-\cs{stpMember}\marg{type}\marg{A}\marg{B}\oarg{endA}\oarg{endB}
+\cs{stpMember}\marg{type}\marg{A}\marg{B}\oarg{endA}\oarg{endB}\\*
+\textit{Purpose:} draw one 2D member between two nodes (beam / fibre /
+truss / rod / ghost construction line).  DXF: LINE entities tagged
+\texttt{MY\_CAE\_MEMBER\_KIND=ROD} become \texttt{rod}; other beams map
+to \texttt{beam}/\texttt{truss} by importer heuristics; \texttt{MY\_CAE\_SEC}
+is noted in comments and does not change the stroke by itself.
+\begin{STPargs}
+  \STParg{type}{\texttt{beam}, \texttt{fiber}, \texttt{truss}, \texttt{rod}, or \texttt{ghost}.}
+  \STParg{A}{start node name.}
+  \STParg{B}{end node name.}
+  \STParg{[endA]}{end mark at $A$; default \texttt{0}.
+    Beam/fiber: nonzero $=$ solid joint dot.
+    Truss/rod: \texttt{0} $=$ draw default hinge/pin; nonzero $=$ suppress.}
+  \STParg{[endB]}{same as \texttt{endA}, at node $B$.}
+\end{STPargs}
 
 \begin{center}
 \begin{tabular}{@{}llp{0.46\textwidth}@{}}
 \toprule
-Type & Stroke & End marks \\
+Type & Stroke & End marks when \texttt{end*}=0 \\
 \midrule
-\texttt{beam}  & Thick black & \texttt{1} = solid joint dots \\
-\texttt{fiber} & Thick + fibre & same as beam \\
-\texttt{truss} & Medium & \texttt{0} = hollow hinges (default) \\
-\texttt{rod}   & Medium dark blue & \texttt{0} = thin full pin circles;
-  nonzero suppresses (use \cs{stpRodPin}) \\
+\texttt{beam}  & Thick black & none (optional solid dots if nonzero) \\
+\texttt{fiber} & Thick + fibre hatch & same as beam \\
+\texttt{truss} & Medium & hollow hinge circles \\
+\texttt{rod}   & Medium dark blue & thin full pin circles;
+  suppress and use \cs{stpRodPin} for gap pins \\
 \texttt{ghost} & Dashed & --- \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Shortcuts: \cs{stpBeam}, \cs{stpBeamFiber}, \cs{stpTruss}, \cs{stpRod},
-\cs{stpGhost}.
+Shortcuts (two required nodes only; ends default to \texttt{0}):
+\cs{stpBeam}, \cs{stpBeamFiber}, \cs{stpTruss}, \cs{stpRod}, \cs{stpGhost}.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.055}
   \stpPoint{A}{0}{0}\stpPoint{B}{35}{0}
@@ -297,44 +339,71 @@ Shortcuts: \cs{stpBeam}, \cs{stpBeamFiber}, \cs{stpTruss}, \cs{stpRod},
   \stpNotation{node}{B}{fiber}[below]
   \stpNotation{node}{C}{truss}[below]
   \stpNotation{node}{D}{rod}[below]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \paragraph{Rod end pins.}
 \DescribeMacro{\stpRodPin}
-\cs{stpRodPin}\marg{full\textbar gap}\marg{point}\oarg{beamA}\oarg{beamB}\oarg{rodOther}
-\begin{itemize}[nosep]
-  \item \texttt{full} --- thin hollow circle (default end mark);
-  \item \texttt{gap} --- partial circle on the rod side of a multi-beam joint.
-\end{itemize}
+\cs{stpRodPin}\marg{full\textbar gap}\marg{point}\oarg{beamA}\oarg{beamB}\oarg{rodOther}\\*
+\textit{Purpose:} draw the pin symbol at a rod end (full circle or a
+half-circle ``gap'' pin where a rod meets a continuous beam).  Drawing
+convention only --- not written by \texttt{LoadXData} / DXF import;
+add by hand when the figure needs an explicit gap pin.
+\begin{STPargs}
+  \STParg{full\textbar gap}{\texttt{full}: thin hollow circle (same as a default rod end).
+    \texttt{gap}: partial circle on the \emph{rod} side of a multi-beam joint.}
+  \STParg{point}{joint node where the pin is drawn (e.g.\ \texttt{J}).}
+  \STParg{[beamA]}{for \texttt{gap}: one continuous-beam neighbour of the joint
+    (default \texttt{0} unused for \texttt{full}).}
+  \STParg{[beamB]}{for \texttt{gap}: the other continuous-beam neighbour
+    (beam chord is \texttt{beamA}--\texttt{point}--\texttt{beamB}).}
+  \STParg{[rodOther]}{for \texttt{gap}: far end of the rod (not the joint).
+    Used with the beam chord to decide which half of the circle is kept.}
+\end{STPargs}
+\noindent For a gap pin at the rod--beam joint, suppress the default full pin on
+that rod end (\texttt{[1]} on \cs{stpMember}\{rod\}), then call \cs{stpRodPin}
+with \texttt{gap}.  Shortcuts: \cs{stpRodPinFull}\marg{point},
+\cs{stpRodPinGap}\marg{point}\marg{beamA}\marg{beamB}\marg{rodOther}.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.055}
   \stpPoint{R1}{-80}{0}\stpPoint{J}{0}{0}\stpPoint{R2}{80}{0}
-  \stpPoint{B1}{0}{50}\stpPoint{B2}{0}{-50}
+  \stpPoint{B1}{0}{30}\stpPoint{B2}{0}{-30}
   \stpMember{beam}{B1}{J}\stpMember{beam}{J}{B2}
   \stpMember{rod}{R1}{J}[0][1]\stpMember{rod}{J}{R2}[1][0]
   \stpRodPin{gap}{J}[B1][B2][R1]
   \stpSupport{R1}[type=pin, size=8mm]
   \stpSupport{R2}[type=roller, size=8mm]
-\end{tikzpicture}}
-
-\begin{verbatim}
-\stpMember{rod}{R1}{J}[0][1]
-\stpRodPin{gap}{J}[B1][B2][R1]
-\end{verbatim}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Supports and BC marks}
 
 \DescribeMacro{\stpSupport}
+Preferred key--value form:
 \begin{verbatim}
 \stpSupport{<node>}[type=..., angle=..., size=..., soft=..., fill=..., label=...]
 \end{verbatim}
-Types: \texttt{wall}, \texttt{fixed}, \texttt{pin}, \texttt{roller},
-\texttt{rollerX}, \texttt{slider}, \texttt{spring}/\texttt{elastic},
-\texttt{springCoil}, \texttt{torsion}, \texttt{torsionCW}.
+\textit{Purpose:} draw a support / spring glyph at a node (wall, fixed,
+pin, roller, slider, elastic spring, torsion, \ldots).  DXF:
+\texttt{MY\_CAE\_BC} masks map to support types; \texttt{MY\_CAE\_SPRING}
+is drawn as \texttt{type=spring} (optional \texttt{label=\$k\$}).
+\begin{STPargs}
+  \STParg{node}{support attachment node.}
+  \STParg{type=}{\texttt{wall}, \texttt{fixed}, \texttt{pin}, \texttt{roller},
+    \texttt{rollerX}, \texttt{slider}, \texttt{spring}/\texttt{elastic},
+    \texttt{springCoil}, \texttt{torsion}, \texttt{torsionCW}.}
+  \STParg{angle=}{rotation of the glyph about the node (degrees; default~$0$).}
+  \STParg{size=}{overall glyph size (paper length; e.g.\ \texttt{8mm}).}
+  \STParg{soft=}{soften hatch / fill style when true.}
+  \STParg{fill=}{triangle/roller fill: \texttt{hollow}, \texttt{black}, or a colour.}
+  \STParg{label=}{optional text next to the support.}
+\end{STPargs}
+Legacy positional form \cs{stpSupport}\marg{type}\marg{node}\oarg{angle} is
+still accepted.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.07}
   \stpPoint{A}{0}{0}\stpPoint{B}{25}{0}
@@ -348,42 +417,74 @@ Types: \texttt{wall}, \texttt{fixed}, \texttt{pin}, \texttt{roller},
   \stpSupport{D}[type=roller, size=8mm]
   \stpSupport{E}[type=slider, size=8mm]
   \stpSupport{F}[type=spring, size=8mm]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpSupportFromMask}
-\cs{stpSupportFromMask}\marg{UXUYUZRXRYRZ}\marg{node}\oarg{angle}
-maps a six-bit CAE mask to pin, fixed, roller, or slider.
+\cs{stpSupportFromMask}\marg{UXUYUZRXRYRZ}\marg{node}\oarg{angle}\\*
+\textit{Purpose:} choose a 2D support glyph from a six-bit
+\texttt{MY\_CAE\_BC} / \texttt{MY\_CAE\_COMP\_BC} style restraint mask
+(same bit order as LoadXData).  Handy when writing TeX by hand from a
+known CAE mask string.
+\begin{STPargs}
+  \STParg{UXUYUZRXRYRZ}{six-bit CAE mask string (each digit $0$/$1$).
+    Mapped glyphs: UX+UY+RZ $\rightarrow$ fixed; UX+UY $\rightarrow$ pin;
+    UY only $\rightarrow$ roller; UX only $\rightarrow$ rollerX; RZ only $\rightarrow$ slider.}
+  \STParg{node}{node to place the support on.}
+  \STParg{[angle]}{glyph rotation in degrees (default \texttt{0}).}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{C}{0}{0}
   \stpPoint{T}{0}{30}
   \stpBeam{C}{T}
   \stpSupportFromMask{110000}{C}[0]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpBCMark}
-\cs{stpBCMark}\marg{node}\marg{dx,dy}\oarg{label} --- CAE two-circle glyph
-along a unit direction (paper millimetres).
+\cs{stpBCMark}\marg{node}\marg{dx,dy}\oarg{label}\\*
+\textit{Purpose:} compact ``BC'' tip-mark (two circles + stem) when a
+full support glyph is too heavy.  Manual annotation --- not emitted by
+the DXF importer (which prefers \cs{stpSupport}).
+\begin{STPargs}
+  \STParg{node}{node at the first circle centre.}
+  \STParg{dx,dy}{direction of the stem (normalised); glyph size uses paper mm
+    (\cs{stpTipR}).}
+  \STParg{[label]}{optional text at the second circle (default empty).}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpPoint{N}{0}{0}
   \stpBCMark{N}{0,-1}[$BC$]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Hinges}
 
 \DescribeMacro{\stpHinge}
-\cs{stpHinge}\marg{type}\marg{point}\oarg{\ldots}
-Types: \texttt{full}, \texttt{gap}, \texttt{guide}, \texttt{axial},
-\texttt{corner}.
-For \texttt{gap}:
-\cs{stpHinge}\texttt{\{gap\}\{J\}[beamA][beamB][trussOther]}
-draws a half-hinge on the truss/rod side.
+\cs{stpHinge}\marg{type}\marg{point}\oarg{a}\oarg{b}\oarg{c}\\*
+\textit{Purpose:} hinge / release symbols on beams and trusses (full pin,
+gap pin at a truss--beam joint, guide/axial releases, corner fill).
+Not produced by DXF import; add when the SA sketch needs an explicit
+internal hinge.
+\begin{STPargs}
+  \STParg{type}{\texttt{full}, \texttt{gap}, \texttt{guide}, \texttt{axial},
+    or \texttt{corner}.}
+  \STParg{point}{hinge location node.}
+  \STParg{[a]\texttt{[b][c]}}{meaning depends on \texttt{type}:
+    \texttt{full} --- unused;
+    \texttt{gap} --- \texttt{[beamA][beamB][trussOther]} (half-circle on the
+    truss/rod side deduced from \texttt{trussOther});
+    \texttt{guide}/\texttt{axial} --- \texttt{[a]} $=$ rotation angle (deg);
+    \texttt{corner} --- \texttt{[a][b]} $=$ two neighbouring nodes that define
+    the filled corner wedge.}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
@@ -391,23 +492,67 @@ draws a half-hinge on the truss/rod side.
   \stpBeam{A}{B}\stpBeam{B}{C}\stpTruss{B}{T}
   \stpHinge{full}{A}
   \stpHinge{gap}{B}[A][C][T]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Loads and springs}
 
 \DescribeMacro{\stpLoad}
 \cs{stpLoad}\marg{force\textbar moment\textbar momentCW}\marg{point}%
-\oarg{rot}\oarg{len/sweep}\oarg{gap/radius}\oarg{label}
-Radius arguments need an explicit unit (e.g.\ \texttt{13mm}); a bare
-\texttt{4} is interpreted as $4\,\mathrm{cm}$.
+\oarg{rot}\oarg{len/sweep}\oarg{gap/radius}\oarg{label}\\*
+\textit{Purpose:} low-level point \emph{force} arrow or concentrated
+\emph{moment} arc (textbook curved arrow).  DXF path:
+\texttt{MY\_CAE\_MOMENT} (LoadXData \texttt{SETMOMENT}) $\rightarrow$
+\texttt{dxf\_to\_satopdf2d} emits
+\texttt{\textbackslash stpLoad\{moment\}\{N\}[30][200][0][\$M=\ldots\$]}
+--- i.e.\ the tunable moment form, not \cs{stpCouple}.
+\begin{STPargs}
+  \STParg{force\textbar moment\textbar momentCW}{glyph kind
+    (\texttt{momentCW} $=$ clockwise arc).}
+  \STParg{point}{application node.}
+  \STParg{[rot]}{force: polar direction of the arrow (deg).
+    Moment: rotation of the arc about the node.  Default \texttt{0}.}
+  \STParg{[len/sweep]}{force: shaft length (default \cs{stpForceL}).
+    Moment: sweep angle in degrees (default \cs{stpMomentAng}).
+    Use \texttt{0} to keep the default.}
+  \STParg{[gap/radius]}{force: gap from node to arrow tail (default
+    \cs{stpForceDist}).  Moment: arc radius --- give an explicit unit
+    (e.g.\ \texttt{13mm}); a bare \texttt{4} means $4\,\mathrm{cm}$.
+    \texttt{0} $=$ half of \cs{stpSupL}.}
+  \STParg{[label]}{optional annotation text.}
+\end{STPargs}
 
 \DescribeMacro{\stpPointLoad}
-\cs{stpPointLoad}\marg{point}\marg{dx,dy}\oarg{label}
+\cs{stpPointLoad}\marg{point}\marg{dx,dy}\oarg{label}\\*
+\textit{Purpose:} concentrated force in CAE vector form (tip circle on
+the node + shaft pulled back along $-\mathbf{d}$).  DXF:
+\texttt{MY\_CAE\_POINT\_LOAD} $\rightarrow$ \cs{stpPointLoad} (2D) /
+\cs{stpDpointload} (3D).
+\begin{STPargs}
+  \STParg{point}{node where the tip sits (tip circle on the member).}
+  \STParg{dx,dy}{force direction (normalised); arrow points that way.}
+  \STParg{[label]}{optional text near the tail.}
+\end{STPargs}
 
 \DescribeMacro{\stpCouple}
-\cs{stpCouple}\marg{point}\marg{cw\textbar ccw}\oarg{label}
+\cs{stpCouple}\marg{point}\marg{cw\textbar ccw}\oarg{label}\\*
+\textit{Purpose:} draw a \textbf{couple} (concentrated moment) as a
+curved arrow about a node.  Thin wrapper: \texttt{cw} $\equiv$
+\cs{stpLoad}\texttt{\{momentCW\}}, \texttt{ccw} $\equiv$
+\cs{stpLoad}\texttt{\{moment\}}, both with package default
+sweep/radius.\\*
+\textit{DXF:} \textbf{not} emitted by the importer.  Tagged moments from
+\texttt{MY\_CAE\_MOMENT} always become \cs{stpLoad}\texttt{\{moment\}}
+with explicit geometry.  Use \cs{stpCouple} in hand-written textbook
+sketches when default arc size is enough; use \cs{stpLoad}\{moment\}
+when you need the same control as the DXF output.
+\begin{STPargs}
+  \STParg{point}{node at the couple centre.}
+  \STParg{cw\textbar ccw}{sense (\texttt{cw} $\rightarrow$ \texttt{momentCW}).}
+  \STParg{[label]}{optional text.}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{A}{0}{0}\stpPoint{B}{45}{0}\stpPoint{C}{90}{0}
@@ -416,112 +561,205 @@ Radius arguments need an explicit unit (e.g.\ \texttt{13mm}); a bare
   \stpPointLoad{A}{0,-1}[$F$]
   \stpLoad{moment}{B}[0][200][13mm][$M$]
   \stpCouple{C}{ccw}[$M_c$]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpLineLoad}
 \cs{stpLineLoad}\marg{local\textbar global}\marg{A}\marg{B}%
-\oarg{endA}\oarg{endB}\oarg{interval}\oarg{label}
-draws a \textbf{double-rail} envelope (inner tip rail above the member,
-outer head rail) with arrows between the rails.  Optional \texttt{endA}/
-\texttt{endB} are centimetres added to the shaft; there are \emph{no}
-tip circles on the member.
+\oarg{endA}\oarg{endB}\oarg{interval}\oarg{label}\\*
+\textit{Purpose:} distributed line load $q$ as a \textbf{double-rail}
+envelope (inner tip rail + outer head rail) with arrows between the
+rails; \emph{no} tip circles on the member.  DXF: \texttt{MY\_CAE\_LOAD}
+with downward global direction $\rightarrow$
+\texttt{\textbackslash stpLineLoad\{global\}\ldots}.
+\begin{STPargs}
+  \STParg{local\textbar global}{\texttt{local}: shafts along the member normal;
+    \texttt{global}: shafts in global $-Y$.}
+  \STParg{A}{start node of the loaded segment.}
+  \STParg{B}{end node of the loaded segment.}
+  \STParg{[endA]}{extra shaft length at $A$ in centimetres (default \texttt{1}).}
+  \STParg{[endB]}{extra shaft length at $B$ in centimetres (default \texttt{1}).}
+  \STParg{[interval]}{nominal spacing fraction along $AB$ (default
+    \cs{stpLineInterval}); converted to a uniform arrow count including ends.}
+  \STParg{[label]}{optional load intensity label.}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{A}{0}{0}\stpPoint{B}{50}{0}
   \stpBeam{A}{B}
   \stpLineLoad{global}{A}{B}[0.35][0.35][0.2][$q$]
 \end{tikzpicture}
-\par\smallskip{\footnotesize\texttt{\textbackslash stpLineLoad\{global\}\ldots}}}
+\end{STPexample}
+
 
 \DescribeMacro{\stpLineLoadCAE}
-\cs{stpLineLoadCAE}\marg{A}\marg{B}\marg{dx,dy}\oarg{label}\oarg{count}
-is the CAE vector form: tip circles sit on the member, a single rail
-connects the arrow tails, and \texttt{count} sets the number of arrows
-(default \cs{stpLineCount}).
+\cs{stpLineLoadCAE}\marg{A}\marg{B}\marg{dx,dy}\oarg{label}\oarg{count}\\*
+\textit{Purpose:} distributed $q$ in CAE vector form (tip circles on the
+member + one rail through the tails).  DXF: \texttt{MY\_CAE\_LOAD} when
+the direction is not plain global $-Y$ $\rightarrow$ \cs{stpLineLoadCAE}.
+\begin{STPargs}
+  \STParg{A}{start node.}
+  \STParg{B}{end node.}
+  \STParg{dx,dy}{load direction (normalised).}
+  \STParg{[label]}{optional text.}
+  \STParg{[count]}{number of arrows (default \cs{stpLineCount}).}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{A}{0}{0}\stpPoint{B}{50}{0}
   \stpBeam{A}{B}
   \stpLineLoadCAE{A}{B}{0,-1}[$q$][5]
 \end{tikzpicture}
-\par\smallskip{\footnotesize\texttt{\textbackslash stpLineLoadCAE}\ldots}}
+\end{STPexample}
+
 
 \DescribeMacro{\stpSpringK}
-\cs{stpSpringK}\marg{point}\marg{angle}\oarg{label}
+\cs{stpSpringK}\marg{point}\marg{angle}\oarg{label}\\*
+\textit{Purpose:} translational spring glyph ($K$) at a node.  DXF spring
+supports more often use \cs{stpSupport}\texttt{[type=spring]} from
+\texttt{MY\_CAE\_SPRING}; this macro is the standalone zigzag form for
+hand sketches.
+\begin{STPargs}
+  \STParg{point}{attachment node (tip circle).}
+  \STParg{angle}{rotation of the zigzag about the node (deg; $-90$ $=$ down).}
+  \STParg{[label]}{optional $K$ text.}
+\end{STPargs}
 
 \DescribeMacro{\stpSpringKR}
-\cs{stpSpringKR}\marg{point}\oarg{label}
-(arc uses a simple \texttt{->} tip).
+\cs{stpSpringKR}\marg{point}\oarg{label}\\*
+\textit{Purpose:} rotational spring glyph ($K_R$) about a node (arc with
+\texttt{->} tip).  Manual annotation; LoadXData stores ROT stiffness in
+\texttt{MY\_CAE\_SPRING} but the 2D importer currently draws the
+translational spring support, not this arc.
+\begin{STPargs}
+  \STParg{point}{node at the rotational spring.}
+  \STParg{[label]}{optional $K_R$ text.}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpPoint{A}{0}{0}\stpPoint{B}{3}{0}
   \stpSpringK{A}{-90}[$K$]
   \stpSpringKR{B}[$K_R$]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Internal forces and deformation}
 
 \DescribeMacro{\stpMomentDiagram}
-\cs{stpMomentDiagram}\oarg{qy=,scale=,label=,color=}\marg{A}\marg{B}\marg{Ms}\marg{Me}
-builds
+\cs{stpMomentDiagram}\oarg{qy=,scale=,label=,color=}\marg{A}\marg{B}\marg{Ms}\marg{Me}\\*
+\textit{Purpose:} plot a bending-moment envelope on member $AB$ from end
+values $M_s$, $M_e$ (optional uniform $q_y$).  Post-processing /
+textbook diagram --- not from DXF XData.
+\begin{STPargs}
+  \STParg{[qy=]}{uniform transverse load intensity in the $M$ formula
+    (default~$0$).}
+  \STParg{[scale=]}{multiplies $M$ to paper millimetres (default \cs{stpMomScale}).}
+  \STParg{[label=]}{optional diagram label.}
+  \STParg{[color=]}{stroke colour (default moment colour).}
+  \STParg{A}{member start node.}
+  \STParg{B}{member end node.}
+  \STParg{Ms}{bending moment at $A$.}
+  \STParg{Me}{bending moment at $B$.}
+\end{STPargs}
+Builds
 \[
   M(\xi)=M_s(1-\xi)+M_e\xi-\tfrac12 q_y L^2\xi(1-\xi),
 \]
-where $L$ is the drawn member length in millimetres and offsets are
-$M\cdot\texttt{scale}$ in millimetres.  Verticals at the ends close the
-envelope to the beam; they are not extra kinks in $M(x)$.
-Diagram strokes use thin \texttt{stpMoment}/\texttt{stpShear} styles
-(never beam weight).
+where $L$ is the drawn member length in millimetres.  End verticals close
+the envelope to the beam (not kinks in $M(x)$).  Thin diagram strokes only.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.06}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
   \stpBeam{A}{B}
   \stpMomentDiagram[qy=0.08,scale=1.2]{A}{B}{0}{0}
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpInternalForces}
 \cs{stpInternalForces}\marg{A}\marg{B}\marg{vA}\marg{vB}\oarg{parabola}%
-\oarg{color}\oarg{bendpos}
---- offsets in centimetres of paper.
+\oarg{color}\oarg{bendpos}\\*
+\textit{Purpose:} generic internal-force / shear-style envelope between
+two end offsets (optional parabolic bulge).  Hand-drawn result diagrams;
+no DXF source.
+\begin{STPargs}
+  \STParg{A}{member start.}
+  \STParg{B}{member end.}
+  \STParg{vA}{envelope offset at $A$ (paper cm).}
+  \STParg{vB}{envelope offset at $B$ (paper cm).}
+  \STParg{[parabola]}{nonzero $=$ parabolic bulge between ends (default \texttt{0}).}
+  \STParg{[color]}{stroke colour (default \cs{stpClrShear}).}
+  \STParg{[bendpos]}{relative station of the bulge peak (default \texttt{0.6667}).}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.06}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
   \stpBeam{A}{B}
   \stpInternalForces{A}{B}{0.55}{-0.4}[0][\stpClrShear]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpDeform}
-\cs{stpDeform}\marg{A}\marg{B}\marg{uxA,uyA}\marg{uxB,uyB}\oarg{scale}
-displacements are multiplied by the deform scale (default~$30$).
+\cs{stpDeform}\marg{A}\marg{B}\marg{uxA,uyA}\marg{uxB,uyB}\oarg{scale}\\*
+\textit{Purpose:} draw the deformed member chord from nodal
+displacements (amplified).  Result plot only --- not from DXF.
+\begin{STPargs}
+  \STParg{A}{undeformed start node.}
+  \STParg{B}{undeformed end node.}
+  \STParg{uxA,uyA}{displacement components at $A$ (model units).}
+  \STParg{uxB,uyB}{displacement components at $B$.}
+  \STParg{[scale]}{visual amplification (default \cs{stpDefScale}=$30$).}
+\end{STPargs}
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.06}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}
   \stpBeam{A}{B}
   \stpDeform{A}{B}{0,0}{0,-0.12}[1]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Dimensioning and notation}
 
 \DescribeMacro{\stpDimensioning}
 \cs{stpDimensioning}\marg{horiz\textbar vert\textbar parallel}\marg{A}\marg{B}%
-\marg{offset}\oarg{label}
---- \texttt{horiz}/\texttt{vert} offsets are absolute TikZ coordinates.
+\marg{offset}\oarg{label}\\*
+\textit{Purpose:} general 2D dimension line between two nodes (horizontal,
+vertical, or parallel to $AB$).
+\begin{STPargs}
+  \STParg{horiz\textbar vert\textbar parallel}{dimension orientation.
+    \texttt{horiz}/\texttt{vert}: \texttt{offset} is an absolute TikZ
+    coordinate of the dimension line; \texttt{parallel}: offset is a
+    signed distance from $AB$.}
+  \STParg{A}{first endpoint.}
+  \STParg{B}{second endpoint.}
+  \STParg{offset}{see orientation above.}
+  \STParg{[label]}{optional dimension text.}
+\end{STPargs}
 
 \DescribeMacro{\stpDimX}\DescribeMacro{\stpDimY}
-Envelope dimensions with optional paper $\Delta$ in parentheses.
+\cs{stpDimX}\marg{A}\marg{B}\oarg{$\Delta$}\oarg{label}\quad
+\cs{stpDimY}\marg{A}\marg{B}\oarg{$\Delta$}\oarg{label}\\*
+\textit{Purpose:} overall envelope dimensions ($L_x$, $L_y$).  DXF 2D
+import adds \cs{stpDimX}/\cs{stpDimY} from the mesh bounding box.
+\begin{STPargs}
+  \STParg{A,B}{segment ends (envelope edges).}
+  \STParg{($\Delta$)}{paper offset distance in parentheses
+    (default \cs{stpDimOff}); omit parentheses to use the default.}
+  \STParg{[label]}{optional text.}
+\end{STPargs}
+\cs{stpDim} is \texttt{parallel} shorthand.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{SW}{0}{0}\stpPoint{SE}{40}{0}
@@ -529,44 +767,134 @@ Envelope dimensions with optional paper $\Delta$ in parentheses.
   \stpGhost{SW}{SE}\stpGhost{SE}{NE}\stpGhost{NE}{NW}\stpGhost{NW}{SW}
   \stpDimX{SW}{SE}(0.35cm)[$L_x$]
   \stpDimY{SW}{NW}[$L_y$]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpNotation}
+\cs{stpNotation}\marg{kind}\marg{arg2}\marg{arg3}\oarg{\ldots}\\*
+\textit{Purpose:} text / tick / section / boxed labels on the sketch.
+Annotation only; not from DXF.
+\begin{STPargs}
+  \STParg{kind}{\texttt{node}, \texttt{tick}, \texttt{section}, \texttt{boxed},
+    \texttt{plain}, or \texttt{circled}.}
+  \STParg{arg2/arg3/\ldots}{for \texttt{node}/\texttt{tick}/\texttt{circled}:
+    \texttt{\{point\}\{text\}[anchor]};
+    for \texttt{section}/\texttt{boxed}/\texttt{plain}:
+    \texttt{\{A\}\{B\}} then label / position / style options
+    (\texttt{[anchor]}, \texttt{[pos]}, \texttt{[above]}, \texttt{[sloped]}).}
+\end{STPargs}
+
 \DescribeMacro{\stpTemperature}
+\cs{stpTemperature}\marg{A}\marg{B}\marg{dBot}\marg{dTop}\oarg{pos}\oarg{labBot}\oarg{labTop}\oarg{ancBot}\oarg{ancTop}\\*
+\textit{Purpose:} temperature-gradient marks across a member (top/bottom
+$\Delta T$).  Textbook load case; no DXF tag.
+\begin{STPargs}
+  \STParg{A,B}{member ends.}
+  \STParg{dBot}{temperature-offset depth toward the ``bottom'' side (cm).}
+  \STParg{dTop}{same toward the ``top'' side.}
+  \STParg{[pos]}{relative station along $AB$ (default \texttt{0.5}).}
+  \STParg{[labBot]/[labTop]}{optional labels.}
+  \STParg{[ancBot]/[ancTop]}{TikZ anchors (defaults \texttt{below}/\texttt{above}).}
+\end{STPargs}
+
 \DescribeMacro{\stpInfluenceLine}
+\cs{stpInfluenceLine}\marg{A}\marg{B}\marg{height}\oarg{pos}\\*
+\textit{Purpose:} schematic influence-line bar with a unit-load marker.
+Teaching figure only; not from DXF.
+\begin{STPargs}
+  \STParg{A,B}{span ends.}
+  \STParg{height}{offset of the influence bar above the member (cm).}
+  \STParg{[pos]}{relative position of the unit load marker (default \texttt{0.5}).}
+\end{STPargs}
+
 \DescribeMacro{\stpAddon}
+\cs{stpAddon}\marg{section\textbar angle\textbar arc}\marg{P}\marg{Q}\marg{R}\oarg{side}\\*
+\textit{Purpose:} small geometry add-ons --- section cut marks, angle
+marks, or double arcs.  Manual drafting aids.
+\begin{STPargs}
+  \STParg{kind}{\texttt{section}, \texttt{angle}, or \texttt{arc}.}
+  \STParg{section}{\texttt{\{A\}\{B\}\{pos\}} --- cut marks at relative
+    station \texttt{pos} along $AB$ (\texttt{R}$=$\texttt{pos}; \texttt{[side]} unused).}
+  \STParg{angle}{\texttt{\{vertex\}\{P1\}\{P2\}[side]} --- angle mark at
+    \texttt{vertex} toward \texttt{P1}/\texttt{P2}; \texttt{side} \texttt{1}/\texttt{0}
+    flips the kink (default \texttt{1}).}
+  \STParg{arc}{\texttt{\{vertex\}\{P1\}\{P2\}[side]} --- double arc clip
+    between directions \texttt{P1}/\texttt{P2}; \texttt{side} selects clip.}
+\end{STPargs}
+
 \DescribeMacro{\stpAxisXY}
-Auxiliary annotations.
+\cs{stpAxisXY}\oarg{length}\marg{origin}\\*
+\textit{Purpose:} small 2D $x$--$y$ triad at a node (local / global cue).
+\begin{STPargs}
+  \STParg{[length]}{axis length (default \texttt{12mm}).}
+  \STParg{origin}{node at the triad origin.}
+\end{STPargs}
 
 \subsection{Welds and mass box}
 
 \DescribeMacro{\stpSpotWeld}
-\cs{stpSpotWeld}\marg{node}\oarg{radius}\oarg{label}
+\cs{stpSpotWeld}\marg{node}\oarg{radius}\oarg{label}\\*
+\textit{Purpose:} spot-weld mark at a node.  DXF:
+\texttt{MY\_CAE\_SPOT\_WELD} $\rightarrow$ \cs{stpSpotWeld} /
+\cs{stpDspotWeld}.
+\begin{STPargs}
+  \STParg{node}{weld centre.}
+  \STParg{[radius]}{paper mm (default \cs{stpWeldR}).}
+  \STParg{[label]}{optional text.}
+\end{STPargs}
 
 \DescribeMacro{\stpSeamWeld}
-\cs{stpSeamWeld}\marg{A}\marg{B}\oarg{label}
+\cs{stpSeamWeld}\marg{A}\marg{B}\oarg{label}\\*
+\textit{Purpose:} seam-weld stroke between two nodes.  DXF:
+\texttt{MY\_CAE\_SEAM\_WELD} $\rightarrow$ \cs{stpSeamWeld} /
+\cs{stpDseamWeld} (or path form).
+\begin{STPargs}
+  \STParg{A,B}{seam endpoints.}
+  \STParg{[label]}{optional text at midspan.}
+\end{STPargs}
 
 \DescribeMacro{\stpSeamWeldPath}
-\cs{stpSeamWeldPath}\marg{N1,N2,\ldots}\oarg{label}
+\cs{stpSeamWeldPath}\marg{N1,N2,\ldots}\oarg{label}\\*
+\textit{Purpose:} multi-segment seam weld along an ordered node path.
+\begin{STPargs}
+  \STParg{N1,N2,\ldots}{ordered polyline of node names.}
+  \STParg{[label]}{optional text near the first node.}
+\end{STPargs}
 
 Weld colour is \cs{stpClrWeld}.  Radii are paper millimetres.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[stpScheme=color]
   \stpScaling{0.065}
   \stpPoint{A}{0}{0}\stpPoint{B}{40}{0}\stpPoint{C}{20}{25}
   \stpBeam{A}{B}\stpBeam{B}{C}
   \stpSpotWeld{B}[\stpWeldR][$w$]
   \stpSeamWeld{A}{B}
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpStructInfo}
-\cs{stpStructInfo}\marg{$V=\ldots$}\marg{$m=\ldots$}
-places a small box at the upper-right of the current picture bbox.
+\cs{stpStructInfo}\marg{V-line}\marg{m-line}\\*
+\textit{Purpose:} volume / mass box in the upper-right of the picture.
+DXF: filled from section mass accumulation
+(\texttt{MY\_CAE\_SEC} / shell props) when volume $>0$.
+\begin{STPargs}
+  \STParg{V-line}{first line of the mass box (e.g.\ \texttt{\$V=\ldots\$}).}
+  \STParg{m-line}{second line (e.g.\ \texttt{\$m=\ldots\$}).}
+\end{STPargs}
+Box anchors to the upper-right of the current picture bounding box.
 
 \DescribeMacro{\stpFace}
-\cs{stpFace}\marg{N1,N2,\ldots} --- soft-red 2D plate fill
-(scheme-independent).
+\cs{stpFace}\marg{N1,N2,\ldots}\quad or\quad
+\cs{stpFace}\texttt{\{\{outer\ldots\},\{hole\ldots\},\{hole\ldots\}\}}\\*
+\textit{Purpose:} soft-red plate fill (2D).  One loop, or outer + holes
+with TikZ \texttt{even odd rule}.  Semicolon form
+\texttt{outer;hole;hole} is also accepted.
+\begin{STPargs}
+  \STParg{N1,N2,\ldots}{$\ge3$ node names for a single outer loop.}
+  \STParg{\{\{outer\},\{hole\},\{hole\}\}}{multiple loops; first $=$ outer,
+    rest $=$ holes (transparent cutouts).}
+\end{STPargs}
 
 %==============================================================================
 \section{Three-dimensional interface}
@@ -578,22 +906,48 @@ places a small box at the upper-right of the current picture bbox.
 Call \textbf{before} \texttt{\textbackslash begin\{tikzpicture\}}:
 
 \DescribeMacro{\stpDsetView}
-\cs{stpDsetView}\marg{vx}\marg{vy}\marg{vz}\oarg{\ldots}
---- AutoCAD-style VPOINT.
+\cs{stpDsetView}\marg{vx}\marg{vy}\marg{vz}\oarg{sx}\oarg{sy}\oarg{sz}\oarg{ux,uy,uz}\\*
+\textit{Purpose:} set the 3D camera like AutoCAD VPOINT (eye $\rightarrow$
+origin).  Must run \textbf{outside} \texttt{tikzpicture}.  Used by
+\texttt{dxf\_to\_satopdf3d} / SA3D templates.
+\begin{STPargs}
+  \STParg{vx,vy,vz}{viewpoint / eye direction components.}
+  \STParg{[sx][sy][sz]}{axis foreshortening scales (default \texttt{1}).}
+  \STParg{[ux,uy,uz]}{optional up-vector; empty $=$ default up.}
+\end{STPargs}
 
 \DescribeMacro{\stpDsetViewDir}
-Alternative direction setter.
+\cs{stpDsetViewDir}\marg{dx}\marg{dy}\marg{dz}\oarg{sx}\oarg{sy}\oarg{sz}\oarg{ux,uy,uz}\\*
+\textit{Purpose:} same as \cs{stpDsetView}, but the triple is AutoCAD
+VIEWDIR (look direction) rather than VPOINT.
 
 \DescribeMacro{\stpDsetCoords}
-\cs{stpDsetCoords}\marg{x-ang}\marg{y-ang}\oarg{Dx}\oarg{Dy}\oarg{Dz}\oarg{z-ang}
---- legacy paper-angle oblique projection.
+\cs{stpDsetCoords}\marg{x-ang}\marg{y-ang}\oarg{Dx}\oarg{Dy}\oarg{Dz}\oarg{z-ang}\\*
+\textit{Purpose:} legacy paper-angle oblique projection (prefer
+\cs{stpDsetView} for new drawings).
+\begin{STPargs}
+  \STParg{x-ang}{paper angle of the $+x$ axis (deg).}
+  \STParg{y-ang}{paper angle of the $+y$ axis (deg).}
+  \STParg{[Dx][Dy][Dz]}{foreshortening lengths (default \texttt{1}; negatives
+    fold into angle${}+180$).}
+  \STParg{[z-ang]}{paper angle of $+z$ (default \texttt{90}).}
+\end{STPargs}
 
 \DescribeMacro{\stpDsetAxis}
-\cs{stpDsetAxis}\marg{xyz\textbar XYZ\textbar custom}\oarg{labels\ldots}
+\cs{stpDsetAxis}\marg{xyz\textbar XYZ\textbar custom}\oarg{labX}\oarg{labY}\oarg{labZ}\oarg{labX'}\oarg{labY'}\oarg{labZ'}\\*
+\textit{Purpose:} choose axis label strings used later by \cs{stpDaxis}.
+\begin{STPargs}
+  \STParg{xyz\textbar XYZ\textbar custom}{label scheme for \cs{stpDaxis}.}
+  \STParg{[lab\ldots]}{only for \texttt{custom}: six label texts
+    (global $x,y,z$ then local $x',y',z'$).}
+\end{STPargs}
 
 \DescribeMacro{\stpInitDimDelta}
-Initialises paper $\Delta$ for envelope dimensions (run outside the
-picture, before \texttt{tikzpicture}).
+No arguments.\\*
+\textit{Purpose:} initialise paper $\Delta$ for 3D envelope dimensions
+(font metrics unavailable inside the picture).  Run \textbf{outside}
+\texttt{tikzpicture} (templates also call it explicitly; \texttt{stpDCoords}
+re-runs it at begin picture).
 
 Picture options: \texttt{[stpDCoords,stpScheme=color]}.
 Scale model units with \cs{stpDscale}.
@@ -601,92 +955,250 @@ Scale model units with \cs{stpDscale}.
 \subsection{Points and members}
 
 \DescribeMacro{\stpDpoint}
-\cs{stpDpoint}\marg{name}\marg{x}\marg{y}\marg{z}
+\cs{stpDpoint}\marg{name}\marg{x}\marg{y}\marg{z}\\*
+\textit{Purpose:} named 3D node in model units ($\times$ \cs{stpDscale}).
+\begin{STPargs}
+  \STParg{name}{node name.}
+  \STParg{x,y,z}{model coordinates (multiplied by \cs{stpDscale}).}
+\end{STPargs}
 
 \DescribeMacro{\stpDnode}
-\cs{stpDnode}\marg{name}\marg{x,y,z}
+\cs{stpDnode}\marg{name}\marg{x,y,z}\\*
+\textit{Purpose:} CAE comma-triple form of \cs{stpDpoint}; emitted by
+\texttt{dxf\_to\_satopdf3d}.
+\begin{STPargs}
+  \STParg{name}{node name.}
+  \STParg{x,y,z}{CAE comma triple; same as \cs{stpDpoint}.}
+\end{STPargs}
 
 \DescribeMacro{\stpDmember}
 \cs{stpDmember}\marg{beam\textbar truss\textbar rod\textbar ghost}\marg{A}\marg{B}%
-\oarg{endA}\oarg{endB}
-
-Shortcut: \cs{stpDrod}.
+\oarg{endA}\oarg{endB}\\*
+\textit{Purpose:} 3D member stroke.  DXF: \texttt{MY\_CAE\_MEMBER\_KIND=ROD}
+$\rightarrow$ \texttt{rod}; else axis-aligned $\rightarrow$ \texttt{beam},
+skewed $\rightarrow$ \texttt{truss} (visual heuristic).
+\begin{STPargs}
+  \STParg{type}{\texttt{beam}, \texttt{truss}, \texttt{rod}, or \texttt{ghost}.}
+  \STParg{A,B}{end nodes.}
+  \STParg{[endA][endB]}{as in 2D: \texttt{0} $=$ default end mark for
+    truss/rod; nonzero suppresses.  Beam ignores end dots.}
+\end{STPargs}
+Shortcut: \cs{stpDrod}\marg{A}\marg{B}.
 
 \DescribeMacro{\stpDrodPin}
-\cs{stpDrodPin}\marg{full\textbar gap}\marg{point}\oarg{beamA}\oarg{beamB}\oarg{orient}
+\cs{stpDrodPin}\marg{full\textbar gap}\marg{point}\oarg{beamA}\oarg{beamB}\oarg{orient}\\*
+\textit{Purpose:} 3D rod pin (full / gap).  Manual joint detailing; not
+from DXF.
+\begin{STPargs}
+  \STParg{full\textbar gap}{full hollow circle, or clipped gap pin.}
+  \STParg{point}{joint node.}
+  \STParg{[beamA][beamB]}{for \texttt{gap}: continuous-beam neighbours
+    (default \texttt{0} unused for \texttt{full}).}
+  \STParg{[orient]}{for \texttt{gap}: \texttt{0} or \texttt{1} selects which
+    side of the beam chord keeps the arc (unlike 2D \cs{stpRodPin}, which
+    deduces the side from \texttt{rodOther}).}
+\end{STPargs}
 
 \DescribeMacro{\stpDaxis}
-\cs{stpDaxis}\marg{point}\oarg{labX}\oarg{labY}\oarg{labZ}
+\cs{stpDaxis}\marg{point}\oarg{ancX}\oarg{ancY}\oarg{ancZ}\\*
+\textit{Purpose:} draw the 3D axis triad at a node (labels from
+\cs{stpDsetAxis}).
+\begin{STPargs}
+  \STParg{point}{origin node.}
+  \STParg{[ancX][ancY][ancZ]}{TikZ anchors for axis labels
+    (defaults \texttt{below}/\texttt{above}/\texttt{above}).
+    Label texts come from \cs{stpDsetAxis}.}
+\end{STPargs}
 
-\STPfig{%
-\stpDsetView{1}{-1}{1}%
-\renewcommand{\stpDscale}{0.08}%
+\begin{STPexample}
+\stpDsetView{1}{-1}{1}
+\renewcommand{\stpDscale}{0.08}
 \begin{tikzpicture}[stpDCoords,stpScheme=color]
   \stpDpoint{R1}{-10}{0}{0}\stpDpoint{J}{0}{0}{0}
   \stpDpoint{R2}{10}{0}{0}\stpDpoint{B1}{0}{12}{0}\stpDpoint{B2}{0}{-12}{0}
   \stpDmember{beam}{B1}{J}\stpDmember{beam}{J}{B2}
   \stpDmember{rod}{R1}{J}[0][1]\stpDmember{rod}{J}{R2}[1][0]
   \stpDrodPin{gap}{J}[B1][B2][0]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \subsection{Supports, hinges, loads, faces}
 
 \DescribeMacro{\stpDsupport}
 \cs{stpDsupport}\marg{pin\textbar wall\textbar spring\textbar fork\textbar fixed}%
-\marg{point}\oarg{ux}\oarg{uy}\oarg{uz}\oarg{rx}\oarg{ry}\oarg{rz}
+\marg{point}\oarg{ux}\oarg{uy}\oarg{uz}\oarg{rx}\oarg{ry}\oarg{rz}\\*
+\textit{Purpose:} 3D support with optional translation rods and rotation
+marks.  DXF: \texttt{MY\_CAE\_BC} $\rightarrow$ \cs{stpDsupport} with the
+six-bit mask as \texttt{[ux]...[rz]}.
+\begin{STPargs}
+  \STParg{type}{\texttt{pin}, \texttt{wall}, \texttt{spring}, \texttt{fork},
+    or \texttt{fixed}.}
+  \STParg{point}{supported node.}
+  \STParg{[ux][uy][uz]}{for pin/wall/spring/fork: translation rods along
+    $x,y,z$ (each $1$/$0$/$-1$; default \texttt{1}).
+    For \texttt{fixed}: \texttt{[ux]} is the canvas plane name
+    (\texttt{xy}/\texttt{xz}/\ldots) and \texttt{[uy]} is the normal
+    coordinate through the node.}
+  \STParg{[rx][ry][rz]}{rotation marks at rod ends (default \texttt{0}):
+    nonzero $=$ solid filled circle (rotation fixed); \texttt{0} with $u\neq0$
+    $=$ hollow (rotation free).}
+\end{STPargs}
 
 \DescribeMacro{\stpDhinge}
-\cs{stpDhinge}\marg{full\textbar gap\textbar corner}\marg{point}\oarg{\ldots}
-For \texttt{gap}, pass named nearby points (not raw \texttt{0,15,0} model
-coordinates) so the clip path does not inflate the bounding box.
+\cs{stpDhinge}\marg{full\textbar gap\textbar corner}\marg{point}\oarg{a}\oarg{b}\oarg{orient}\\*
+\textit{Purpose:} 3D hinge / gap / corner release marks.  Manual; not
+from DXF.
+\begin{STPargs}
+  \STParg{type}{\texttt{full}, \texttt{gap}, or \texttt{corner}.}
+  \STParg{point}{hinge node.}
+  \STParg{[a][b]}{for \texttt{gap}/\texttt{corner}: neighbouring named nodes
+    (use names, not raw \texttt{0,15,0}, so the clip path does not inflate
+    the bounding box).}
+  \STParg{[orient]}{for \texttt{gap}: \texttt{0}/\texttt{1} clip side.}
+\end{STPargs}
 
-\STPfig{%
-\stpDsetView{1}{-1}{1}%
-\renewcommand{\stpDscale}{0.08}%
+\begin{STPexample}
+\stpDsetView{1}{-1}{1}
+\renewcommand{\stpDscale}{0.08}
 \begin{tikzpicture}[stpDCoords,stpScheme=color]
   \stpDpoint{A}{0}{0}{0}\stpDpoint{B}{28}{0}{0}
   \stpDpoint{G}{28}{6}{0}
   \stpDmember{beam}{A}{B}
   \stpDhinge{full}{A}
   \stpDhinge{gap}{B}[A][G][0]
-\end{tikzpicture}}
+\end{tikzpicture}
+\end{STPexample}
 
 \DescribeMacro{\stpDlineload}
-\cs{stpDlineload}\marg{A}\marg{B}\oarg{dx,dy,dz}\oarg{count}\oarg{shaft}\oarg{label}
-draws the same \textbf{tip rail + head rail} comb as \cs{stpLineLoad}
-(not the CAE tip-circle style).
+\cs{stpDlineload}\marg{A}\marg{B}\oarg{dx,dy,dz}\oarg{count}\oarg{shaft}\oarg{label}\\*
+\textit{Purpose:} 3D distributed line load (tip rail + head rail comb,
+same idea as \cs{stpLineLoad}).  DXF: \texttt{MY\_CAE\_LOAD} $\rightarrow$
+\cs{stpDlineload}.
+\begin{STPargs}
+  \STParg{A,B}{segment ends.}
+  \STParg{[dx,dy,dz]}{force direction (default \texttt{0,0,-1}).}
+  \STParg{[count]}{number of arrows (default \texttt{5}).}
+  \STParg{[shaft]}{shaft length in model units after \cs{stpDscale}
+    (default \texttt{0.55}).}
+  \STParg{[label]}{optional text.}
+\end{STPargs}
 
 \DescribeMacro{\stpDpointload}
+\cs{stpDpointload}\marg{point}\marg{dx,dy,dz}\oarg{shaft}\oarg{label}\\*
+\textit{Purpose:} 3D concentrated force.  DXF: \texttt{MY\_CAE\_POINT\_LOAD}
+$\rightarrow$ \cs{stpDpointload}.
+\begin{STPargs}
+  \STParg{point}{application node (arrow tip).}
+  \STParg{dx,dy,dz}{force direction (must be nonzero).}
+  \STParg{[shaft]}{tail length along $-$direction (default \cs{stpDFaceShaft}).}
+  \STParg{[label]}{optional text at the tail.}
+\end{STPargs}
+
 \DescribeMacro{\stpDface}
-\cs{stpDface}\marg{N1,N2,\ldots} --- soft-red shell fill.
+\cs{stpDface}\marg{N1,N2,\ldots}\quad or\quad
+\cs{stpDface}\texttt{\{\{outer\ldots\},\{hole\ldots\},\{hole\ldots\}\}}\\*
+\textit{Purpose:} soft-red shell fill in 3D from \emph{node lists} (even-odd
+holes).  Prefer the equation form below for curved boundaries destined for FE.
+\begin{STPargs}
+  \STParg{N1,N2,\ldots}{$\ge3$ nodes for a single outer loop.}
+  \STParg{\{\{outer\},\{hole\},\{hole\}\}}{outer first, then hole loops.}
+\end{STPargs}
+
+\DescribeMacro{\stpDfaceEnv}
+\cs{stpDfaceEnv} / \cs{stpDfaceLoop} / \cs{stpDedgeLine}, \cs{stpDedgeCircle},
+\cs{stpDedgeArc}, \cs{stpDedgeSpline}\\*
+\textit{Purpose:} soft-red planar fill (manual / legacy).  DXF 3D import uses
+stroke wire + mesh instead (see \cs{stpDwireEnv}, \cs{stpDmeshSeg}).
+Boundary macros still \textbf{keep the original curve equations} for FE.
+\begin{STPargs}
+  \STParg{\cs{stpDedgeLine}\{P0\}\{P1\}}{straight segment $P=(x,y,z)$.}
+  \STParg{\cs{stpDedgeCircle}\{C\}\{n\}\{r\}}{full circle, centre / normal / radius.}
+  \STParg{\cs{stpDedgeArc}\{C\}\{n\}\{major\}\{ratio\}\{t_0\}\{t_1\}}{elliptical arc
+    (ACIS-style major vector, ratio, parameter range).}
+  \STParg{\cs{stpDedgeSpline}\{deg\}\{\{P_i\},\,\ldots\}\oarg{samples}}{NUBS degree + control points (FE); optional display samples from the B-spline, not the control polygon.}
+\end{STPargs}
+
+\DescribeMacro{\stpDcylinderMesh}
+\cs{stpDcylinderMesh}\marg{origin}\marg{axis}\marg{radius}\marg{h0}\marg{h1}
+\oarg{th0}\oarg{th1}\oarg{nGen}\oarg{nRing}\\*
+\textit{Purpose:} AutoCAD-style cylinder isolines (generators + rings), stroke only.
+\cs{stpDcylinder} is an alias for a full-turn mesh.  DXF import also strokes the
+boundary with \cs{stpDwireEnv} and keeps FE edge equations separately.
+\begin{STPargs}
+  \STParg{origin}{axis root point $(x,y,z)$.}
+  \STParg{axis}{unit direction of the cylinder axis.}
+  \STParg{radius}{cylinder radius.}
+  \STParg{h0,h1}{signed heights of the two rims along the axis from origin.}
+  \STParg{th0,th1}{optional angular sector (radians); default $\pm\pi$.}
+\end{STPargs}
+
+\DescribeMacro{\stpDmeshSeg}
+\cs{stpDmeshSeg}\marg{P0}\marg{P1}\\*
+\textit{Purpose:} display-only mesh segment (planar UV grid).  Not FE input.}
+
+\DescribeMacro{\stpDcylSector}
+\cs{stpDcylSector}\oarg{*}\marg{origin}\marg{axis}\marg{r}\marg{h0}\marg{h1}\marg{t0}\marg{t1}\\*
+\textit{Purpose:} partial cylinder sector (manual / advanced).  DXF import does
+not auto-fill trimmed cones; those faces are stroked with \cs{stpDwireEnv}.
+
+\DescribeMacro{\stpDruledFill}
+\cs{stpDruledFill}\oarg{*}\marg{n}\marg{railA}\marg{railB} + \cs{stpDruledEq}\\*
+\textit{Purpose:} ruled strip fill (manual / legacy).  DXF import uses
+wireframe mesh: planes get UV \cs{stpDmeshSeg} lines; cylinders use
+\cs{stpDcylinderMesh}; other SAB faces keep boundary stroke + FE only.
 
 \DescribeMacro{\stpDfaceload}
-Face pressure / traction glyph.
+\cs{stpDfaceload}\marg{N1,N2,\ldots}\marg{dx,dy,dz}\oarg{shaft}\oarg{label}\\*
+\textit{Purpose:} pressure / face load arrow at the face centroid
+(\texttt{MY\_CAE\_SHELL\_LOAD} concept in LoadXData).
+\begin{STPargs}
+  \STParg{N1,N2,\ldots}{face nodes (centroid $=$ tip).}
+  \STParg{dx,dy,dz}{load direction.}
+  \STParg{[shaft]}{arrow length (default \cs{stpDFaceShaft}).}
+  \STParg{[label]}{optional text (e.g.\ pressure / total force).}
+\end{STPargs}
 
-\STPfig{%
-\stpDsetView{1}{-1}{1}%
-\renewcommand{\stpDscale}{0.08}%
+\begin{STPexample}
+\stpDsetView{1}{-1}{1}
+\renewcommand{\stpDscale}{0.08}
 \begin{tikzpicture}[stpDCoords,stpScheme=color]
   \stpDpoint{A}{0}{0}{0}\stpDpoint{B}{30}{0}{0}
   \stpDmember{beam}{A}{B}
   \stpDlineload{A}{B}[0,0,-1][4][0.5][$q$]
 \end{tikzpicture}
-\par\smallskip{\footnotesize\texttt{\textbackslash stpDlineload} (tip+head rails)}}
+\end{STPexample}
+
 
 \subsection{3D dimensions and welds}
 
 \DescribeMacro{\stpDdimEnv}
 \cs{stpDdimEnv}\marg{x\textbar y\textbar z}\marg{x0}\marg{y0}\marg{z0}\marg{L}%
-\oarg{$\Delta$}\oarg{label}
+\oarg{$\Delta$}\oarg{label}\\*
+\textit{Purpose:} 3D envelope dimension along one model axis ($L_x$,
+$L_y$, $L_z$).  Emitted by the 3D importer / SA3D template from the
+bounding box.
+\begin{STPargs}
+  \STParg{x\textbar y\textbar z}{which model axis is dimensioned.}
+  \STParg{x0,y0,z0}{reference corner of the envelope in model units.}
+  \STParg{L}{length along the chosen axis.}
+  \STParg{($\Delta$)}{paper offset of the dimension line (default \cs{stpDimOff}).}
+  \STParg{[label]}{optional text.}
+\end{STPargs}
 
 \DescribeMacro{\stpDdimSeg}
-\DescribeMacro{\stpDspotWeld}
-\DescribeMacro{\stpDseamWeld}
-\DescribeMacro{\stpDseamWeldPath}
-Same roles as the 2D weld commands; follow the current view.
+\cs{stpDdimSeg}\marg{A}\marg{B}\oarg{label}\\*
+\textit{Purpose:} dimension a single named 3D segment (sloped label).
+\begin{STPargs}
+  \STParg{A,B}{named 3D endpoints of the dimension segment.}
+  \STParg{[label]}{optional text (sloped, above).}
+\end{STPargs}
+
+\DescribeMacro{\stpDspotWeld}\DescribeMacro{\stpDseamWeld}\DescribeMacro{\stpDseamWeldPath}
+Same argument lists as the 2D weld commands; geometry follows the current
+3D view.  DXF weld apps map here in 3D.
 
 \DescribeMacro{\stpDstructInfo}
-Alias of \cs{stpStructInfo}.
+Alias of \cs{stpStructInfo} (same two arguments).
 
 %==============================================================================
 \section{Complete examples}
@@ -696,9 +1208,9 @@ Alias of \cs{stpStructInfo}.
 \subsection{2D SA template (\texttt{satopdf-frame.tex} / \texttt{2d\_example.dxf})}
 
 The TikZ Studio 2D structural-analysis template (also written as
-\texttt{satopdf-frame.tex}):
+\texttt{satopdf-frame.tex}).  Full source below generates the figure.
 
-\STPfig{%
+\begin{STPexample}
 \begin{tikzpicture}[x=0.09mm,y=0.09mm,stpScheme=color]
   \stpset{support size=12mm, hinge radius=1.5mm}
   \stpNode{N0}{50.9619,0.0000}
@@ -733,37 +1245,22 @@ The TikZ Studio 2D structural-analysis template (also written as
   \stpDimX{DimSW}{DimSE}[$L_x=1200\,\mathrm{mm}$]
   \stpDimY{DimSW}{DimNW}[$L_y=350\,\mathrm{mm}$]
   \stpStructInfo{$V=8.72\times 10^{-3}\,\mathrm{m}^{3}$}{$m=68.5\,\mathrm{kg}$}
-\end{tikzpicture}}
-
-\begin{verbatim}
-\begin{tikzpicture}[x=0.117mm,y=0.117mm,stpScheme=color]
-  \stpset{support size=12mm, hinge radius=1.5mm}
-  \stpNode{N0}{50.9619,0.0000}
-  ...
-  \stpMember{beam}{N6}{N0}
-  \stpSupport{N0}[type=fixed, angle=0, size=12mm]
-  \stpSupport{N7}[type=roller, angle=0, size=12mm]
-  \stpLineLoad{global}{N6}{N0}[0.85][0.85][0.1667][$q=10$]
-  \stpLoad{moment}{N8}[30][200][0][$M=1000$]
-  \stpDimX{DimSW}{DimSE}[$L_x=1200\,\mathrm{mm}$]
-  \stpStructInfo{$V=\ldots$}{$m=\ldots$}
 \end{tikzpicture}
-\end{verbatim}
+\end{STPexample}
 
 \subsection{3D SA template (\texttt{satopdf-SA3D.tex} / \texttt{3d\_example.dxf})}
 
 The TikZ Studio 3D structural-analysis template with
-\texttt{\textbackslash stpDscale}=0.002:
+\texttt{\textbackslash stpDscale}=0.002.  Full source below generates the figure.
 
-\STPfig{%
-% Drawing scale 1:5 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
+\begin{STPexample}
 \stpDsetView{1}{-1}{1}
 \stpDsetAxis{xyz}
 \renewcommand{\stpDscale}{0.002}
 \renewcommand{\stpDsupLen}{0.35}
 \renewcommand{\stpDhingeR}{0.9mm}
 \renewcommand{\stpDaxLen}{1.2}
-% Δ before tikzpicture (nullfont inside would zero char height)
+% Dim-delta before tikzpicture (nullfont inside would zero char height)
 \stpInitDimDelta
 \begin{tikzpicture}[stpDCoords,stpScheme=color]
   \stpDpoint{N0}{0.0000}{0.0000}{0.0000}
@@ -876,25 +1373,7 @@ The TikZ Studio 3D structural-analysis template with
   % Structure mass properties (UR of current figure bbox)
   \stpStructInfo{$V=2.7\times 10^{-1}\,\mathrm{m}^{3}$}{$m=2.12\,\mathrm{t}$}
 \end{tikzpicture}
-}
-
-\begin{verbatim}
-\stpDsetView{1}{-1}{1}
-\stpDsetAxis{xyz}
-\renewcommand{\stpDscale}{0.002}
-\stpInitDimDelta
-\begin{tikzpicture}[stpDCoords,stpScheme=color]
-  \stpDpoint{N0}{0}{0}{0}
-  ...
-  \stpDmember{beam}{N0}{N4}
-  \stpDface{N21,N5,N7,N23}
-  \stpDsupport{pin}{N0}[1][1][1][1][1][1]
-  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
-  \stpDfaceload{N21,N5,N7,N23}{0,0,-1}[0.55][$P_{\mathrm{face}}$]
-  \stpDdimEnv{y}{0}{0}{0}{6000}[$L_y=6000\,\mathrm{mm}$]
-  \stpStructInfo{$V=\ldots$}{$m=\ldots$}
-\end{tikzpicture}
-\end{verbatim}
+\end{STPexample}
 
 \subsection{Distribution examples}
 
@@ -917,17 +1396,30 @@ Python importers emit \textsf{satopdf} fragments from DXF entities tagged by
 \texttt{LoadXData.lsp}:
 
 \begin{center}
-\begin{tabular}{@{}ll@{}}
+\begin{tabular}{@{}lp{0.52\textwidth}@{}}
 \toprule
 XData / concept & Drawing effect \\
 \midrule
 \texttt{MY\_CAE\_MEMBER\_KIND=ROD} &
-  \texttt{\textbackslash stpMember\{rod\}} / \texttt{\textbackslash stpDmember\{rod\}} \\
-\texttt{MY\_CAE\_SEC} & Section; rods drop orient/offset \\
-\texttt{MY\_CAE\_LOAD} & Distributed $q$ (beams; span follows mesh) \\
-\texttt{MY\_CAE\_POINT\_LOAD} & \cs{stpPointLoad} / \cs{stpDpointload} \\
-\texttt{MY\_CAE\_BC} & Supports / \cs{stpDsupport} \\
-\texttt{MY\_CAE\_SPOT\_WELD} / \texttt{SEAM} & Weld macros \\
+  \cs{stpMember}\texttt{\{rod\}} / \cs{stpDmember}\texttt{\{rod\}} \\
+\texttt{MY\_CAE\_SEC} &
+  Section metadata; mass box via \cs{stpStructInfo}; rods drop orient/offset \\
+\texttt{MY\_CAE\_LOAD} &
+  Distributed $q$: \cs{stpLineLoad}/\cs{stpLineLoadCAE} (2D),
+  \cs{stpDlineload} (3D) \\
+\texttt{MY\_CAE\_POINT\_LOAD} &
+  \cs{stpPointLoad} / \cs{stpDpointload} \\
+\texttt{MY\_CAE\_MOMENT} &
+  \cs{stpLoad}\texttt{\{moment\}} (2D importer).
+  \textbf{Not} \cs{stpCouple} --- that wrapper is hand-sketch only \\
+\texttt{MY\_CAE\_BC} / \texttt{COMP\_BC} &
+  \cs{stpSupport} / \cs{stpSupportFromMask} / \cs{stpDsupport} \\
+\texttt{MY\_CAE\_SPRING} &
+  \cs{stpSupport}\texttt{[type=spring]} (2D) \\
+\texttt{MY\_CAE\_SHELL\_LOAD} &
+  Face pressure concepts $\rightarrow$ \cs{stpDfaceload} \\
+\texttt{MY\_CAE\_SPOT\_WELD} / \texttt{SEAM} &
+  \cs{stpSpotWeld} / \cs{stpSeamWeld} (+ 3D twins) \\
 Beam intersections \& mid-span welds &
   Split beams; \textbf{rods never split} \\
 \bottomrule
@@ -1001,7 +1493,8 @@ Command & Role \\
 \cs{stpRodPin} & Rod end full/gap pins \\
 \cs{stpSupport}, \cs{stpSupportFromMask}, \cs{stpBCMark} & 2D BC \\
 \cs{stpHinge} & 2D hinges \\
-\cs{stpLoad}, \cs{stpPointLoad}, \cs{stpCouple} & Point loads / couples \\
+\cs{stpLoad}, \cs{stpPointLoad}, \cs{stpCouple} &
+  Point force / moment; couple $=$ default-moment wrapper (not DXF) \\
 \cs{stpLineLoad}, \cs{stpLineLoadCAE} & Line loads \\
 \cs{stpSpringK}, \cs{stpSpringKR} & Springs \\
 \cs{stpInternalForces}, \cs{stpMomentDiagram}, \cs{stpDeform} & Diagrams \\
@@ -1022,6 +1515,11 @@ Command & Role \\
 
 %==============================================================================
 \section{Change history}
+
+\begin{itemize}[nosep]
+  \item[2026-11-21] User guide: every public command documents each
+        argument (required and optional) with meaning and default.
+\end{itemize}
 \label{sec:changes}
 %==============================================================================
 

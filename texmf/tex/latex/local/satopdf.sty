@@ -50,6 +50,9 @@
 \newcommand{\stpNormalLW}{1.0pt}
 \newcommand{\stpSmallLW}{0.7pt}
 \newcommand{\stpTinyLW}{0.35pt}
+% Isoline / UV mesh — clearly thinner & lighter than face boundary stroke
+\newcommand{\stpMeshLW}{0.10pt}
+\newcommand{\stpWireLW}{0.40pt}
 
 \newcommand{\stpHingeR}{1.5mm}
 \newcommand{\stpHingeAxialL}{5mm}
@@ -129,7 +132,8 @@
 \newcommand{\stpClrRod}{blue!55!black}% dark blue axial rod (bw → black)
 % Faces / shells — fixed soft red; not affected by stpScheme
 \newcommand{\stpClrFace}{red!50!black!22}
-\newcommand{\stpClrFaceEdge}{red!60!black!45}
+\newcommand{\stpClrFaceEdge}{red!70!black!50}
+\newcommand{\stpClrFaceMesh}{red!22!black!18} % isolines: lighter than edge stroke
 \newcommand{\stpFaceOpacity}{0.45}
 \newcommand{\stpDFaceShaft}{0.55}
 
@@ -1520,8 +1524,8 @@
   \pgfmathsetmacro{\stp@ny}{#2}%
   \pgfmathsetmacro{\stp@nz}{#3}%
   \pgfmathsetmacro{\stp@nlen}{sqrt(\stp@nx*\stp@nx+\stp@ny*\stp@ny+\stp@nz*\stp@nz)}%
-  \pgfmathparse{\stp@nlen<1e-12?1:0}%
-  \ifnum\pgfmathresult=1\relax
+  \pgfmathtruncatemacro{\stp@nzero}{\stp@nlen<0.000000000001?1:0}%
+  \ifnum\stp@nzero=1\relax
     \PackageError{satopdf}{Zero view direction}{}%
   \fi
   \pgfmathsetmacro{\stp@nx}{\stp@nx/\stp@nlen}%
@@ -1531,8 +1535,8 @@
   \pgfmathsetmacro{\stp@wy}{#8}%
   \pgfmathsetmacro{\stp@wz}{#9}%
   \pgfmathsetmacro{\stp@wlen}{sqrt(\stp@wx*\stp@wx+\stp@wy*\stp@wy+\stp@wz*\stp@wz)}%
-  \pgfmathparse{\stp@wlen<1e-12?1:0}%
-  \ifnum\pgfmathresult=1\relax
+  \pgfmathtruncatemacro{\stp@wzero}{\stp@wlen<0.000000000001?1:0}%
+  \ifnum\stp@wzero=1\relax
     \PackageError{satopdf}{Zero up vector}{}%
   \fi
   \pgfmathsetmacro{\stp@wx}{\stp@wx/\stp@wlen}%
@@ -1543,22 +1547,28 @@
   \pgfmathsetmacro{\stp@ry}{\stp@nz*\stp@wx-\stp@nx*\stp@wz}%
   \pgfmathsetmacro{\stp@rz}{\stp@nx*\stp@wy-\stp@ny*\stp@wx}%
   \pgfmathsetmacro{\stp@rlen}{sqrt(\stp@rx*\stp@rx+\stp@ry*\stp@ry+\stp@rz*\stp@rz)}%
-  \pgfmathparse{\stp@rlen<1e-8?1:0}%
-  \ifnum\pgfmathresult=1\relax
+  % \ifdim on pt: robust when n∥û (rlen≈0); avoids \ifnum vs "1.0" issues
+  \ifdim\stp@rlen pt<0.00001pt\relax
     % n ∥ û → alternate reference (prefer world Z, else world Y)
-    \pgfmathparse{abs(\stp@wz)>0.9?1:0}%
-    \ifnum\pgfmathresult=1\relax
-      % û ≈ ±Z → use Y: n × Y = (-nz, 0, nx)
-      \pgfmathsetmacro{\stp@rx}{-\stp@nz}%
+    \ifdim\stp@wz pt>0.9pt\relax
+      \pgfmathsetmacro{\stp@rx}{0-\stp@nz}%
       \pgfmathsetmacro{\stp@ry}{0}%
       \pgfmathsetmacro{\stp@rz}{\stp@nx}%
     \else
-      % use Z: n × Z = (ny, -nx, 0)
-      \pgfmathsetmacro{\stp@rx}{\stp@ny}%
-      \pgfmathsetmacro{\stp@ry}{-\stp@nx}%
-      \pgfmathsetmacro{\stp@rz}{0}%
+      \ifdim\stp@wz pt<-0.9pt\relax
+        \pgfmathsetmacro{\stp@rx}{0-\stp@nz}%
+        \pgfmathsetmacro{\stp@ry}{0}%
+        \pgfmathsetmacro{\stp@rz}{\stp@nx}%
+      \else
+        \pgfmathsetmacro{\stp@rx}{\stp@ny}%
+        \pgfmathsetmacro{\stp@ry}{0-\stp@nx}%
+        \pgfmathsetmacro{\stp@rz}{0}%
+      \fi
     \fi
     \pgfmathsetmacro{\stp@rlen}{sqrt(\stp@rx*\stp@rx+\stp@ry*\stp@ry+\stp@rz*\stp@rz)}%
+  \fi
+  \ifdim\stp@rlen pt<0.00001pt\relax
+    \def\stp@rx{1}\def\stp@ry{0}\def\stp@rz{0}\def\stp@rlen{1}%
   \fi
   \pgfmathsetmacro{\stp@rx}{\stp@rx/\stp@rlen}%
   \pgfmathsetmacro{\stp@ry}{\stp@ry/\stp@rlen}%
@@ -1568,6 +1578,9 @@
   \pgfmathsetmacro{\stp@vy}{\stp@rz*\stp@nx-\stp@rx*\stp@nz}%
   \pgfmathsetmacro{\stp@vz}{\stp@rx*\stp@ny-\stp@ry*\stp@nx}%
   \pgfmathsetmacro{\stp@vlen}{sqrt(\stp@vx*\stp@vx+\stp@vy*\stp@vy+\stp@vz*\stp@vz)}%
+  \ifdim\stp@vlen pt<0.00001pt\relax
+    \def\stp@vx{0}\def\stp@vy{1}\def\stp@vz{0}\def\stp@vlen{1}%
+  \fi
   \pgfmathsetmacro{\stp@vx}{\stp@vx/\stp@vlen}%
   \pgfmathsetmacro{\stp@vy}{\stp@vy/\stp@vlen}%
   \pgfmathsetmacro{\stp@vz}{\stp@vz/\stp@vlen}%
@@ -1578,6 +1591,22 @@
   \pgfmathsetmacro{\stp@cyy}{#5*\stp@vy}%
   \pgfmathsetmacro{\stp@czx}{#6*\stp@rz}%
   \pgfmathsetmacro{\stp@czy}{#6*\stp@vz}%
+  % Collapsed axis (plan/elevation) → tiny epsilon for TikZ xyz cs
+  \pgfmathsetmacro{\stp@xlen}{sqrt(\stp@cxx*\stp@cxx+\stp@cxy*\stp@cxy)}%
+  \ifdim\stp@xlen pt<0.0001pt\relax
+    \pgfmathsetmacro{\stp@cxx}{0.0001}%
+    \pgfmathsetmacro{\stp@cxy}{0}%
+  \fi
+  \pgfmathsetmacro{\stp@ylen}{sqrt(\stp@cyx*\stp@cyx+\stp@cyy*\stp@cyy)}%
+  \ifdim\stp@ylen pt<0.0001pt\relax
+    \pgfmathsetmacro{\stp@cyx}{0.0001}%
+    \pgfmathsetmacro{\stp@cyy}{0}%
+  \fi
+  \pgfmathsetmacro{\stp@zlen}{sqrt(\stp@czx*\stp@czx+\stp@czy*\stp@czy)}%
+  \ifdim\stp@zlen pt<0.0001pt\relax
+    \pgfmathsetmacro{\stp@czx}{0.0001}%
+    \pgfmathsetmacro{\stp@czy}{0}%
+  \fi
   \stp@setDCanvas{\stp@cxx}{\stp@cxy}{\stp@cyx}{\stp@cyy}{\stp@czx}{\stp@czy}%
 }
 
@@ -2023,15 +2052,40 @@
 % Faces / shells — soft red fill (fixed; not toggled by stpScheme)
 % 2D face geometry only (2D face-load API to be defined separately):
 %   \stpFace{A,B,C[,D…]}
+%   \stpFace{outer…;hole1…;hole2…}   % even-odd holes (semicolon-separated loops)
 % 3D shell + face load (CAE SETSHELLLOAD → Face / FACE_PRESSURE|FACE_TOTAL_FORCE):
 %   \stpDface{A,B,C[,D…]}
+%   \stpDface{outer…;hole1…;hole2…}  % circles / arcs / splines tessellated by importer
 %   \stpDfaceload{A,B,C[,D…]}{dx,dy,dz}[shaft][label]
-%     one arrow at face centroid (same as create-shell-faceload-block)
-%     VIS text: P_face=… / F_total=… (ux,uy,uz) on layer CAE_VIS_LOAD
+%     centroid uses the first (outer) loop only if ';' present
 %=============================================================================
 
+% Face loops: \stpDface{N0,N1,N2} or \stpDface{{outer…},{hole1…},{hole2…}}
+% (semicolon form still accepted: outer…;hole1… → converted internally)
+\newcommand{\stp@faceOuterLoop}[1]{%
+  \edef\stp@f@raw{#1}%
+  \expandafter\stp@faceOuterLoop@a\stp@f@raw\stp@end
+}
+\def\stp@faceOuterLoop@a#1\stp@end{%
+  \def\stp@f@tmp{#1}%
+  \expandafter\stp@faceOuterLoop@b\stp@f@tmp,\stp@end
+}
+% After normalizing to comma-of-braced-loops, first item is outer
+\def\stp@faceOuterLoop@b#1,#2\stp@end{%
+  \stp@faceUnbrace{#1}%
+  \let\stp@fouter\stp@funbr
+}
+\newcommand{\stp@faceUnbrace}[1]{%
+  \def\stp@funbr{#1}%
+  \edef\stp@fchk{#1}%
+  \expandafter\stp@faceUnbrace@i\stp@fchk\stp@end
+}
+\def\stp@faceUnbrace@i#1\stp@end{\def\stp@funbr{#1}}
+
 \newcommand{\stp@faceCentroid}[1]{%
-  \foreach \stp@p [count=\stp@fi] in {#1} {%
+  \stp@faceNormalize{#1}%
+  \stp@faceOuterLoop{\stp@fnorm}%
+  \foreach \stp@p [count=\stp@fi] in \stp@fouter {%
     \ifnum\stp@fi=1
       \coordinate (stp@fcen) at (\stp@p);%
     \else
@@ -2040,34 +2094,443 @@
   }%
 }
 
-\newcommand{\stp@faceBuildPath}[1]{%
-  \gdef\stp@fpath{}%
-  \gdef\stp@fn{0}%
+% Normalize: "a,b;c,d" or "{a,b},{c,d}" or "a,b,c" → "{a,b},{c,d}" / "{a,b,c}"
+\newcommand{\stp@faceNormalize}[1]{%
+  \def\stp@fnorm{#1}%
+  \edef\stp@f@raw{#1}%
+  \expandafter\stp@faceNorm@i\stp@f@raw;\stp@end
+}
+\def\stp@faceNorm@i#1;#2\stp@end{%
+  \def\stp@f@a{#1}\def\stp@f@b{#2}%
+  \ifx\stp@f@b\stp@empty
+    % no semicolon — single loop or already {{…},{…}}
+    \stp@faceNorm@brace{#1}%
+  \else
+    \stp@faceNorm@semi{#1;#2}%
+  \fi
+}
+\newcommand{\stp@faceNorm@brace}[1]{%
+  \edef\stp@f@chk{#1}%
+  \expandafter\stp@faceNorm@brace@i\stp@f@chk\stp@end
+}
+\def\stp@faceNorm@brace@i{%
+  \@ifnextchar\bgroup{\stp@faceNorm@keep}{\stp@faceNorm@wrap}%
+}
+\def\stp@faceNorm@keep#1\stp@end{\edef\stp@fnorm{#1}}
+\def\stp@faceNorm@wrap#1\stp@end{\edef\stp@fnorm{{#1}}}
+\newcommand{\stp@faceNorm@semi}[1]{%
+  \gdef\stp@fnorm{}%
+  \gdef\stp@fcomma{0}%
+  \edef\stp@f@all{#1;}%
+  \expandafter\stp@faceNorm@split\stp@f@all
+}
+\def\stp@faceNorm@split#1;{%
+  \def\stp@f@arg{#1}%
+  \ifx\stp@f@arg\stp@empty
+  \else
+    \ifnum\stp@fcomma=1\relax
+      \xdef\stp@fnorm{\stp@fnorm,{\stp@f@arg}}%
+    \else
+      \xdef\stp@fnorm{{\stp@f@arg}}%
+      \gdef\stp@fcomma{1}%
+    \fi
+    \expandafter\stp@faceNorm@split
+  \fi
+}
+\def\stp@empty{}
+
+\newcommand{\stp@faceAppendLoop}[1]{%
+  \pgfmathtruncatemacro{\stp@fn}{0}%
   \foreach \stp@p [count=\stp@fi] in {#1} {%
-    \ifnum\stp@fi=1
-      \xdef\stp@fpath{(\stp@p)}%
+    \ifnum\stp@fi=1\relax
+      \ifx\stp@fpath\stp@empty
+        \xdef\stp@fpath{(\stp@p)}%
+      \else
+        \xdef\stp@fpath{\stp@fpath (\stp@p)}%
+      \fi
     \else
       \xdef\stp@fpath{\stp@fpath--(\stp@p)}%
     \fi
-    \xdef\stp@fn{\stp@fi}%
+    \global\let\stp@fn\stp@fi
   }%
   \ifnum\stp@fn<3\relax
-    \PackageError{satopdf}{Face needs ≥3 nodes (got \stp@fn)}{}%
+    \PackageError{satopdf}{Face loop needs ≥3 nodes (got \stp@fn)}{}%
   \fi
   \xdef\stp@fpath{\stp@fpath--cycle}%
 }
 
-\newcommand{\stpFace}[1]{%
-  \stp@faceBuildPath{#1}%
-  \edef\stp@fdcmd{\noexpand\filldraw[stpFace] \stp@fpath;}%
-  \stp@fdcmd
+\newcommand{\stp@faceFill}[2]{%
+  \stp@faceNormalize{#2}%
+  \gdef\stp@fpath{}%
+  \def\stp@empty{}%
+  \foreach \stp@loop in \stp@fnorm {%
+    \expandafter\stp@faceAppendLoop\expandafter{\stp@loop}%
+  }%
+  \filldraw[#1,even odd rule] \stp@fpath;%
+}
+\newcommand{\stpFace}[1]{\stp@faceFill{stpFace}{#1}}
+\newcommand{\stpDface}[1]{\stp@faceFill{stpDface}{#1}}
+
+%-----------------------------------------------------------------------------
+% Equation-preserving face paths (FE geometry = macro arguments, NOT samples).
+% Display may sample arcs/splines with \stpFaceDispSegs for PDF only.
+%   \begin{stpDfaceEnv}
+%     \begin{stpDfaceLoop}
+%       \stpDedgeLine{x0,y0,z0}{x1,y1,z1}
+%       \stpDedgeCircle{cx,cy,cz}{nx,ny,nz}{r}
+%       \stpDedgeArc{cx,cy,cz}{nx,ny,nz}{mx,my,mz}{ratio}{t0}{t1}
+%       \stpDedgeSpline{degree}{{x0,y0,z0},{x1,y1,z1},...}
+%     \end{stpDfaceLoop}
+%     \begin{stpDfaceLoop} ... holes ... \end{stpDfaceLoop}
+%   \end{stpDfaceEnv}
+%-----------------------------------------------------------------------------
+\newcommand{\stpFaceDispSegs}{72}
+\pgfkeys{/stp/.cd, face display segments/.code={\renewcommand{\stpFaceDispSegs}{#1}}}
+
+\newcommand{\stp@fParseXYZ}[4]{%
+  \edef\stp@fxyz{#1}%
+  \expandafter\stp@fParseXYZ@i\stp@fxyz\@nil{#2}{#3}{#4}%
+}
+\def\stp@fParseXYZ@i#1,#2,#3\@nil#4#5#6{%
+  \def#4{#1}\def#5{#2}\def#6{#3}%
 }
 
-\newcommand{\stpDface}[1]{%
-  \stp@faceBuildPath{#1}%
-  \edef\stp@fdcmd{\noexpand\filldraw[stpDface] \stp@fpath;}%
-  \stp@fdcmd
+\newcommand{\stp@fAddPt}[3]{%
+  \pgfmathsetmacro{\stp@fx}{(#1)*\stpDscale}%
+  \pgfmathsetmacro{\stp@fy}{(#2)*\stpDscale}%
+  \pgfmathsetmacro{\stp@fz}{(#3)*\stpDscale}%
+  % Skip near-duplicate joins (shared edge ends) so filldraw does not stroke a zero chord
+  \ifnum\stp@loopstarted=1\relax
+    \pgfmathparse{abs(\stp@fx-\stp@flastx)+abs(\stp@fy-\stp@flasty)+abs(\stp@fz-\stp@flastz)<1e-6?1:0}%
+    \ifnum\pgfmathresult=1\relax
+      \pgfmathparse{0}%
+    \else
+      \xdef\stp@fpath{\stp@fpath--(\stp@fx,\stp@fy,\stp@fz)}%
+      \xdef\stp@flastx{\stp@fx}\xdef\stp@flasty{\stp@fy}\xdef\stp@flastz{\stp@fz}%
+    \fi
+  \else
+    \ifnum\stp@fstarted=0\relax
+      \xdef\stp@fpath{(\stp@fx,\stp@fy,\stp@fz)}%
+    \else
+      \xdef\stp@fpath{\stp@fpath (\stp@fx,\stp@fy,\stp@fz)}%
+    \fi
+    \gdef\stp@loopstarted{1}%
+    \gdef\stp@fstarted{1}%
+    \xdef\stp@flastx{\stp@fx}\xdef\stp@flasty{\stp@fy}\xdef\stp@flastz{\stp@fz}%
+  \fi
 }
+
+\newenvironment{stpDfaceEnv}{%
+  \gdef\stp@fpath{}%
+  \gdef\stp@fstarted{0}%
+  \gdef\stp@flastx{0}\gdef\stp@flasty{0}\gdef\stp@flastz{0}%
+}{%
+  \filldraw[stpDface,even odd rule,line join=round,line cap=round] \stp@fpath;%
+}
+% Stroke-only face wire (no fill) — used after band fills for trim outlines
+\newenvironment{stpDwireEnv}{%
+  \gdef\stp@fpath{}%
+  \gdef\stp@fstarted{0}%
+  \gdef\stp@flastx{0}\gdef\stp@flasty{0}\gdef\stp@flastz{0}%
+}{%
+  \draw[draw=\stpClrFaceEdge, line width=\stpWireLW, fill=none,
+        line join=round, line cap=round] \stp@fpath;%
+}
+\newenvironment{stpDfaceLoop}{%
+  \gdef\stp@loopstarted{0}%
+}{%
+  \xdef\stp@fpath{\stp@fpath--cycle}%
+}
+
+\NewDocumentCommand{\stpDedgeLine}{m m}{%
+  \stp@fParseXYZ{#1}\stp@ax\stp@ay\stp@az
+  \stp@fParseXYZ{#2}\stp@bx\stp@by\stp@bz
+  \stp@fAddPt{\stp@ax}{\stp@ay}{\stp@az}%
+  \stp@fAddPt{\stp@bx}{\stp@by}{\stp@bz}%
+}
+
+\NewDocumentCommand{\stpDedgeCircle}{m m m}{%
+  % EQUATION: centre #1, normal #2, radius #3 — samples below are display-only
+  \stp@fParseXYZ{#1}\stp@cx\stp@cy\stp@cz
+  \stp@fParseXYZ{#2}\stp@nx\stp@ny\stp@nz
+  \pgfmathsetmacro{\stp@rrad}{#3}%
+  % Build orthonormal major/minor in the plane (fallback axes)
+  \pgfmathsetmacro{\stp@nlen}{sqrt(\stp@nx*\stp@nx+\stp@ny*\stp@ny+\stp@nz*\stp@nz)}%
+  \pgfmathsetmacro{\stp@nx}{\stp@nx/\stp@nlen}%
+  \pgfmathsetmacro{\stp@ny}{\stp@ny/\stp@nlen}%
+  \pgfmathsetmacro{\stp@nz}{\stp@nz/\stp@nlen}%
+  \pgfmathsetmacro{\stp@mx}{1-\stp@nx*\stp@nx}%
+  \pgfmathsetmacro{\stp@my}{-\stp@nx*\stp@ny}%
+  \pgfmathsetmacro{\stp@mz}{-\stp@nx*\stp@nz}%
+  \pgfmathsetmacro{\stp@mlen}{sqrt(\stp@mx*\stp@mx+\stp@my*\stp@my+\stp@mz*\stp@mz)}%
+  \pgfmathparse{\stp@mlen<1e-8?1:0}%
+  \ifnum\pgfmathresult=1\relax
+    \pgfmathsetmacro{\stp@mx}{-\stp@ny*\stp@nz}%
+    \pgfmathsetmacro{\stp@my}{1-\stp@ny*\stp@ny}%
+    \pgfmathsetmacro{\stp@mz}{-\stp@ny*\stp@nz}%
+    \pgfmathsetmacro{\stp@mlen}{sqrt(\stp@mx*\stp@mx+\stp@my*\stp@my+\stp@mz*\stp@mz)}%
+  \fi
+  \pgfmathsetmacro{\stp@mx}{\stp@mx/\stp@mlen*\stp@rrad}%
+  \pgfmathsetmacro{\stp@my}{\stp@my/\stp@mlen*\stp@rrad}%
+  \pgfmathsetmacro{\stp@mz}{\stp@mz/\stp@mlen*\stp@rrad}%
+  % minor = n × major
+  \pgfmathsetmacro{\stp@kx}{\stp@ny*\stp@mz-\stp@nz*\stp@my}%
+  \pgfmathsetmacro{\stp@ky}{\stp@nz*\stp@mx-\stp@nx*\stp@mz}%
+  \pgfmathsetmacro{\stp@kz}{\stp@nx*\stp@my-\stp@ny*\stp@mx}%
+  \foreach \stp@fi in {0,...,\stpFaceDispSegs} {%
+    \pgfmathsetmacro{\stp@tt}{-pi+2*pi*\stp@fi/\stpFaceDispSegs}%
+    \pgfmathsetmacro{\stp@px}{\stp@cx+\stp@mx*cos(\stp@tt r)+\stp@kx*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@py}{\stp@cy+\stp@my*cos(\stp@tt r)+\stp@ky*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@pz}{\stp@cz+\stp@mz*cos(\stp@tt r)+\stp@kz*sin(\stp@tt r)}%
+    \stp@fAddPt{\stp@px}{\stp@py}{\stp@pz}%
+  }%
+}
+
+\NewDocumentCommand{\stpDedgeArc}{m m m m m m}{%
+  % EQUATION: centre, normal, major, ratio, t0, t1
+  \stp@fParseXYZ{#1}\stp@cx\stp@cy\stp@cz
+  \stp@fParseXYZ{#2}\stp@nx\stp@ny\stp@nz
+  \stp@fParseXYZ{#3}\stp@mx\stp@my\stp@mz
+  \pgfmathsetmacro{\stp@rat}{#4}%
+  \pgfmathsetmacro{\stp@tstart}{#5}%
+  \pgfmathsetmacro{\stp@tend}{#6}%
+  \pgfmathsetmacro{\stp@nlen}{sqrt(\stp@nx*\stp@nx+\stp@ny*\stp@ny+\stp@nz*\stp@nz)}%
+  \pgfmathsetmacro{\stp@nx}{\stp@nx/\stp@nlen}%
+  \pgfmathsetmacro{\stp@ny}{\stp@ny/\stp@nlen}%
+  \pgfmathsetmacro{\stp@nz}{\stp@nz/\stp@nlen}%
+  \pgfmathsetmacro{\stp@kx}{(\stp@ny*\stp@mz-\stp@nz*\stp@my)*\stp@rat}%
+  \pgfmathsetmacro{\stp@ky}{(\stp@nz*\stp@mx-\stp@nx*\stp@mz)*\stp@rat}%
+  \pgfmathsetmacro{\stp@kz}{(\stp@nx*\stp@my-\stp@ny*\stp@mx)*\stp@rat}%
+  \foreach \stp@fi in {0,...,\stpFaceDispSegs} {%
+    \pgfmathsetmacro{\stp@tt}{\stp@tstart+(\stp@tend-\stp@tstart)*\stp@fi/\stpFaceDispSegs}%
+    \pgfmathsetmacro{\stp@px}{\stp@cx+\stp@mx*cos(\stp@tt r)+\stp@kx*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@py}{\stp@cy+\stp@my*cos(\stp@tt r)+\stp@ky*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@pz}{\stp@cz+\stp@mz*cos(\stp@tt r)+\stp@kz*sin(\stp@tt r)}%
+    \stp@fAddPt{\stp@px}{\stp@py}{\stp@pz}%
+  }%
+}
+
+\NewDocumentCommand{\stpDedgeSpline}{m m o}{%
+  % EQUATION: degree #1 + control points #2 = {x,y,z},{x,y,z},...
+  % Display: optional #3 = B-spline samples {P},{P},... (not control chords).
+  %   FE reads #1+#2 only; when #3 omitted, fall back to control polyline.
+  \IfNoValueTF{#3}{%
+    \foreach \stp@cpt in {#2} {%
+      \expandafter\stp@fParseXYZ\expandafter{\stp@cpt}\stp@sx\stp@sy\stp@sz
+      \stp@fAddPt{\stp@sx}{\stp@sy}{\stp@sz}%
+    }%
+  }{%
+    \foreach \stp@cpt in {#3} {%
+      \expandafter\stp@fParseXYZ\expandafter{\stp@cpt}\stp@sx\stp@sy\stp@sz
+      \stp@fAddPt{\stp@sx}{\stp@sy}{\stp@sz}%
+    }%
+  }%
+}
+
+%-----------------------------------------------------------------------------
+% Cylinder / cone-surface mesh (ACIS half-angle 0) — AutoCAD-style isolines.
+% EQUATION: origin #1, axis #2, radius #3, h0 #4, h1 #5.
+% Display: generators + rings (stroke only; no mantle fill, no end disks).
+% Optional: [th0][th1] radians for partial sector; [nGen][nRing].
+%-----------------------------------------------------------------------------
+\newcommand{\stpCylDispSegs}{36}
+\newcommand{\stpCylMeshGen}{16}
+\newcommand{\stpCylMeshRing}{6}
+\pgfkeys{/stp/.cd,
+  cylinder display segments/.code={\renewcommand{\stpCylDispSegs}{#1}},
+  cylinder mesh generators/.code={\renewcommand{\stpCylMeshGen}{#1}},
+  cylinder mesh rings/.code={\renewcommand{\stpCylMeshRing}{#1}}}
+% Helper: point on cylinder at height h and angle t (deg) → \stp@q{x,y,z} (scaled)
+\newcommand{\stp@cylPt}[2]{%
+  \pgfmathsetmacro{\stp@qx}{(\stp@ox+\stp@ax*(#1)+\stp@cux*cos(#2)+\stp@cvx*sin(#2))*\stpDscale}%
+  \pgfmathsetmacro{\stp@qy}{(\stp@oy+\stp@ay*(#1)+\stp@cuy*cos(#2)+\stp@cvy*sin(#2))*\stpDscale}%
+  \pgfmathsetmacro{\stp@qz}{(\stp@oz+\stp@az*(#1)+\stp@cuz*cos(#2)+\stp@cvz*sin(#2))*\stpDscale}%
+}
+\newcommand{\stp@cylBasis}{%
+  \pgfmathsetmacro{\stp@alen}{sqrt(\stp@ax*\stp@ax+\stp@ay*\stp@ay+\stp@az*\stp@az)}%
+  \pgfmathparse{\stp@alen<1e-12?1:0}%
+  \ifnum\pgfmathresult=1\relax\PackageError{satopdf}{Zero cylinder axis}{}\fi
+  \pgfmathsetmacro{\stp@ax}{\stp@ax/\stp@alen}%
+  \pgfmathsetmacro{\stp@ay}{\stp@ay/\stp@alen}%
+  \pgfmathsetmacro{\stp@az}{\stp@az/\stp@alen}%
+  \pgfmathsetmacro{\stp@cux}{1-\stp@ax*\stp@ax}%
+  \pgfmathsetmacro{\stp@cuy}{-\stp@ax*\stp@ay}%
+  \pgfmathsetmacro{\stp@cuz}{-\stp@ax*\stp@az}%
+  \pgfmathsetmacro{\stp@culen}{sqrt(\stp@cux*\stp@cux+\stp@cuy*\stp@cuy+\stp@cuz*\stp@cuz)}%
+  \pgfmathparse{\stp@culen<1e-8?1:0}%
+  \ifnum\pgfmathresult=1\relax
+    \pgfmathsetmacro{\stp@cux}{-\stp@ay*\stp@az}%
+    \pgfmathsetmacro{\stp@cuy}{1-\stp@ay*\stp@ay}%
+    \pgfmathsetmacro{\stp@cuz}{-\stp@ay*\stp@az}%
+    \pgfmathsetmacro{\stp@culen}{sqrt(\stp@cux*\stp@cux+\stp@cuy*\stp@cuy+\stp@cuz*\stp@cuz)}%
+  \fi
+  \pgfmathsetmacro{\stp@cux}{\stp@cux/\stp@culen*\stp@rrad}%
+  \pgfmathsetmacro{\stp@cuy}{\stp@cuy/\stp@culen*\stp@rrad}%
+  \pgfmathsetmacro{\stp@cuz}{\stp@cuz/\stp@culen*\stp@rrad}%
+  \pgfmathsetmacro{\stp@cvx}{\stp@ay*\stp@cuz-\stp@az*\stp@cuy}%
+  \pgfmathsetmacro{\stp@cvy}{\stp@az*\stp@cux-\stp@ax*\stp@cuz}%
+  \pgfmathsetmacro{\stp@cvz}{\stp@ax*\stp@cuy-\stp@ay*\stp@cux}%
+}
+% Stroke one generator (hlo→hhi at angle deg) and one arc ring at height h
+\newcommand{\stp@cylDrawGen}[1]{%
+  \stp@cylPt{\stp@hlo}{#1}%
+  \coordinate (stp@cA) at (\stp@qx,\stp@qy,\stp@qz);%
+  \stp@cylPt{\stp@hhi}{#1}%
+  \draw[draw=\stpClrFaceMesh, line width=\stpMeshLW, line join=round, line cap=round]
+    (stp@cA)--(\stp@qx,\stp@qy,\stp@qz);%
+}
+\newcommand{\stp@cylDrawRing}[3]{%
+  % #1=h, #2=degA, #3=degB — polyline with \stpCylDispSegs samples
+  \pgfmathtruncatemacro{\stp@cn}{\stpCylDispSegs}%
+  \stp@cylPt{#1}{#2}%
+  \xdef\stp@crim{(\stp@qx,\stp@qy,\stp@qz)}%
+  \foreach \stp@ci in {1,...,\stp@cn} {%
+    \pgfmathsetmacro{\stp@cdegA}{#2+(#3-#2)*\stp@ci/\stp@cn}%
+    \stp@cylPt{#1}{\stp@cdegA}%
+    \xdef\stp@crim{\stp@crim--(\stp@qx,\stp@qy,\stp@qz)}%
+  }%
+  \draw[draw=\stpClrFaceMesh, line width=\stpMeshLW, line join=round, line cap=round]
+    \stp@crim;%
+}
+\NewDocumentCommand{\stpDcylinderMesh}{m m m m m O{-3.14159265} O{3.14159265} O{\stpCylMeshGen} O{\stpCylMeshRing}}{%
+  % origin, axis, r, h0, h1, [th0], [th1], [nGen], [nRing]
+  \stp@fParseXYZ{#1}\stp@ox\stp@oy\stp@oz
+  \stp@fParseXYZ{#2}\stp@ax\stp@ay\stp@az
+  \pgfmathsetmacro{\stp@rrad}{#3}%
+  \pgfmathsetmacro{\stp@hlo}{#4}%
+  \pgfmathsetmacro{\stp@hhi}{#5}%
+  \pgfmathsetmacro{\stp@cangA}{#6}%
+  \pgfmathsetmacro{\stp@cangB}{#7}%
+  \stp@cylBasis
+  \pgfmathtruncatemacro{\stp@ngen}{#8}%
+  \pgfmathtruncatemacro{\stp@nring}{#9}%
+  \pgfmathtruncatemacro{\stp@ngenm}{max(0,\stp@ngen)}%
+  % Generators (include endpoints of sector)
+  \foreach \stp@ci in {0,...,\stp@ngenm} {%
+    \pgfmathsetmacro{\stp@cdegA}{(\stp@cangA+(\stp@cangB-\stp@cangA)*\stp@ci/max(\stp@ngen,1))*180/pi}%
+    \stp@cylDrawGen{\stp@cdegA}%
+  }%
+  % Interior rings only (skip exact ends — boundary wire draws those)
+  \ifnum\stp@nring>1\relax
+    \pgfmathtruncatemacro{\stp@nringm}{\stp@nring-1}%
+    \foreach \stp@ci in {1,...,\stp@nringm} {%
+      \pgfmathsetmacro{\stp@ch}{\stp@hlo+(\stp@hhi-\stp@hlo)*\stp@ci/\stp@nring}%
+      \pgfmathsetmacro{\stp@cdegA}{\stp@cangA*180/pi}%
+      \pgfmathsetmacro{\stp@cdegB}{\stp@cangB*180/pi}%
+      \stp@cylDrawRing{\stp@ch}{\stp@cdegA}{\stp@cdegB}%
+    }%
+  \fi
+}
+% Legacy name: full-turn mesh (same as mesh with default ±π)
+\NewDocumentCommand{\stpDcylinder}{m m m m m}{%
+  \stpDcylinderMesh{#1}{#2}{#3}{#4}{#5}%
+}
+% Display-only mesh segment (plane UV / ruled / cyl isolines; not FE).
+% Thinner & lighter than \stpDwireEnv boundary stroke.
+\NewDocumentCommand{\stpDmeshSeg}{m m}{%
+  \stp@fParseXYZ{#1}\stp@ax\stp@ay\stp@az
+  \stp@fParseXYZ{#2}\stp@bx\stp@by\stp@bz
+  \pgfmathsetmacro{\stp@ax}{\stp@ax*\stpDscale}%
+  \pgfmathsetmacro{\stp@ay}{\stp@ay*\stpDscale}%
+  \pgfmathsetmacro{\stp@az}{\stp@az*\stpDscale}%
+  \pgfmathsetmacro{\stp@bx}{\stp@bx*\stpDscale}%
+  \pgfmathsetmacro{\stp@by}{\stp@by*\stpDscale}%
+  \pgfmathsetmacro{\stp@bz}{\stp@bz*\stpDscale}%
+  \draw[draw=\stpClrFaceMesh, line width=\stpMeshLW, line join=round, line cap=round]
+    (\stp@ax,\stp@ay,\stp@az)--(\stp@bx,\stp@by,\stp@bz);%
+}
+
+%-----------------------------------------------------------------------------
+% Partial cylinder sector — mesh isolines (fill abandoned; * ignored).
+% EQUATION: origin, axis, r, h0, h1, theta0, theta1 (radians).
+%-----------------------------------------------------------------------------
+\NewDocumentCommand{\stpDcylSector}{s m m m m m m m}{%
+  \stpDcylinderMesh{#2}{#3}{#4}{#5}{#6}[#7][#8]%
+}
+
+%-----------------------------------------------------------------------------
+% Ruled / extruded strip face (spline extrusion, planar strip, …).
+% Display fill from equal-length rail samples; FE equations in stpDruledEq.
+%   \stpDruledFill{n}{x,y,z;...}{x,y,z;...}
+%   \begin{stpDruledEq} \begin{stpDruledRail} ... \end{stpDruledRail} ... \end{stpDruledEq}
+%-----------------------------------------------------------------------------
+% Star form (*): fill only — no outline (for multi-band ⊥-generator fills).
+\NewDocumentCommand{\stpDruledFill}{s m m m}{%
+  % #2 = sample count, #3/#4 = rail point lists "x,y,z;x,y,z;..."
+  \pgfmathtruncatemacro{\stp@rn}{#2}%
+  \pgfmathtruncatemacro{\stp@rnm}{#2-1}%
+  \edef\stp@railA{#3}%
+  \edef\stp@railB{#4}%
+  \foreach \stp@ri in {0,...,\stp@rnm} {%
+    \pgfmathtruncatemacro{\stp@rj}{int(min(\stp@ri+1,\stp@rnm))}%
+    \expandafter\stp@ruledGet\expandafter{\stp@railA}{\stp@ri}\stp@rax\stp@ray\stp@raz
+    \expandafter\stp@ruledGet\expandafter{\stp@railA}{\stp@rj}\stp@rbx\stp@rby\stp@rbz
+    \expandafter\stp@ruledGet\expandafter{\stp@railB}{\stp@ri}\stp@rcx\stp@rcy\stp@rcz
+    \expandafter\stp@ruledGet\expandafter{\stp@railB}{\stp@rj}\stp@rdx\stp@rdy\stp@rdz
+    \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
+    \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
+    \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+    \pgfmathsetmacro{\stp@rbx}{\stp@rbx*\stpDscale}%
+    \pgfmathsetmacro{\stp@rby}{\stp@rby*\stpDscale}%
+    \pgfmathsetmacro{\stp@rbz}{\stp@rbz*\stpDscale}%
+    \pgfmathsetmacro{\stp@rcx}{\stp@rcx*\stpDscale}%
+    \pgfmathsetmacro{\stp@rcy}{\stp@rcy*\stpDscale}%
+    \pgfmathsetmacro{\stp@rcz}{\stp@rcz*\stpDscale}%
+    \pgfmathsetmacro{\stp@rdx}{\stp@rdx*\stpDscale}%
+    \pgfmathsetmacro{\stp@rdy}{\stp@rdy*\stpDscale}%
+    \pgfmathsetmacro{\stp@rdz}{\stp@rdz*\stpDscale}%
+    \fill[fill=\stpClrFace, fill opacity=\stpFaceOpacity, draw=none]
+      (\stp@rax,\stp@ray,\stp@raz)--(\stp@rbx,\stp@rby,\stp@rbz)--
+      (\stp@rdx,\stp@rdy,\stp@rdz)--(\stp@rcx,\stp@rcy,\stp@rcz)--cycle;%
+  }%
+  \IfBooleanF{#1}{%
+    % Outline: rail A, generator, rail B reversed, generator
+    \expandafter\stp@ruledGet\expandafter{\stp@railA}{0}\stp@rax\stp@ray\stp@raz
+    \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
+    \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
+    \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+    \xdef\stp@crim{(\stp@rax,\stp@ray,\stp@raz)}%
+    \foreach \stp@ri in {1,...,\stp@rnm} {%
+      \expandafter\stp@ruledGet\expandafter{\stp@railA}{\stp@ri}\stp@rax\stp@ray\stp@raz
+      \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
+      \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
+      \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+      \xdef\stp@crim{\stp@crim--(\stp@rax,\stp@ray,\stp@raz)}%
+    }%
+    \foreach \stp@ri in {0,...,\stp@rnm} {%
+      \pgfmathtruncatemacro{\stp@rk}{\stp@rnm-\stp@ri}%
+      \expandafter\stp@ruledGet\expandafter{\stp@railB}{\stp@rk}\stp@rax\stp@ray\stp@raz
+      \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
+      \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
+      \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+      \xdef\stp@crim{\stp@crim--(\stp@rax,\stp@ray,\stp@raz)}%
+    }%
+    \draw[draw=\stpClrFaceEdge, line width=\stpTinyLW, fill=none] \stp@crim--cycle;%
+  }%
+}
+% Fetch i-th semicolon-separated x,y,z from list → #3,#4,#5
+\newcommand{\stp@ruledGet}[5]{%
+  \edef\stp@rglist{#1}%
+  \expandafter\stp@ruledGet@i\stp@rglist;\stp@nil{#2}{#3}{#4}{#5}%
+}
+\def\stp@ruledGet@i#1;#2\stp@nil#3#4#5#6{%
+  \def\stp@rgarg{#1}%
+  \ifnum#3=0\relax
+    \expandafter\stp@fParseXYZ\expandafter{\stp@rgarg}#4#5#6%
+  \else
+    \pgfmathtruncatemacro{\stp@rgn}{#3-1}%
+    \edef\stp@rgrest{#2}%
+    \expandafter\stp@ruledGet\expandafter{\stp@rgrest}{\stp@rgn}#4#5#6%
+  \fi
+}
+% Equation rails for FE (no draw — outline comes from \\stpDruledFill)
+\newenvironment{stpDruledEq}{%
+  \let\stp@fAddPt@saved\stp@fAddPt
+  \renewcommand{\stp@fAddPt}[3]{}%
+}{%
+  \let\stp@fAddPt\stp@fAddPt@saved
+}
+\newenvironment{stpDruledRail}{}{}
 
 % 3D face load ≡ SETSHELLLOAD Face (single arrow at geometric centre)
 \NewDocumentCommand{\stpDfaceload}{m m O{\stpDFaceShaft} O{}}{%

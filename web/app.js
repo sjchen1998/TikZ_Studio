@@ -2844,7 +2844,7 @@ function dxfImportMode() {
 }
 async function importDxfFile(f) {
   setStatus('importing');
-  const mode = dxfImportMode();
+  let mode = dxfImportMode();
   const fd = new FormData(); fd.append('file', f); fd.append('lang', lang); fd.append('mode', mode);
   let d;
   try {
@@ -2854,10 +2854,17 @@ async function importDxfFile(f) {
     $('toast').style.display = 'block'; $('toast').textContent = t('❌ 导入失败：') + '\n' + err; setStatus('fail'); return;
   }
   if (!d.ok) { $('toast').style.display = 'block'; $('toast').textContent = t('❌ 导入失败：') + '\n' + t(d.err); setStatus('fail'); return; }
+  // Server may upgrade geom → struct3d for REGION/SURFACE shell DXFs
+  mode = (d.mode || mode || 'geom').toLowerCase();
+  if (mode === 'struct3d' || mode === 'struct2d') activeTpl = mode;
   $('toast').style.display = 'none'; $('code').value = d.code;
   setPickPoints(mode !== 'struct3d');
   if (mode === 'struct2d' && panel !== 'plane') { $('libbox').style.display = 'none'; panel = 'plane'; renderBar(); }
   if (mode === 'struct3d' && panel !== 'space') { $('libbox').style.display = 'none'; panel = 'space'; renderBar(); }
+  const tplSel = $('tpl');
+  if (tplSel && (mode === 'struct3d' || mode === 'struct2d') && tplSel.value !== mode) {
+    tplSel.value = mode;
+  }
   await go(false);
   if (statusNow.kind === 'ok') setStatus('note', { note: d.note });
 }
