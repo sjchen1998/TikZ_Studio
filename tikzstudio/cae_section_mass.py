@@ -311,8 +311,21 @@ def accumulate_from_dxf(
         if face_loops_fn is None:
             skipped += 1
             continue
-        loops = face_loops_fn(e) or []
-        area = sum(polygon_area_3d(loop) for loop in loops)
+        raw = face_loops_fn(e) or []
+        # Accept polyline loops or curve-edge loops (via curve_loops_as_polylines)
+        if raw and raw[0] and hasattr(raw[0][0], "kind"):
+            from .cae_face_curves import curve_loops_as_polylines
+
+            loops = curve_loops_as_polylines(raw)
+        else:
+            loops = raw
+        # Outer minus holes (outer first, then holes)
+        if not loops:
+            skipped += 1
+            continue
+        area = abs(polygon_area_3d(loops[0]))
+        for hole in loops[1:]:
+            area -= abs(polygon_area_3d(hole))
         if area <= 0:
             skipped += 1
             continue

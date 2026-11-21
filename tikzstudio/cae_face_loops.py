@@ -841,7 +841,18 @@ def loops_from_mesh_entity(e) -> list[list[tuple]]:
 def face_loops_from_entity(e) -> list[list[tuple]]:
     """Unified entry: one entity → [outer, *holes] tessellated rings."""
     t = e.dxftype()
-    if t in ("REGION", "SURFACE", "3DSOLID"):
+    if t in (
+        "REGION",
+        "SURFACE",
+        "EXTRUDEDSURFACE",
+        "PLANESURFACE",
+        "LOFTEDSURFACE",
+        "REVOLVEDSURFACE",
+        "SWEPTSURFACE",
+        "NURBSSURFACE",
+        "3DSOLID",
+        "BODY",
+    ):
         loops = loops_from_region_sab(e)
         if loops:
             return loops

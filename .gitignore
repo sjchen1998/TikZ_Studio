@@ -21,6 +21,7 @@ texmf/tex/latex/local/Example.pdf.locked
 # Ignore demo PDFs; keep the package manual
 texmf/tex/latex/local/satopdf-*.pdf
 !texmf/tex/latex/local/satopdf.pdf
+texmf/tex/latex/local/satopdf-stp*.tex
 
 # LoadXData guide build leftovers (keep .tex + LoadXData_*.pdf)
 lisp/LoadXData_*.aux

@@ -1,11 +1,11 @@
-% Auto-generated from 3d_example.dxf
+% Auto-generated from 3d_examlpe_hole.dxf
 \documentclass[border=10pt]{standalone}
 \usepackage{satopdf}
 \begin{document}
-% Drawing scale 1:5 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
+% Drawing scale 1:50 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
 \stpDsetView{1}{-1}{1}
 \stpDsetAxis{xyz}
-\renewcommand{\stpDscale}{0.02}
+\renewcommand{\stpDscale}{0.002}
 \renewcommand{\stpDsupLen}{0.35}
 \renewcommand{\stpDhingeR}{0.9mm}
 \renewcommand{\stpDaxLen}{1.2}
@@ -18,109 +18,216 @@
   \stpDpoint{N3}{800.0000}{0.0000}{0.0000}
   \stpDpoint{N4}{0.0000}{1000.0000}{0.0000}
   \stpDpoint{N5}{0.0000}{1000.0000}{1200.0000}
-  \stpDpoint{N6}{800.0000}{1000.0000}{0.0000}
-  \stpDpoint{N7}{800.0000}{1000.0000}{1200.0000}
-  \stpDpoint{N8}{0.0000}{2000.0000}{0.0000}
-  \stpDpoint{N9}{0.0000}{2000.0000}{1200.0000}
-  \stpDpoint{N10}{800.0000}{2000.0000}{0.0000}
-  \stpDpoint{N11}{800.0000}{2000.0000}{1200.0000}
-  \stpDpoint{N12}{0.0000}{3000.0000}{0.0000}
-  \stpDpoint{N13}{0.0000}{3000.0000}{1200.0000}
-  \stpDpoint{N14}{800.0000}{3000.0000}{0.0000}
-  \stpDpoint{N15}{800.0000}{3000.0000}{1200.0000}
-  \stpDpoint{N16}{0.0000}{4000.0000}{0.0000}
-  \stpDpoint{N17}{0.0000}{4000.0000}{1200.0000}
-  \stpDpoint{N18}{800.0000}{4000.0000}{0.0000}
-  \stpDpoint{N19}{800.0000}{4000.0000}{1200.0000}
-  \stpDpoint{N20}{0.0000}{5000.0000}{0.0000}
-  \stpDpoint{N21}{0.0000}{5000.0000}{1200.0000}
-  \stpDpoint{N22}{800.0000}{5000.0000}{0.0000}
-  \stpDpoint{N23}{800.0000}{5000.0000}{1200.0000}
-  \stpDpoint{N24}{0.0000}{6000.0000}{0.0000}
-  \stpDpoint{N25}{200.0000}{6000.0000}{0.0000}
-  \stpDpoint{N26}{600.0000}{6000.0000}{0.0000}
-  \stpDpoint{N27}{800.0000}{6000.0000}{0.0000}
+  \stpDpoint{N6}{200.0000}{1000.0000}{0.0000}
+  \stpDpoint{N7}{600.0000}{1000.0000}{0.0000}
+  \stpDpoint{N8}{800.0000}{1000.0000}{0.0000}
+  \stpDpoint{N9}{800.0000}{1000.0000}{1200.0000}
+  \stpDpoint{N10}{0.0000}{2000.0000}{0.0000}
+  \stpDpoint{N11}{0.0000}{2000.0000}{1200.0000}
+  \stpDpoint{N12}{200.0000}{2000.0000}{0.0000}
+  \stpDpoint{N13}{600.0000}{2000.0000}{0.0000}
+  \stpDpoint{N14}{800.0000}{2000.0000}{0.0000}
+  \stpDpoint{N15}{800.0000}{2000.0000}{1200.0000}
+  \stpDpoint{N16}{0.0000}{3000.0000}{0.0000}
+  \stpDpoint{N17}{0.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N18}{200.0000}{3000.0000}{0.0000}
+  \stpDpoint{N19}{400.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N20}{600.0000}{3000.0000}{0.0000}
+  \stpDpoint{N21}{800.0000}{3000.0000}{0.0000}
+  \stpDpoint{N22}{800.0000}{3000.0000}{1200.0000}
+  \stpDpoint{N23}{0.0000}{4000.0000}{0.0000}
+  \stpDpoint{N24}{0.0000}{4000.0000}{1200.0000}
+  \stpDpoint{N25}{200.0000}{4000.0000}{0.0000}
+  \stpDpoint{N26}{600.0000}{4000.0000}{0.0000}
+  \stpDpoint{N27}{800.0000}{4000.0000}{0.0000}
+  \stpDpoint{N28}{800.0000}{4000.0000}{1200.0000}
+  \stpDpoint{N29}{0.0000}{5000.0000}{0.0000}
+  \stpDpoint{N30}{0.0000}{5000.0000}{1200.0000}
+  \stpDpoint{N31}{200.0000}{5000.0000}{0.0000}
+  \stpDpoint{N32}{600.0000}{5000.0000}{0.0000}
+  \stpDpoint{N33}{800.0000}{5000.0000}{0.0000}
+  \stpDpoint{N34}{800.0000}{5000.0000}{1200.0000}
+  \stpDpoint{N35}{0.0000}{6000.0000}{0.0000}
+  \stpDpoint{N36}{200.0000}{6000.0000}{0.0000}
+  \stpDpoint{N37}{600.0000}{6000.0000}{0.0000}
+  \stpDpoint{N38}{800.0000}{6000.0000}{0.0000}
   \stpDaxis{N0}
-  \stpDmember{beam}{N0}{N4}
-  \stpDmember{beam}{N4}{N8}
-  \stpDmember{beam}{N8}{N12}
-  \stpDmember{beam}{N12}{N16}
-  \stpDmember{beam}{N16}{N20}
-  \stpDmember{beam}{N20}{N24}
-  \stpDmember{beam}{N4}{N5}
-  \stpDmember{beam}{N8}{N9}
-  \stpDmember{beam}{N12}{N13}
-  \stpDmember{beam}{N16}{N17}
-  \stpDmember{beam}{N20}{N21}
-  \stpDmember{truss}{N0}{N5}[1][1]
-  \stpDmember{beam}{N9}{N13}
-  \stpDmember{beam}{N13}{N17}
-  \stpDmember{beam}{N17}{N21}
-  \stpDmember{truss}{N21}{N24}[1][1]
-  \stpDmember{beam}{N3}{N6}
-  \stpDmember{beam}{N6}{N10}
-  \stpDmember{beam}{N10}{N14}
-  \stpDmember{beam}{N14}{N18}
-  \stpDmember{beam}{N18}{N22}
-  \stpDmember{beam}{N22}{N27}
-  \stpDmember{beam}{N6}{N7}
-  \stpDmember{beam}{N10}{N11}
-  \stpDmember{beam}{N14}{N15}
-  \stpDmember{beam}{N18}{N19}
-  \stpDmember{beam}{N22}{N23}
-  \stpDmember{truss}{N3}{N7}[1][1]
-  \stpDmember{beam}{N11}{N15}
-  \stpDmember{beam}{N15}{N19}
-  \stpDmember{beam}{N19}{N23}
-  \stpDmember{truss}{N23}{N27}[1][1]
-  \stpDmember{beam}{N0}{N1}
-  \stpDmember{beam}{N1}{N2}
-  \stpDmember{beam}{N2}{N3}
-  \stpDmember{beam}{N4}{N6}
-  \stpDmember{beam}{N8}{N10}
-  \stpDmember{beam}{N12}{N14}
-  \stpDmember{beam}{N16}{N18}
-  \stpDmember{beam}{N21}{N23}
-  \stpDmember{beam}{N17}{N19}
-  \stpDmember{beam}{N20}{N22}
-  \stpDmember{beam}{N24}{N25}
-  \stpDmember{beam}{N25}{N26}
-  \stpDmember{beam}{N26}{N27}
-  \stpDmember{beam}{N13}{N15}
-  \stpDmember{truss}{N7}{N10}[1][1]
-  \stpDmember{truss}{N10}{N15}[1][1]
-  \stpDmember{truss}{N15}{N18}[1][1]
-  \stpDmember{truss}{N18}{N23}[1][1]
-  \stpDmember{truss}{N5}{N8}[1][1]
-  \stpDmember{truss}{N8}{N13}[1][1]
-  \stpDmember{truss}{N13}{N16}[1][1]
-  \stpDmember{truss}{N16}{N21}[1][1]
-  \stpDmember{beam}{N1}{N25}
-  \stpDmember{beam}{N2}{N26}
-  \stpDmember{beam}{N7}{N11}
-  \stpDmember{beam}{N11}{N9}
-  \stpDmember{beam}{N9}{N5}
-  \stpDmember{beam}{N5}{N7}
-  \stpDface{N21,N5,N7,N23}
-  \stpDface{N23,N7,N6,N22}
-  \stpDface{N21,N5,N4,N20}
-  \stpDsupport{pin}{N24}[1][0][1][0][0][0]  % BC GLOBAL[101000]
-  \stpDsupport{pin}{N27}[1][0][1][0][0][0]  % BC GLOBAL[101000]
+  \stpDmember{beam}{N0}{N4}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N4}{N10}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N10}{N16}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N16}{N23}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N23}{N29}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N29}{N35}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N4}{N5}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N10}{N11}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N16}{N17}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N23}{N24}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N29}{N30}  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N0}{N5}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N11}{N17}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N17}{N24}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N24}{N30}  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N30}{N35}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N3}{N8}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N8}{N14}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N14}{N21}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N21}{N27}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N27}{N33}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N33}{N38}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N8}{N9}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N14}{N15}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N21}{N22}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N27}{N28}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N33}{N34}  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N3}{N9}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N15}{N22}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N22}{N28}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N28}{N34}  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N34}{N38}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N0}{N1}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N1}{N2}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N2}{N3}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N4}{N6}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N6}{N7}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N7}{N8}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N10}{N12}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N12}{N13}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N13}{N14}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N16}{N18}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N18}{N20}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N20}{N21}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N23}{N25}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N25}{N26}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N26}{N27}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N30}{N34}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N24}{N28}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N29}{N31}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N31}{N32}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N32}{N33}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N35}{N36}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N36}{N37}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N37}{N38}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N17}{N22}  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N9}{N14}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N14}{N22}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N22}{N27}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N27}{N34}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N5}{N10}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N10}{N17}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N17}{N23}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{truss}{N23}{N30}[1][1]  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N1}{N6}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N6}{N12}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N12}{N18}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N18}{N25}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N25}{N31}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N31}{N36}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N2}{N7}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N7}{N13}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N13}{N20}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N20}{N26}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N26}{N32}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N32}{N37}  % sec=Circle D50 Q355B q=1.5
+  \stpDmember{beam}{N9}{N15}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N15}{N11}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N11}{N5}  % sec=Circle D50 Q355B
+  \stpDmember{beam}{N5}{N9}  % sec=Circle D50 Q355B
+  \begin{stpDfaceEnv}
+    \begin{stpDfaceLoop}
+      \stpDedgeLine{0,5000,1200}{0,1000,1200}
+      \stpDedgeLine{0,1000,1200}{800,1000,1200}
+      \stpDedgeLine{800,1000,1200}{800,5000,1200}
+      \stpDedgeLine{800,5000,1200}{0,5000,1200}
+    \end{stpDfaceLoop}
+    \begin{stpDfaceLoop}
+      \stpDedgeArc{400,1500,1200}{0,0,-1}{0,-250,0}{0.8}{-3.1415927}{3.1415927}
+    \end{stpDfaceLoop}
+    \begin{stpDfaceLoop}
+      \stpDedgeCircle{400,4500,1200}{0,0,-1}{200}
+    \end{stpDfaceLoop}
+  \end{stpDfaceEnv}
+  \begin{stpDfaceEnv}
+    \begin{stpDfaceLoop}
+      \stpDedgeLine{0,5000,1200}{0,1000,1200}
+      \stpDedgeLine{0,1000,1200}{0,1000,0}
+      \stpDedgeLine{0,1000,0}{0,5000,0}
+      \stpDedgeLine{0,5000,0}{0,5000,1200}
+    \end{stpDfaceLoop}
+  \end{stpDfaceEnv}
+  \stpDmeshSeg{800,4428.57,1195.2}{800,4428.57,4.8}
+  \stpDmeshSeg{800,3857.14,1195.2}{800,3857.14,4.8}
+  \stpDmeshSeg{800,3285.71,1195.2}{800,3285.71,4.8}
+  \stpDmeshSeg{800,2714.29,1195.2}{800,2714.29,1004.8}
+  \stpDmeshSeg{800,2714.29,195.2}{800,2714.29,4.8}
+  \stpDmeshSeg{800,2142.86,1195.2}{800,2142.86,1004.8}
+  \stpDmeshSeg{800,2142.86,195.2}{800,2142.86,4.8}
+  \stpDmeshSeg{800,1571.43,1195.2}{800,1571.43,1004.8}
+  \stpDmeshSeg{800,1571.43,195.2}{800,1571.43,4.8}
+  \stpDmeshSeg{800,4984,1028.57}{800,1016,1028.57}
+  \stpDmeshSeg{800,4984,857.143}{800,2816,857.143}
+  \stpDmeshSeg{800,1184,857.143}{800,1016,857.143}
+  \stpDmeshSeg{800,4984,685.714}{800,2816,685.714}
+  \stpDmeshSeg{800,1184,685.714}{800,1016,685.714}
+  \stpDmeshSeg{800,4984,514.286}{800,2816,514.286}
+  \stpDmeshSeg{800,1184,514.286}{800,1016,514.286}
+  \stpDmeshSeg{800,4984,342.857}{800,2816,342.857}
+  \stpDmeshSeg{800,1184,342.857}{800,1016,342.857}
+  \stpDmeshSeg{800,4984,171.429}{800,1016,171.429}
+  \begin{stpDwireEnv}
+    \begin{stpDfaceLoop}
+      \stpDedgeLine{800,1000,0}{800,5000,0}
+      \stpDedgeLine{800,5000,0}{800,5000,1200}
+      \stpDedgeLine{800,5000,1200}{800,1000,1200}
+      \stpDedgeLine{800,1000,1200}{800,1000,0}
+    \end{stpDfaceLoop}
+    \begin{stpDfaceLoop}
+      \stpDedgeLine{800,1200,1000}{800,2800,1000}
+      \stpDedgeLine{800,2800,1000}{800,2800,200}
+      \stpDedgeLine{800,2800,200}{800,1200,200}
+      \stpDedgeLine{800,1200,200}{800,1200,1000}
+    \end{stpDfaceLoop}
+  \end{stpDwireEnv}
+  \begin{stpDruledEq}
+    \begin{stpDruledRail}
+      \stpDedgeLine{800,1000,0}{800,5000,0}
+      \stpDedgeLine{800,5000,0}{800,5000,1200}
+      \stpDedgeLine{800,5000,1200}{800,1000,1200}
+      \stpDedgeLine{800,1000,1200}{800,1000,0}
+    \end{stpDruledRail}
+    \begin{stpDruledRail}
+      \stpDedgeLine{800,1200,1000}{800,2800,1000}
+      \stpDedgeLine{800,2800,1000}{800,2800,200}
+      \stpDedgeLine{800,2800,200}{800,1200,200}
+      \stpDedgeLine{800,1200,200}{800,1200,1000}
+    \end{stpDruledRail}
+  \end{stpDruledEq}
+  \stpDsupport{pin}{N35}[1][0][1][0][0][0]  % BC GLOBAL[101000]
+  \stpDsupport{pin}{N38}[1][0][1][0][0][0]  % BC GLOBAL[101000]
   \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
   \stpDsupport{pin}{N3}[1][1][1][1][1][1]  % BC GLOBAL[111111]
-  \stpDlineload{N2}{N26}[0,0,-1][6][0.55][$q=1.5$]
-  \stpDlineload{N1}{N25}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N1}{N6}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N6}{N12}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N12}{N18}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N18}{N25}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N25}{N31}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N31}{N36}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N2}{N7}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N7}{N13}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N13}{N20}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N20}{N26}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N26}{N32}[0,0,-1][6][0.55][$q=1.5$]
+  \stpDlineload{N32}{N37}[0,0,-1][6][0.55][$q=1.5$]
   \stpDpointload{N5}{0,0,-1}[0.55][$F=1000\,\mathrm{N}$]
-  \stpDfaceload{N21,N5,N7,N23}{0,0,-1}[0.55][$P_{\mathrm{face}}=-1\,\mathrm{MPa}$]
+  \stpDpointload{N19}{0,0,-1}[0.55][$P_{\mathrm{face}}=-1\,\mathrm{MPa}$]
   \node[stpLabel, below left=1.5mm] at (N0) {$A$};
   \node[stpLabel, below right=1.5mm] at (N3) {$B$};
-  \node[stpLabel, above left=1.5mm] at (N24) {$D$};
-  \node[stpLabel, above right=1.5mm] at (N27) {$C$};
+  \node[stpLabel, above left=1.5mm] at (N35) {$D$};
+  \node[stpLabel, above right=1.5mm] at (N38) {$C$};
   \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}[$L_x=800\,\mathrm{mm}$]
   \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}[$L_y=6000\,\mathrm{mm}$]
   \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}[$L_z=1200\,\mathrm{mm}$]
   % Structure mass properties (UR of current figure bbox)
-  \stpStructInfo{$V=2.7\times 10^{-1}\,\mathrm{m}^{3}$}{$m=2.12\,\mathrm{t}$}
+  \stpStructInfo{$V=2.19\times 10^{-1}\,\mathrm{m}^{3}$}{$m=1.72\,\mathrm{t}$}
 \end{tikzpicture}
 \end{document}
 

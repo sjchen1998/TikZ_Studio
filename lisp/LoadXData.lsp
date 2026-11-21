@@ -145,6 +145,24 @@
 (defun lock-all-cae-layers () (lock-vis-layer))
 (defun unlock-all-cae-layers () (unlock-vis-layer))
 
+;;; ---------- 板壳实体类型（含 EXTRUDEDSURFACE 等现代曲面）----------
+;;; DXF 0：经典 SURFACE/REGION + EXTRUDED/PLANED/LOFTED/REVOLVED/SWEPT/NURBS
+(defun cae-shell-type-filter ()
+  "MESH,REGION,SURFACE,EXTRUDEDSURFACE,PLANESURFACE,LOFTEDSURFACE,REVOLVEDSURFACE,SWEPTSURFACE,NURBSSURFACE,3DSOLID,BODY,3DFACE,LWPOLYLINE"
+)
+(defun cae-shell-type-filter-ins ()
+  (strcat (cae-shell-type-filter) ",INSERT")
+)
+(defun cae-shell-type-p (eType)
+  (or (and eType (= (type eType) 'STR) (wcmatch eType "*SURFACE"))
+      (member eType '("MESH" "REGION" "3DSOLID" "BODY" "3DFACE" "LWPOLYLINE")))
+)
+;;; 现代曲面族（炸开时常先变成 REGION / 边线）
+(defun cae-modern-surface-p (eType)
+  (or (= eType "SURFACE")
+      (and eType (= (type eType) 'STR) (wcmatch eType "*SURFACE")))
+)
+
 ;;; AutoLISP 无 Common Lisp SUBSEQ；end 为开区间，nil=到末尾
 (defun cae-subseq (lst start end / i out)
   (if (not end) (setq end (length lst)))
@@ -2160,8 +2178,8 @@
                              info cenPt diagLen loadTypeTag visBlk visHandle count)
   (vl-load-com)
   (setq count 0
-        ss (ssget "_X" '((0 . "MESH,REGION,SURFACE,3DSOLID,3DFACE,LWPOLYLINE")
-                         (-3 ("MY_CAE_SHELL_LOAD")))))
+        ss (ssget "_X" (list (cons 0 (cae-shell-type-filter))
+                             '(-3 ("MY_CAE_SHELL_LOAD")))))
   (if ss
     (progn
       (setq i 0)
@@ -2257,8 +2275,8 @@
                            visBlk visHandle count info)
   (vl-load-com)
   (setq count 0
-        ss (ssget "_X" '((0 . "MESH,REGION,SURFACE,3DSOLID,3DFACE,LWPOLYLINE")
-                         (-3 ("MY_CAE_SHELL_BC")))))
+        ss (ssget "_X" (list (cons 0 (cae-shell-type-filter))
+                             '(-3 ("MY_CAE_SHELL_BC")))))
   (if ss
     (progn
       (setq i 0)
@@ -2347,8 +2365,8 @@
                              visBlk visHandle count)
   (vl-load-com)
   (setq count 0
-        ss (ssget "_X" '((0 . "MESH,REGION,SURFACE,3DSOLID,3DFACE,LWPOLYLINE")
-                         (-3 ("MY_CAE_SHELL_PROP")))))
+        ss (ssget "_X" (list (cons 0 (cae-shell-type-filter))
+                             '(-3 ("MY_CAE_SHELL_PROP")))))
   (if ss
     (progn
       (setq i 0)
@@ -2539,7 +2557,72 @@
 ;;; 板壳：几何 / 边面载荷 / 属性 / 复合约束
 ;;; ====================================================================
 
-(defun get-shell-center-normal (ent / ed eType obj normWCS minPt maxPt cenPt diagLen verts v1 v2 i beforeEnt tempClone ssTmp subEnt pts)
+;;; 从克隆炸开结果中收集边端点；EXTRUDEDSURFACE 常先变 REGION，再二次炸开
+(defun cae-collect-explode-edge-pts (markEnt / ssTmp subEnt eType pts obj nrm again e2 mark2)
+  (setq ssTmp (ssadd) pts nil nrm nil again nil)
+  (setq subEnt (entnext markEnt))
+  (while subEnt
+    (ssadd subEnt ssTmp)
+    (setq eType (cdr (assoc 0 (entget subEnt))))
+    (cond
+      ((member eType '("LINE" "ARC" "CIRCLE" "SPLINE" "ELLIPSE" "LWPOLYLINE"))
+       (if (not (vl-catch-all-error-p
+                  (vl-catch-all-apply 'vlax-curve-getStartPoint (list subEnt))))
+         (setq pts (append pts
+                           (list (vlax-curve-getStartPoint subEnt)
+                                 (vlax-curve-getEndPoint subEnt))))
+       )
+      )
+      ((= eType "REGION")
+       (setq obj (vlax-ename->vla-object subEnt))
+       (if (and (not nrm) (vlax-property-available-p obj 'Normal))
+         (setq nrm (vec-unit (vlax-safearray->list
+                               (vlax-variant-value (vla-get-Normal obj)))))
+       )
+       (setq again (cons subEnt again))
+      )
+      ((cae-modern-surface-p eType)
+       (setq again (cons subEnt again))
+      )
+    )
+    (setq subEnt (entnext subEnt))
+  )
+  ;; 二次炸开：REGION / 曲面 → 边线（e2 炸后从库中消失，新边并入 ssTmp）
+  (foreach e2 again
+    (if (and e2 (entget e2))
+      (progn
+        (setq mark2 (entlast))
+        (command "_.EXPLODE" e2)
+        (setq subEnt (entnext mark2))
+        (while subEnt
+          (ssadd subEnt ssTmp)
+          (setq eType (cdr (assoc 0 (entget subEnt))))
+          (if (member eType '("LINE" "ARC" "CIRCLE" "SPLINE" "ELLIPSE" "LWPOLYLINE"))
+            (if (not (vl-catch-all-error-p
+                        (vl-catch-all-apply 'vlax-curve-getStartPoint (list subEnt))))
+              (setq pts (append pts
+                                (list (vlax-curve-getStartPoint subEnt)
+                                      (vlax-curve-getEndPoint subEnt))))
+            )
+          )
+          (if (and (= eType "REGION") (not nrm))
+            (progn
+              (setq obj (vlax-ename->vla-object subEnt))
+              (if (vlax-property-available-p obj 'Normal)
+                (setq nrm (vec-unit (vlax-safearray->list
+                                      (vlax-variant-value (vla-get-Normal obj)))))
+              )
+            )
+          )
+          (setq subEnt (entnext subEnt))
+        )
+      )
+    )
+  )
+  (list ssTmp pts nrm)
+)
+
+(defun get-shell-center-normal (ent / ed eType obj normWCS minPt maxPt cenPt diagLen verts v1 v2 i beforeEnt tempClone pack ssTmp pts)
   (vl-load-com)
   (setq ed (entget ent))
   (setq eType (cdr (assoc 0 ed)))
@@ -2555,15 +2638,16 @@
   
   ;; 2. 按实体类型精确提取真实三维法向量
   (cond
-    ;; 情况 A：REGION 自带 ActiveX Normal 属性，直接读取！
-    ((and (= eType "REGION") (vlax-property-available-p obj 'Normal))
+    ;; A：REGION / PLANESURFACE / 部分曲面 — ActiveX Normal
+    ((and (or (= eType "REGION") (= eType "PLANESURFACE") (cae-modern-surface-p eType))
+          (vlax-property-available-p obj 'Normal))
      (setq normWCS (vec-unit (vlax-safearray->list (vlax-variant-value (vla-get-Normal obj)))))
     )
-    ;; 情况 B：LWPOLYLINE / CIRCLE / ARC 自带组码 210
+    ;; B：LWPOLYLINE / CIRCLE / ARC 自带组码 210
     ((assoc 210 ed)
      (setq normWCS (vec-unit (cdr (assoc 210 ed))))
     )
-    ;; 情况 C：MESH -> 直接提取组码 10 顶点列表，找 3 个不共线顶点做叉乘
+    ;; C：MESH -> 组码 10 顶点叉乘
     ((= eType "MESH")
      (setq verts nil)
      (foreach item ed
@@ -2581,7 +2665,7 @@
        )
      )
     )
-    ;; 情况 D：3DFACE -> 直接用组码 10, 11, 12 叉乘
+    ;; D：3DFACE -> 组码 10, 11, 12 叉乘
     ((= eType "3DFACE")
      (setq v1 (vec-sub (cdr (assoc 11 ed)) (cdr (assoc 10 ed))))
      (setq v2 (vec-sub (cdr (assoc 12 ed)) (cdr (assoc 10 ed))))
@@ -2589,7 +2673,7 @@
     )
   )
   
-  ;; 兜底（如复杂 SURFACE）：克隆炸开一次取任意两段边向量叉乘
+  ;; 兜底：克隆炸开（EXTRUDEDSURFACE 常需二次炸开 REGION→边）
   (if (not normWCS)
     (progn
       (setq beforeEnt (entlast))
@@ -2598,15 +2682,9 @@
       (if (not (equal beforeEnt tempClone))
         (progn
           (command "_.EXPLODE" tempClone)
-          (setq ssTmp (ssadd) subEnt (entnext beforeEnt) pts nil)
-          (while subEnt
-            (ssadd subEnt ssTmp)
-            (if (vlax-curve-isPlanar subEnt)
-              (setq pts (append pts (list (vlax-curve-getStartPoint subEnt) (vlax-curve-getEndPoint subEnt))))
-            )
-            (setq subEnt (entnext subEnt))
-          )
-          (if (>= (length pts) 3)
+          (setq pack (cae-collect-explode-edge-pts beforeEnt))
+          (setq ssTmp (car pack) pts (cadr pack) normWCS (caddr pack))
+          (if (and (not normWCS) (>= (length pts) 3))
             (progn
               (setq v1 (vec-sub (nth 1 pts) (nth 0 pts)))
               (setq i 2)
@@ -2617,7 +2695,7 @@
               )
             )
           )
-          (if (> (sslength ssTmp) 0) (command "_.ERASE" ssTmp ""))
+          (if (and ssTmp (> (sslength ssTmp) 0)) (command "_.ERASE" ssTmp ""))
         )
       )
     )
@@ -2771,15 +2849,15 @@
   (vl-load-com)
   (register-shell-load-app)
   
-  (setq selMain (entsel (_T "\n[第1步] 请选择目标板壳面片 (MESH / REGION / SURFACE / 3DFACE): "
-                             "\n[Step 1] Select shell face (MESH / REGION / SURFACE / 3DFACE): ")))
+  (setq selMain (entsel (_T "\n[第1步] 请选择目标板壳面片 (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …): "
+                             "\n[Step 1] Select shell face (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …): ")))
   (if selMain
     (progn
       (setq mainEnt (car selMain))
       (setq mainType (cdr (assoc 0 (entget mainEnt))))
       (setq mainHandle (cdr (assoc 5 (entget mainEnt))))
       
-      (if (member mainType '("MESH" "REGION" "SURFACE" "3DSOLID" "3DFACE" "LWPOLYLINE"))
+      (if (cae-shell-type-p mainType)
         (progn
           (initget "Edge Face")
           (setq loadScope (getkword (_T "\n加载位置 Edge=边线载荷, Face=面压强/面力 [Edge/Face] <Face>: "
@@ -2937,7 +3015,7 @@
   (unlock-vis-layer)
   (princ (_T "\n请选择要清除载荷的【板壳面片】或【板壳载荷箭头整体符号】: "
          "\nSelect shell face(s) or shell-load symbol(s) to clear: "))
-  (setq ss (ssget '((0 . "MESH,REGION,SURFACE,3DSOLID,3DFACE,LWPOLYLINE,INSERT"))))
+  (setq ss (ssget (list (cons 0 (cae-shell-type-filter-ins)))))
   (if ss
     (progn
       (setq i 0)
@@ -2990,8 +3068,26 @@
 ;;; 板壳属性与约束模块：几何提取与属性符号块
 ;;; ====================================================================
 
-;;; 提取 REGION 的闭合边界环三维点列（区分外环 OUTER 与内孔 INNER）
-(defun extract-region-loops-3d (ent / eType oldUcs beforeEnt tempClone ssTmp subEnt curves segPts loops curLoop foundNext pEnd ptS ptE maxDiag maxIdx i diag minP maxP resList pMid)
+;;; 将一条曲线实体采样为点列（供环拼合）
+(defun cae-curve-ent-to-pts (subEnt / eType pMid)
+  (setq eType (cdr (assoc 0 (entget subEnt))))
+  (cond
+    ((= eType "LINE")
+     (list (vlax-curve-getStartPoint subEnt) (vlax-curve-getEndPoint subEnt)))
+    ((member eType '("ARC" "CIRCLE" "SPLINE" "ELLIPSE" "LWPOLYLINE"))
+     (setq pMid (vlax-curve-getPointAtParam subEnt
+                   (* 0.5 (+ (vlax-curve-getStartParam subEnt)
+                             (vlax-curve-getEndParam subEnt)))))
+     (sample-3pt-arc-3d (vlax-curve-getStartPoint subEnt)
+                        pMid
+                        (vlax-curve-getEndPoint subEnt) 16))
+    (T nil)
+  )
+)
+
+;;; 提取板壳闭合边界环三维点列（外环 OUTER / 内孔 INNER）
+;;; 支持 REGION、EXTRUDEDSURFACE 等（后者常需二次炸开）
+(defun extract-region-loops-3d (ent / eType oldUcs beforeEnt tempClone ssTmp subEnt curves segPts loops curLoop foundNext pEnd ptS ptE maxDiag maxIdx i diag minP maxP resList again e2 mark2)
   (setq eType (cdr (assoc 0 (entget ent))))
   (if (= eType "MESH")
     (list (cons 1000 "V1_NATIVE_MESH"))
@@ -3002,7 +3098,7 @@
       (setq beforeEnt (entlast))
       (command "_.COPY" ent "" '(0.0 0.0 0.0) '(0.0 0.0 0.0))
       (setq tempClone (entlast))
-      (setq curves nil ssTmp (ssadd))
+      (setq curves nil ssTmp (ssadd) again nil)
       
       (if (not (equal beforeEnt tempClone))
         (progn
@@ -3010,24 +3106,38 @@
           (setq subEnt (entnext beforeEnt))
           (while subEnt
             (ssadd subEnt ssTmp)
-            (if (member (cdr (assoc 0 (entget subEnt))) '("LINE" "ARC" "CIRCLE" "SPLINE" "ELLIPSE"))
-              (progn
-                (if (= (cdr (assoc 0 (entget subEnt))) "LINE")
-                  (setq segPts (list (vlax-curve-getStartPoint subEnt)
-                                     (vlax-curve-getEndPoint subEnt)))
-                  (progn
-                    (setq pMid (vlax-curve-getPointAtParam subEnt
-                                 (* 0.5 (+ (vlax-curve-getStartParam subEnt)
-                                           (vlax-curve-getEndParam subEnt)))))
-                    (setq segPts (sample-3pt-arc-3d (vlax-curve-getStartPoint subEnt)
-                                                    pMid
-                                                    (vlax-curve-getEndPoint subEnt) 16))
-                  )
-                )
-                (setq curves (append curves (list segPts)))
+            (setq eType (cdr (assoc 0 (entget subEnt))))
+            (cond
+              ((member eType '("LINE" "ARC" "CIRCLE" "SPLINE" "ELLIPSE" "LWPOLYLINE"))
+               (if (setq segPts (cae-curve-ent-to-pts subEnt))
+                 (setq curves (append curves (list segPts)))
+               )
+              )
+              ((or (= eType "REGION") (cae-modern-surface-p eType))
+               (setq again (cons subEnt again))
               )
             )
             (setq subEnt (entnext subEnt))
+          )
+          ;; EXTRUDEDSURFACE → REGION / 曲面 → 再炸成边
+          (foreach e2 again
+            (if (and e2 (entget e2))
+              (progn
+                (setq mark2 (entlast))
+                (command "_.EXPLODE" e2)
+                (setq subEnt (entnext mark2))
+                (while subEnt
+                  (ssadd subEnt ssTmp)
+                  (setq eType (cdr (assoc 0 (entget subEnt))))
+                  (if (member eType '("LINE" "ARC" "CIRCLE" "SPLINE" "ELLIPSE" "LWPOLYLINE"))
+                    (if (setq segPts (cae-curve-ent-to-pts subEnt))
+                      (setq curves (append curves (list segPts)))
+                    )
+                  )
+                  (setq subEnt (entnext subEnt))
+                )
+              )
+            )
           )
           (if (> (sslength ssTmp) 0) (command "_.ERASE" ssTmp ""))
         )
@@ -3107,9 +3217,9 @@
 (defun c:SETSHELL (/ ss thChoice theoryType thick offChoice offZ matChoice matName i ent entHandle info cenPt normVec diagLen oldXd oldBlk visBlk visHandle geomRecords)
   (vl-load-com)
   (register-shell-prop-app)
-  (princ (_T "\n请选择要设置属性的板壳面片 (MESH / REGION / SURFACE / 3DFACE，支持框选): "
-         "\nSelect shell faces for properties (MESH / REGION / SURFACE / 3DFACE, window OK): "))
-  (setq ss (ssget '((0 . "MESH,REGION,SURFACE,3DSOLID,3DFACE,LWPOLYLINE"))))
+  (princ (_T "\n请选择要设置属性的板壳面片 (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …，支持框选): "
+         "\nSelect shell faces for properties (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …, window OK): "))
+  (setq ss (ssget (list (cons 0 (cae-shell-type-filter)))))
   
   (if ss
     (progn
@@ -3258,15 +3368,15 @@
   (vl-load-com)
   (register-shell-bc-app)
   
-  (setq selMain (entsel (_T "\n[第1步] 请选择要施加约束的板壳面片 (MESH / REGION / SURFACE / 3DFACE): "
-                             "\n[Step 1] Select shell face for BC (MESH / REGION / SURFACE / 3DFACE): ")))
+  (setq selMain (entsel (_T "\n[第1步] 请选择要施加约束的板壳面片 (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …): "
+                             "\n[Step 1] Select shell face for BC (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …): ")))
   (if selMain
     (progn
       (setq mainEnt (car selMain))
       (setq mainType (cdr (assoc 0 (entget mainEnt))))
       (setq mainHandle (cdr (assoc 5 (entget mainEnt))))
       
-      (if (member mainType '("MESH" "REGION" "SURFACE" "3DSOLID" "3DFACE" "LWPOLYLINE"))
+      (if (cae-shell-type-p mainType)
         (progn
           (initget "Edge Face")
           (setq bcScope (getkword (_T "\n[第2步] 约束区域 Edge=边界线, Face=整面 [Edge/Face] <Edge>: "
@@ -3395,7 +3505,7 @@
   (unlock-all-cae-layers)
   (princ (_T "\n请选择要清除约束的【板壳面片】或【青色支座整体符号】: "
          "\nSelect shell face(s) or cyan BC symbol(s) to clear: "))
-  (setq ss (ssget '((0 . "MESH,REGION,SURFACE,3DSOLID,3DFACE,LWPOLYLINE,INSERT"))))
+  (setq ss (ssget (list (cons 0 (cae-shell-type-filter-ins)))))
   (if ss
     (progn
       (setq i 0)
@@ -4039,6 +4149,8 @@
            "\n  BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING | Sec: SETSEC/DELSEC"))
 (princ (_T "\n  板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"
            "\n  Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"))
+(princ (_T "\n  板壳面: REGION/MESH/SURFACE/EXTRUDEDSURFACE/PLANESURFACE/…/3DFACE"
+           "\n  Shell faces: REGION/MESH/SURFACE/EXTRUDEDSURFACE/PLANESURFACE/…/3DFACE"))
 (princ (_T "\n  焊缝: SETSPOTWELD/DELSPOTWELD | SETSEAMWELD/DELSEAMWELD | TOGGLEWELD"
            "\n  Weld: SETSPOTWELD/DELSPOTWELD | SETSEAMWELD/DELSEAMWELD | TOGGLEWELD"))
 (princ (_T "\n  显示: REFRESH_ALL/SETSCALE/TOGGLELOAD/TOGGLEBC/TOGGLESEC/TOGGLEWELD"

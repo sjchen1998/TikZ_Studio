@@ -46,7 +46,20 @@ def _is_cae_vis_layer(layer: str) -> bool:
     return u.startswith("CAE_VIS") or u.startswith("CAE_LOAD_VIS") or u == "CAE_LOAD_VIS"
 
 
-_SHELL_TYPES = ("REGION", "SURFACE", "3DSOLID", "3DFACE", "MESH")
+_SHELL_TYPES = (
+    "REGION",
+    "SURFACE",
+    "EXTRUDEDSURFACE",
+    "PLANESURFACE",
+    "LOFTEDSURFACE",
+    "REVOLVEDSURFACE",
+    "SWEPTSURFACE",
+    "NURBSSURFACE",
+    "3DSOLID",
+    "BODY",
+    "3DFACE",
+    "MESH",
+)
 
 
 def sniff_dxf_import_mode(data: bytes) -> str | None:

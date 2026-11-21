@@ -14,22 +14,26 @@
   \stpNode{N6}{950.9619,350.0000}
   \stpNode{N7}{1250.9619,0.0000}
   \stpNode{N8}{1250.9619,180.0000}
-  \stpMember{beam}{N6}{N5}
-  \stpMember{beam}{N5}{N8}
-  \stpMember{beam}{N5}{N7}
-  \stpMember{beam}{N8}{N6}
-  \stpMember{beam}{N4}{N3}
-  \stpMember{beam}{N2}{N1}
-  \stpMember{beam}{N0}{N1}
-  \stpMember{beam}{N1}{N3}
-  \stpMember{beam}{N3}{N5}
-  \stpMember{beam}{N6}{N0}
-  \stpMember{beam}{N5}{N4}
-  \stpMember{beam}{N3}{N2}
-  \stpMember{beam}{N8}{N7}
+  \stpMember{beam}{N6}{N5}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N5}{N8}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N5}{N7}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N8}{N6}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N4}{N3}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N2}{N1}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N0}{N1}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N1}{N3}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N3}{N5}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N6}{N4}  % sec=Circle D50 Q355B q=10.0
+  \stpMember{beam}{N4}{N2}  % sec=Circle D50 Q355B q=10.0
+  \stpMember{beam}{N2}{N0}  % sec=Circle D50 Q355B q=10.0
+  \stpMember{beam}{N5}{N4}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N3}{N2}  % sec=Circle D50 Q355B
+  \stpMember{beam}{N8}{N7}  % sec=Circle D50 Q355B
   \stpSupport{N0}[type=fixed, angle=0, size=12mm]  % shared-node fixed [111111] deg=2
   \stpSupport{N7}[type=roller, angle=0, size=12mm]  % shared-node [011000] deg=2
-  \stpLineLoad{global}{N6}{N0}[0.85][0.85][0.1667][$q=10$]
+  \stpLineLoad{global}{N6}{N4}[0.85][0.85][0.1667][$q=10$]
+  \stpLineLoad{global}{N4}{N2}[0.85][0.85][0.1667][$q=10$]
+  \stpLineLoad{global}{N2}{N0}[0.85][0.85][0.1667][$q=10$]
   \stpLoad{moment}{N8}[30][200][0][$M=1000$]
   \stpNode{DimSW}{50.9619,0.0000}
   \stpNode{DimSE}{1250.9619,0.0000}

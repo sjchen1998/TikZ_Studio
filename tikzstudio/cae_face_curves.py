@@ -512,12 +512,32 @@ def _poly_line_hits(
     return out
 
 
+def _loop_uv_poly(
+    edges: list[Edge],
+    origin: Vec3,
+    u_ax: Vec3,
+    v_ax: Vec3,
+    n: int = 64,
+) -> list[tuple[float, float]]:
+    """Project a boundary loop into the plane UV frame."""
+    poly = loop_polyline(edges, n=n)
+    if len(poly) < 3:
+        return []
+    return [
+        (
+            float((Vec3(p) - origin).dot(u_ax)),
+            float((Vec3(p) - origin).dot(v_ax)),
+        )
+        for p in poly
+    ]
+
+
 def _plane_mesh_segs(
     loops: list[list[Edge]],
     nu: int = _PLANE_MESH_U,
     nv: int = _PLANE_MESH_V,
 ) -> list[tuple[tuple, tuple]]:
-    """Interior UV grid segments clipped to outer polygon (display only)."""
+    """Interior UV grid clipped to outer polygon minus holes (display only)."""
     frame = _plane_frame(loops)
     if frame is None:
         return []
@@ -528,11 +548,20 @@ def _plane_mesh_segs(
     vmin, vmax = min(vs), max(vs)
     if umax - umin < 1e-9 or vmax - vmin < 1e-9:
         return []
+    hole_uvs = [
+        huv
+        for hole in loops[1:]
+        if len(huv := _loop_uv_poly(hole, origin, u_ax, v_ax)) >= 3
+    ]
+    # Inset outer / expand holes slightly so isolines clear trim curves
+    eps_u = max(1e-4, 0.004 * (umax - umin))
+    eps_v = max(1e-4, 0.004 * (vmax - vmin))
     segs: list[tuple[tuple, tuple]] = []
 
-    def _emit_pairs(hits: list[float], *, horizontal: bool, const: float) -> None:
-        for i in range(0, len(hits) - 1, 2):
-            a, b = hits[i], hits[i + 1]
+    def _emit_spans(
+        spans: list[tuple[float, float]], *, horizontal: bool, const: float
+    ) -> None:
+        for a, b in spans:
             if abs(b - a) < 1e-7:
                 continue
             if horizontal:
@@ -543,20 +572,41 @@ def _plane_mesh_segs(
                 p1 = origin + u_ax * const + v_ax * b
             segs.append((_v3(p0), _v3(p1)))
 
+    def _clipped_spans(
+        outer_hits: list[float],
+        hole_hits_list: list[list[float]],
+        eps: float,
+    ) -> list[tuple[float, float]]:
+        spans = _inset_spans(_hits_to_spans(outer_hits), eps)
+        for hh in hole_hits_list:
+            hole_sp = [
+                (a - eps, b + eps) for a, b in _hits_to_spans(hh)
+            ]
+            spans = _clip_intervals_subtract(spans, hole_sp)
+        return spans
+
     for k in range(1, max(nu, 0) + 1):
         uu = umin + (umax - umin) * k / (nu + 1)
-        _emit_pairs(
+        spans = _clipped_spans(
             _poly_line_hits(uv, const=uu, horizontal=False),
-            horizontal=False,
-            const=uu,
+            [
+                _poly_line_hits(huv, const=uu, horizontal=False)
+                for huv in hole_uvs
+            ],
+            eps_v,
         )
+        _emit_spans(spans, horizontal=False, const=uu)
     for k in range(1, max(nv, 0) + 1):
         vv = vmin + (vmax - vmin) * k / (nv + 1)
-        _emit_pairs(
+        spans = _clipped_spans(
             _poly_line_hits(uv, const=vv, horizontal=True),
-            horizontal=True,
-            const=vv,
+            [
+                _poly_line_hits(huv, const=vv, horizontal=True)
+                for huv in hole_uvs
+            ],
+            eps_u,
         )
+        _emit_spans(spans, horizontal=True, const=vv)
     return segs
 
 
@@ -636,15 +686,39 @@ def curves_from_region(entity) -> list[list[Edge]]:
 
 
 def analytic_faces_from_entity(e) -> list[dict[str, Any]]:
-    """Primary export API: plane shells and cylinder mantles."""
+    """Primary export API — two display paths (AutoCAD-like):
+
+    - REGION / planar curve entities → ``kind=region`` (even-odd fill, no mesh)
+    - SURFACE / 3DSOLID / BODY → cylinder / ruled / plane mesh + wire
+    """
     t = e.dxftype()
-    if t in ("REGION", "SURFACE", "3DSOLID"):
+    if t == "REGION":
+        out: list[dict[str, Any]] = []
+        for f in faces_from_sab(e):
+            loops = order_curve_loops(f.get("loops") or [])
+            if not loops:
+                continue
+            cen = f.get("cen") or curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
+            out.append({"kind": "region", "loops": loops, "cen": _k(cen)})
+        return out
+    if t in (
+        "SURFACE",
+        "EXTRUDEDSURFACE",
+        "PLANESURFACE",
+        "LOFTEDSURFACE",
+        "REVOLVEDSURFACE",
+        "SWEPTSURFACE",
+        "NURBSSURFACE",
+        "3DSOLID",
+        "BODY",
+    ):
         return faces_from_sab(e)
     loops = face_curve_loops_from_entity(e)
     if not loops:
         return []
     cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
-    return [{"kind": "plane", "loops": loops, "cen": _k(cen)}]
+    # Closed planar curves (CIRCLE / LWPOLYLINE / HATCH / …) — fill like REGION
+    return [{"kind": "region", "loops": loops, "cen": _k(cen)}]
 
 
 def _poly_to_lines(pts: list[tuple]) -> list[Edge]:
@@ -660,7 +734,18 @@ def _poly_to_lines(pts: list[tuple]) -> list[Edge]:
 def face_curve_loops_from_entity(e) -> list[list[Edge]]:
     """Primary API: exact-curve loops, outer first."""
     t = e.dxftype()
-    if t in ("REGION", "SURFACE", "3DSOLID"):
+    if t in (
+        "REGION",
+        "SURFACE",
+        "EXTRUDEDSURFACE",
+        "PLANESURFACE",
+        "LOFTEDSURFACE",
+        "REVOLVEDSURFACE",
+        "SWEPTSURFACE",
+        "NURBSSURFACE",
+        "3DSOLID",
+        "BODY",
+    ):
         return curves_from_region(e)
     if t == "CIRCLE":
         c = Vec3(e.dxf.center)
@@ -840,10 +925,18 @@ def _emit_edge_tex(e: Edge, indent: str = "      ", *, display: bool = True) -> 
     return ""
 
 
-def _emit_plane_mesh(loops: list[list[Edge]]) -> list[str]:
+def _emit_plane_mesh(
+    loops: list[list[Edge]],
+    nu: int | None = None,
+    nv: int | None = None,
+) -> list[str]:
     """Interior UV grid segments for a planar face (display only)."""
     L: list[str] = []
-    for a, b in _plane_mesh_segs(loops):
+    for a, b in _plane_mesh_segs(
+        loops,
+        nu=_PLANE_MESH_U if nu is None else int(nu),
+        nv=_PLANE_MESH_V if nv is None else int(nv),
+    ):
         L.append(f"  \\stpDmeshSeg{{{_fmt_xyz(a)}}}{{{_fmt_xyz(b)}}}")
     return L
 
@@ -897,9 +990,8 @@ def _cylinder_mesh_segs(
     if not loops:
         return []
 
-    # Parameter polygon from SAB boundary edges (intersection curves)
-    best: list[tuple[float, float]] = []
-    for edges in loops:
+    # Parameter polygons from SAB boundary edges (outer + holes)
+    def _loop_th_h(edges: list[Edge]) -> list[tuple[float, float]]:
         pts3: list[tuple] = []
         for e in edges:
             seg = _edge_boundary_samples(e)
@@ -913,16 +1005,22 @@ def _cylinder_mesh_segs(
                 pts3.extend(seg)
         pts3 = _uniq_ring(pts3)
         if len(pts3) < 3:
-            continue
+            return []
         raw = [_cyl_th_h(p, origin, axis, u, v) for p in pts3]
         ths = _unwrap_theta_chain([t for t, _ in raw])
         uv = list(zip(ths, [h for _, h in raw]))
-        if len(uv) > len(best):
-            best = uv
-    if len(best) < 3:
+        if abs(uv[0][0] - uv[-1][0]) > 1e-9 or abs(uv[0][1] - uv[-1][1]) > 1e-9:
+            uv = list(uv) + [uv[0]]
+        return uv
+
+    loop_uvs = [_loop_th_h(edges) for edges in loops]
+    loop_uvs = [uv for uv in loop_uvs if len(uv) >= 3]
+    if not loop_uvs:
         return []
-    if abs(best[0][0] - best[-1][0]) > 1e-9 or abs(best[0][1] - best[-1][1]) > 1e-9:
-        best = list(best) + [best[0]]
+    # Largest loop = outer; remaining = holes (order_curve_loops usually already)
+    loop_uvs.sort(key=len, reverse=True)
+    best = loop_uvs[0]
+    hole_uvs = loop_uvs[1:]
 
     ths = [p[0] for p in best]
     hs = [p[1] for p in best]
@@ -943,14 +1041,12 @@ def _cylinder_mesh_segs(
     eps_th = max(1e-4, 0.004 * (th_max - th_min))
     eps_h = max(1e-4, 0.004 * (h_max - h_min))
 
-    def _emit_pairs(
-        hits: list[float], *, horizontal: bool, const: float
+    def _emit_spans(
+        spans: list[tuple[float, float]], *, horizontal: bool, const: float
     ) -> None:
-        # horizontal=True: const is h, hits are theta — sample the CIRCULAR
+        # horizontal=True: const is h, spans are theta — sample the CIRCULAR
         # arc (not a single chord). Generators stay straight in h.
-        eps = eps_th if horizontal else eps_h
-        for i in range(0, len(hits) - 1, 2):
-            a, b = hits[i] + eps, hits[i + 1] - eps
+        for a, b in spans:
             if b - a < 1e-7:
                 continue
             if horizontal:
@@ -964,6 +1060,17 @@ def _cylinder_mesh_segs(
             else:
                 segs.append((_to_xyz(const, a), _to_xyz(const, b)))
 
+    def _clipped(
+        outer_hits: list[float],
+        hole_hits_list: list[list[float]],
+        eps: float,
+    ) -> list[tuple[float, float]]:
+        spans = _inset_spans(_hits_to_spans(outer_hits), eps)
+        for hh in hole_hits_list:
+            hole_sp = [(a - eps, b + eps) for a, b in _hits_to_spans(hh)]
+            spans = _clip_intervals_subtract(spans, hole_sp)
+        return spans
+
     # Generators: constant θ (vertical in (θ,h) → horizontal=False)
     th_samples = [
         th_min + (th_max - th_min) * k / max(ngen, 1) for k in range(ngen + 1)
@@ -973,11 +1080,15 @@ def _cylinder_mesh_segs(
         for f in (0.92, 0.96, 0.98):
             th_samples.append(th_min + span * f)
     for th in th_samples:
-        _emit_pairs(
+        spans = _clipped(
             _poly_line_hits(best, const=th, horizontal=False),
-            horizontal=False,
-            const=th,
+            [
+                _poly_line_hits(huv, const=th, horizontal=False)
+                for huv in hole_uvs
+            ],
+            eps_h,
         )
+        _emit_spans(spans, horizontal=False, const=th)
     # Rings: constant h (skip exact ends — boundary wire draws those)
     h_samples = [
         h_min + (h_max - h_min) * k / nring for k in range(1, max(nring, 1))
@@ -1002,20 +1113,29 @@ def _cylinder_mesh_segs(
                     [lo + (hi - lo) * t for t in (0.25, 0.5, 0.75)]
                 )
     for hh in h_samples:
-        _emit_pairs(
+        spans = _clipped(
             _poly_line_hits(best, const=hh, horizontal=True),
-            horizontal=True,
-            const=hh,
+            [
+                _poly_line_hits(huv, const=hh, horizontal=True)
+                for huv in hole_uvs
+            ],
+            eps_th,
         )
+        _emit_spans(spans, horizontal=True, const=hh)
 
-    # Drop fragments that leave the SAB trim in (θ, h)
+    # Drop fragments that leave the SAB trim in (θ, h), including holes
     def _th_in(p: tuple) -> bool:
         th, hh = _cyl_th_h(p, origin, axis, u, v)
         while th < th_min - 1e-9:
             th += 2 * math.pi
         while th > th_max + 1e-9:
             th -= 2 * math.pi
-        return _pip2(th, hh, best)
+        if not _pip2(th, hh, best):
+            return False
+        for huv in hole_uvs:
+            if _pip2(th, hh, huv):
+                return False
+        return True
 
     kept: list[tuple[tuple, tuple]] = []
     for a, b in segs:
@@ -1573,10 +1693,14 @@ def _emit_ruled_mesh(loops: list[list[Edge]]) -> list[str]:
 
 
 def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
-    """Emit AutoCAD-style mesh + boundary wire + FE equations (no fills)."""
+    """Emit face TeX: REGION → fill; SURFACE/solid → mesh + wire + FE eq."""
     loops = face.get("loops") or []
     kind = face.get("kind")
     L: list[str] = []
+    # Planar REGION / closed curves: even-odd fill (holes), compact TeX
+    if kind == "region":
+        L.extend(format_stp_dface_curves(loops))
+        return L
     if kind == "cylinder":
         L.extend(_emit_cylinder_mesh(face))
         L.extend(_emit_loop_wire(loops))
@@ -1588,7 +1712,14 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
         L.extend(_emit_loop_eq(loops))
         return L
     if kind == "plane":
-        L.extend(_emit_plane_mesh(loops))
+        # Planar face on SURFACE/3DSOLID — AutoCAD-style isolines
+        L.extend(
+            _emit_plane_mesh(
+                loops,
+                nu=face.get("mesh_u"),
+                nv=face.get("mesh_v"),
+            )
+        )
         L.extend(_emit_loop_wire(loops))
         L.extend(_emit_loop_eq(loops))
         return L

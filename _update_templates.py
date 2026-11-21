@@ -30,7 +30,9 @@ def replace_tpl(src: str, key: str, body: str) -> str:
 def main() -> None:
     c2, n2 = dxf_to_satopdf2d(path=ROOT / "example" / "2d_example.dxf")
     c3, n3 = dxf_to_satopdf3d(
-        path=ROOT / "example" / "3d_example.dxf", fragment=True
+        path=ROOT / "example" / "3d_examlpe_hole.dxf",
+        fragment=True,
+        scale=0.002,
     )
     print("2D:", n2)
     print("3D:", n3)
@@ -43,7 +45,9 @@ def main() -> None:
     print("updated", data_path)
 
     tex3, _ = dxf_to_satopdf3d(
-        path=ROOT / "example" / "3d_example.dxf", fragment=False
+        path=ROOT / "example" / "3d_examlpe_hole.dxf",
+        fragment=False,
+        scale=0.002,
     )
     sa3d = ROOT / "texmf" / "tex" / "latex" / "local" / "satopdf-SA3D.tex"
     sa3d.write_text(tex3, encoding="utf-8")

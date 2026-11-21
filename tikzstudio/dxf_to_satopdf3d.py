@@ -21,6 +21,7 @@ from .cae_section_mass import (
     format_length_mm_tex as _fmt_len_mm,
 )
 from .cae_face_curves import (
+    EdgeLine,
     analytic_faces_from_entity,
     curve_loops_as_polylines,
     cylinder_extent_pts,
@@ -37,6 +38,82 @@ def _k(p, tol=1e-6):
         round(float(p[1]) / tol) * tol,
         round(float(p[2]) / tol) * tol,
     )
+
+
+def _dist3(a, b) -> float:
+    return math.sqrt(sum((float(a[i]) - float(b[i])) ** 2 for i in range(3)))
+
+
+def _dxf_surface_isoline_counts(e) -> tuple[int | None, int | None]:
+    """AutoCAD SURFACE / SWEPTSURFACE / … U/V isoline density (dxf.u_count/v_count)."""
+    try:
+        u = int(getattr(e.dxf, "u_count", 0) or 0)
+        v = int(getattr(e.dxf, "v_count", 0) or 0)
+    except Exception:
+        return None, None
+    if u <= 0 and v <= 0:
+        return None, None
+
+    def _clamp(n: int) -> int:
+        return max(2, min(int(n), 24))
+
+    return (_clamp(u) if u > 0 else None, _clamp(v) if v > 0 else None)
+
+
+def _beam_attrs_structural(attrs) -> bool:
+    """True when LINE carries CAE beam/rod payload (keep even if on a shell edge)."""
+    if attrs is None:
+        return False
+    if getattr(attrs, "section", None):
+        return True
+    if getattr(attrs, "dist_load", None):
+        return True
+    if getattr(attrs, "point_loads", None):
+        return True
+    if getattr(attrs, "moments", None):
+        return True
+    if getattr(attrs, "bcs", None):
+        return True
+    if getattr(attrs, "springs", None):
+        return True
+    kind = (getattr(attrs, "kind", None) or "beam").strip().lower()
+    return kind == "rod"
+
+
+def _seg_matches_line_edge(a, b, ea, eb, tol: float) -> bool:
+    return (
+        _dist3(a, ea) <= tol and _dist3(b, eb) <= tol
+    ) or (
+        _dist3(a, eb) <= tol and _dist3(b, ea) <= tol
+    )
+
+
+def filter_beams_duplicating_shell_edges(beam_segs, faces, *, tol: float = 1.0):
+    """Drop sweep/extrude profile LINEs that coincide with shell face edges.
+
+    Bare construction curves left beside SWEPTSURFACE / EXTRUDEDSURFACE would
+    otherwise become spurious ``\\stpDmember`` beams. LINEs with MY_CAE_* beam
+    payload are kept.
+    """
+    if not faces or not beam_segs:
+        return beam_segs
+    edges: list[tuple] = []
+    for face in faces:
+        for loop in face.get("loops") or []:
+            for ed in loop:
+                if isinstance(ed, EdgeLine):
+                    edges.append((ed.a, ed.b))
+    if not edges:
+        return beam_segs
+    kept = []
+    for seg in beam_segs:
+        if _beam_attrs_structural(getattr(seg, "attrs", None)):
+            kept.append(seg)
+            continue
+        if any(_seg_matches_line_edge(seg.a, seg.b, ea, eb, tol) for ea, eb in edges):
+            continue
+        kept.append(seg)
+    return kept
 
 
 def _vlen(v):
@@ -347,7 +424,18 @@ def _face_loops_from_entity(e) -> list[list[tuple]]:
             return loops
         except Exception:
             return []
-    if t in ("REGION", "SURFACE", "3DSOLID"):
+    if t in (
+        "REGION",
+        "SURFACE",
+        "EXTRUDEDSURFACE",
+        "PLANESURFACE",
+        "LOFTEDSURFACE",
+        "REVOLVEDSURFACE",
+        "SWEPTSURFACE",
+        "NURBSSURFACE",
+        "3DSOLID",
+        "BODY",
+    ):
         return _mesh_loops_from_acis(e)
     if t == "LWPOLYLINE" and bool(e.closed):
         elev = float(getattr(e.dxf, "elevation", 0.0) or 0.0)
@@ -405,7 +493,14 @@ def dxf_to_satopdf3d(
     _FACE_TYPES = (
         "REGION",
         "SURFACE",
+        "EXTRUDEDSURFACE",
+        "PLANESURFACE",
+        "LOFTEDSURFACE",
+        "REVOLVEDSURFACE",
+        "SWEPTSURFACE",
+        "NURBSSURFACE",
         "3DSOLID",
+        "BODY",
         "3DFACE",
         "MESH",
         "LWPOLYLINE",
@@ -428,20 +523,36 @@ def dxf_to_satopdf3d(
             shell_ld = _parse_shell_load_xdata(e.get_xdata("MY_CAE_SHELL_LOAD"))
         except Exception:
             shell_ld = None
+        mesh_u, mesh_v = _dxf_surface_isoline_counts(e)
         for af in analytic:
             cen = _k(af.get("cen") or (0.0, 0.0, 0.0))
             if af.get("kind") == "cylinder":
                 extent_pts.extend(cylinder_extent_pts(af, n=24))
             else:
-                # plane / wire: use boundary samples
+                # region / plane / ruled / wire: boundary samples for extent
                 for poly in curve_loops_as_polylines(af.get("loops") or [], n=24):
                     extent_pts.extend(_k(p) for p in poly)
             fi = len(faces)
-            faces.append({**af, "cen": cen, "handle": e.dxf.handle})
+            face = {**af, "cen": cen, "handle": e.dxf.handle}
+            if af.get("kind") == "plane":
+                if mesh_u is not None:
+                    face["mesh_u"] = mesh_u
+                if mesh_v is not None:
+                    face["mesh_v"] = mesh_v
+            faces.append(face)
             # Centroid node only when a face load needs an arrow tip
             if shell_ld is not None:
                 nodes[cen] = cen
                 face_loads_by_idx[fi] = shell_ld
+
+    # Sweep/extrude often leaves profile/path LINEs on face edges — not beams
+    if faces:
+        beam_segs = filter_beams_duplicating_shell_edges(beam_segs, faces)
+        nodes = {s.a: s.a for s in beam_segs}
+        nodes.update({s.b: s.b for s in beam_segs})
+        for fi in face_loads_by_idx:
+            cen = faces[fi]["cen"]
+            nodes[cen] = cen
 
     # Beam XDATA → vis-handle map for SETPTLOAD direction (fallback)
     ptload_by_vis: dict[str, tuple[float, tuple, str]] = {}
