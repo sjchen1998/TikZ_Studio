@@ -200,7 +200,7 @@ SETSEC / DELSEC
   & 截面类型、材料、姿态、偏置 \\
 SETSHELLLOAD / DELSHELLLOAD
   & 板壳边线载荷或面压/面力 \\
-SETSHELL & 板壳理论、厚度、偏置、材料 \\
+SETSHELLSEC & 板壳截面：理论、厚度、偏置、材料 \\
 ADDSHELLBC / DELSHELLBC
   & 板壳边线或整面约束 \\
 SETSPOTWELD / DELSPOTWELD
@@ -304,7 +304,7 @@ APPID \appid{MY\_CAE\_MOMENT}。
 支持的宿主类型（载荷/属性/约束）：\texttt{MESH}、\texttt{REGION}、
 \texttt{SURFACE}、\texttt{3DSOLID}、\texttt{3DFACE}、\texttt{LWPOLYLINE}。
 
-\subsection{\cadcmd{SETSHELL}}
+\subsection{\cadcmd{SETSHELLSEC}}
 写入 \appid{MY\_CAE\_SHELL\_PROP} 与几何辅助
 \appid{MY\_CAE\_SHELL\_GEOM}：
 \begin{itemize}[nosep]
@@ -393,7 +393,7 @@ APPID & 用途 \\
 \begin{enumerate}[nosep]
   \item 按毫米建模；端点与边线建议打开 OSNAP。
   \item 按需 \cadcmd{SETBEAM}/\cadcmd{SETROD}；用 \cadcmd{SETSEC} /
-        \cadcmd{SETSHELL} 写属性。
+        \cadcmd{SETSHELLSEC} 写属性。
   \item 施加载荷与约束；板壳尽量用边/面约束而非单顶点。
   \item 用 \cadcmd{SETSCALE} 调符号大小；用 \texttt{TOGGLE*} 隐藏干扰。
   \item 保存/导出 DXF，在 TikZ~Studio 中导入生成 \textsf{satopdf} 插图。

@@ -27,6 +27,7 @@ from .cae_face_curves import (
     cylinder_extent_pts,
     face_curve_loops_from_entity,
     format_stp_analytic_face,
+    revolve_extent_pts,
 )
 from .cae_welds import emit_weld_tex_3d, parse_seam_welds, parse_spot_welds
 from .dxf_import import _A0, _SCALE_N, _TO_CM, _sheet_scale
@@ -528,6 +529,8 @@ def dxf_to_satopdf3d(
             cen = _k(af.get("cen") or (0.0, 0.0, 0.0))
             if af.get("kind") == "cylinder":
                 extent_pts.extend(cylinder_extent_pts(af, n=24))
+            elif af.get("kind") == "revolve":
+                extent_pts.extend(revolve_extent_pts(af, n=24))
             else:
                 # region / plane / ruled / wire: boundary samples for extent
                 for poly in curve_loops_as_polylines(af.get("loops") or [], n=24):

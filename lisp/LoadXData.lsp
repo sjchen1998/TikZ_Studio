@@ -157,6 +157,35 @@
   (or (and eType (= (type eType) 'STR) (wcmatch eType "*SURFACE"))
       (member eType '("MESH" "REGION" "3DSOLID" "BODY" "3DFACE" "LWPOLYLINE")))
 )
+;;; 真正的板：曲面/面域，或闭合多段线。回转母线等开口 LWPOLYLINE 不是板。
+(defun cae-shell-plate-p (ent / ed et flags)
+  (setq ed (entget ent)
+        et (cdr (assoc 0 ed)))
+  (cond
+    ((= et "LWPOLYLINE")
+      (setq flags (if (assoc 70 ed) (cdr (assoc 70 ed)) 0))
+      (= 1 (logand flags 1)))
+    (T (cae-shell-type-p et))
+  )
+)
+;;; 删掉该实体上已有的板厚符号，并清空厚度/偏置（覆盖前调用，避免残留）
+(defun cae-clear-shell-prop (ent / ed oldXd appData oldBlk)
+  (setq ed (entget ent '("MY_CAE_SHELL_PROP"))
+        oldXd (assoc -3 ed))
+  (if oldXd
+    (progn
+      (setq appData (cdr (cadr oldXd)))
+      (if (and (> (length appData) 4)
+               (setq oldBlk (handent (cdr (nth 4 appData))))
+               (entget oldBlk))
+        (progn (cae-vis-unlock) (entdel oldBlk) (cae-vis-lock))
+      )
+      (entmod (append (entget ent) '((-3 ("MY_CAE_SHELL_PROP")))))
+      (entmod (append (entget ent) '((-3 ("MY_CAE_SHELL_GEOM")))))
+      (entupd ent)
+    )
+  )
+)
 ;;; 现代曲面族（炸开时常先变成 REGION / 边线）
 (defun cae-modern-surface-p (eType)
   (or (= eType "SURFACE")
@@ -1856,7 +1885,9 @@
             )
             (if (and ex vy vz (or (cae-is-rod beamEnt) (not doOffset) offUnit))
               (progn
+                ;; 一根线只保留一个截面：先删旧符号并清空 MY_CAE_SEC，再写入这一条
                 (remove-old-sec-visual beamEnt)
+                (entmod (append (entget beamEnt) '((-3 ("MY_CAE_SEC")))))
                 (setq visBlkEnt (create-sec-block beamEnt secType secSpec matName vy vz offsetVec))
                 (setq visHandle (cdr (assoc 5 (entget visBlkEnt))))
                 (entmod (append (entget beamEnt)
@@ -2377,7 +2408,9 @@
               entHandle (cdr (assoc 5 entData))
               xdata (assoc -3 entData))
         (if xdata
-          (progn
+          (if (not (cae-shell-plate-p ent))
+            (cae-clear-shell-prop ent)
+            (progn
             (setq appData (cdr (cadr xdata)))
             (setq theoryType (cdr (nth 0 appData))
                   thick (cdr (nth 1 appData))
@@ -2396,6 +2429,7 @@
             (entmod (append (entget visBlk)
                             (list (list -3 (list "MY_CAE_SHELL_PROP" (cons 1005 entHandle))))))
             (setq count (1+ count))
+            )
           )
         )
         (setq i (1+ i))
@@ -3210,11 +3244,11 @@
 )
 
 ;;; ====================================================================
-;;; 板壳属性与约束模块 - 代码块 2/3：SETSHELL 命令与约束符号块
+;;; 板壳属性与约束模块 - 代码块 2/3：SETSHELLSEC 命令与约束符号块
 ;;; ====================================================================
 
-;;; 命令：SETSHELL - 批量设置板壳单元类型、厚度、偏置与材料
-(defun c:SETSHELL (/ ss thChoice theoryType thick offChoice offZ matChoice matName i ent entHandle info cenPt normVec diagLen oldXd oldBlk visBlk visHandle geomRecords)
+;;; 命令：SETSHELLSEC - 批量设置板壳截面（单元类型、厚度、偏置与材料）
+(defun c:SETSHELLSEC (/ ss thChoice theoryType thick offChoice offZ matChoice matName i ent entHandle info cenPt normVec diagLen visBlk visHandle geomRecords nSet nSkip)
   (vl-load-com)
   (register-shell-prop-app)
   (princ (_T "\n请选择要设置属性的板壳面片 (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …，支持框选): "
@@ -3263,42 +3297,47 @@
         (setq matName matChoice)
       )
       
-      (setq i 0)
+      (setq i 0 nSet 0 nSkip 0)
       (cae-vis-begin-batch)
       (while (< i (sslength ss))
         (setq ent (ssname ss i))
-        (setq entHandle (cdr (assoc 5 (entget ent))))
-        (setq info (get-shell-center-normal ent))
-        (setq cenPt (car info) normVec (cadr info) diagLen (caddr info))
-        
-        (setq oldXd (assoc -3 (entget ent '("MY_CAE_SHELL_PROP"))))
-        (if oldXd
-          (if (setq oldBlk (handent (cdr (nth 4 (cdr (cadr oldXd))))))
-            (if (entget oldBlk) (progn (cae-vis-unlock) (entdel oldBlk) (cae-vis-lock)))
+        ;; 开口多段线（回转母线）不是板：清掉误写的厚度，不追加
+        (if (not (cae-shell-plate-p ent))
+          (progn
+            (cae-clear-shell-prop ent)
+            (setq nSkip (1+ nSkip))
+          )
+          (progn
+            (setq entHandle (cdr (assoc 5 (entget ent))))
+            (setq info (get-shell-center-normal ent))
+            (setq cenPt (car info) normVec (cadr info) diagLen (caddr info))
+            ;; 覆盖：先删旧符号并清空 MY_CAE_SHELL_PROP，再写唯一一条厚度/偏置
+            (cae-clear-shell-prop ent)
+            (setq visBlk (create-shell-prop-block cenPt normVec diagLen theoryType thick offZ matName))
+            (setq visHandle (cdr (assoc 5 (entget visBlk))))
+            (entmod (append (entget ent)
+                            (list (list -3 (list "MY_CAE_SHELL_PROP"
+                                                 (cons 1000 theoryType)
+                                                 (cons 1040 thick)
+                                                 (cons 1040 offZ)
+                                                 (cons 1000 matName)
+                                                 (cons 1005 visHandle))))))
+            (setq geomRecords (append (list "MY_CAE_SHELL_GEOM" (cons 1013 normVec)) (extract-region-loops-3d ent)))
+            (entmod (append (entget ent) (list (list -3 geomRecords))))
+            (entupd ent)
+            (entmod (append (entget visBlk) (list (list -3 (list "MY_CAE_SHELL_PROP" (cons 1005 entHandle))))))
+            (setq nSet (1+ nSet))
           )
         )
-        
-        (setq visBlk (create-shell-prop-block cenPt normVec diagLen theoryType thick offZ matName))
-        (setq visHandle (cdr (assoc 5 (entget visBlk))))
-        
-        (entmod (append (entget ent)
-                        (list (list -3 (list "MY_CAE_SHELL_PROP"
-                                             (cons 1000 theoryType)
-                                             (cons 1040 thick)
-                                             (cons 1040 offZ)
-                                             (cons 1000 matName)
-                                             (cons 1005 visHandle))))))
-        
-        (setq geomRecords (append (list "MY_CAE_SHELL_GEOM" (cons 1013 normVec)) (extract-region-loops-3d ent)))
-        (entmod (append (entget ent) (list (list -3 geomRecords))))
-        (entupd ent)
-        
-        (entmod (append (entget visBlk) (list (list -3 (list "MY_CAE_SHELL_PROP" (cons 1005 entHandle))))))
         (setq i (1+ i))
       )
       (cae-vis-end-batch)
-      (princ (strcat (_T "\n[成功] 已为 " "\n[OK] Set properties on ") (itoa (sslength ss))
-                 (_T " 块板壳设置属性 [" " shell(s) [") theoryType ", t=" (rtos thick 2 1) "mm, " matName "]"))
+      (princ (strcat (_T "\n[成功] 已覆盖 " "\n[OK] Overwrote properties on ") (itoa nSet)
+                 (_T " 块板 [" " shell(s) [") theoryType ", t=" (rtos thick 2 1) "mm, " matName "]"
+                 (if (> nSkip 0)
+                   (strcat (_T "；跳过并清除 " "; skipped/cleared ") (itoa nSkip)
+                           (_T " 个非板（开口多段线等）。" " non-plate(s) (open polylines)."))
+                   "")))
     )
   )
   (princ)
@@ -4147,8 +4186,8 @@
            "\n  Kind: SETROD/SETBEAM/DELKIND | Beam loads: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT"))
 (princ (_T "\n  约束: SETBC/DELBC/ADDBC | 弹簧: SETSPRING/DELSPRING | 截面: SETSEC/DELSEC"
            "\n  BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING | Sec: SETSEC/DELSEC"))
-(princ (_T "\n  板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"
-           "\n  Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELL | ADDSHELLBC/DELSHELLBC"))
+(princ (_T "\n  板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELLSEC | ADDSHELLBC/DELSHELLBC"
+           "\n  Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELLSEC | ADDSHELLBC/DELSHELLBC"))
 (princ (_T "\n  板壳面: REGION/MESH/SURFACE/EXTRUDEDSURFACE/PLANESURFACE/…/3DFACE"
            "\n  Shell faces: REGION/MESH/SURFACE/EXTRUDEDSURFACE/PLANESURFACE/…/3DFACE"))
 (princ (_T "\n  焊缝: SETSPOTWELD/DELSPOTWELD | SETSEAMWELD/DELSEAMWELD | TOGGLEWELD"

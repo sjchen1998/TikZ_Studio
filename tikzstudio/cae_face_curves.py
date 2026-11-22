@@ -388,6 +388,31 @@ def _angle_span(angs: list[float]) -> tuple[float, float]:
     return mid + min(rel), mid + max(rel)
 
 
+def _latitude_coverage_span(angs: list[float]) -> tuple[float, float, bool]:
+    """Sector covered by latitude samples; largest circular gap = opening.
+
+    Returns ``(th0, th1, full_turn)`` with ``th1 = th0 + covered_span``.
+    """
+    if not angs:
+        return -math.pi, math.pi, True
+    pts = sorted(
+        {round(math.atan2(math.sin(t), math.cos(t)), 9) for t in angs}
+    )
+    if len(pts) == 1:
+        return pts[0], pts[0], False
+    gaps: list[tuple[float, float, float]] = []
+    for i in range(len(pts) - 1):
+        gaps.append((pts[i + 1] - pts[i], pts[i], pts[i + 1]))
+    gaps.append((pts[0] + 2 * math.pi - pts[-1], pts[-1], pts[0] + 2 * math.pi))
+    gap_w, _gap_a, gap_b = max(gaps, key=lambda g: g[0])
+    # EdgeCircle tessellation often leaves a ~0.05–0.12 rad gap at the seam
+    if gap_w < 0.20:
+        return -math.pi, math.pi, True
+    th0 = math.atan2(math.sin(gap_b), math.cos(gap_b))
+    th1 = th0 + (2 * math.pi - gap_w)
+    return th0, th1, False
+
+
 def _cone_mesh_params(
     surf_rec: dict, loops: list[list[Edge]]
 ) -> dict[str, Any] | None:
@@ -433,6 +458,1147 @@ def _cone_mesh_params(
 
 _PLANE_MESH_U = 2
 _PLANE_MESH_V = 2
+_REVOLVE_MESH_TH = 12
+_REVOLVE_MESH_PROF = 8
+
+
+def _circular_lat_info(
+    edge: Edge,
+) -> tuple[Vec3, Vec3, float] | None:
+    """(center, unit_normal, radius) for a circular latitude candidate."""
+    if isinstance(edge, EdgeCircle):
+        n = Vec3(edge.normal)
+        if n.magnitude_square < 1e-18:
+            return None
+        return Vec3(edge.center), n.normalize(), float(edge.radius)
+    if isinstance(edge, EdgeArc) and abs(float(edge.ratio) - 1.0) < 1e-3:
+        n = Vec3(edge.normal)
+        if n.magnitude_square < 1e-18:
+            return None
+        r = float(Vec3(edge.major).magnitude)
+        if r < 1e-9:
+            return None
+        return Vec3(edge.center), n.normalize(), r
+    return None
+
+
+def _revolve_frame(
+    axis: Vec3, hint: Vec3 | None = None
+) -> tuple[Vec3, Vec3]:
+    u, v = _cyl_basis(axis)
+    if hint is not None and hint.magnitude_square > 1e-12:
+        # Align u toward hint (projected ⊥ axis) for stable θ=0
+        h = hint - axis * float(hint.dot(axis))
+        if h.magnitude_square > 1e-12:
+            u = h.normalize()
+            v = axis.cross(u).normalize()
+    return u, v
+
+
+def _revolve_params_from_loop(
+    edges: list[Edge],
+    *,
+    axis: Vec3 | None = None,
+    origin: Vec3 | None = None,
+    th0: float | None = None,
+    th1: float | None = None,
+) -> dict[str, Any] | None:
+    """Build revolve mesh params from a SAB trim loop (latitudes + meridian)."""
+    if len(edges) < 3:
+        return None
+    circ: list[tuple[Edge, Vec3, Vec3, float]] = []
+    for e in edges:
+        info = _circular_lat_info(e)
+        if info is not None:
+            c, n, r = info
+            circ.append((e, c, n, r))
+    if len(circ) < 2:
+        return None
+
+    # Cluster by normal → pick latitude group (‖n‖ shared with revolve axis)
+    clusters: list[dict[str, Any]] = []
+    for e, c, n, r in circ:
+        placed = False
+        for g in clusters:
+            if abs(float(g["n"].dot(n))) > 0.92:
+                g["items"].append((e, c, n, r))
+                # Prefer consistent orientation
+                if float(g["n"].dot(n)) < 0:
+                    pass
+                placed = True
+                break
+        if not placed:
+            clusters.append({"n": n, "items": [(e, c, n, r)]})
+    if not clusters:
+        return None
+
+    def _score(g: dict[str, Any]) -> tuple:
+        items = g["items"]
+        n_circ = sum(1 for e, *_ in items if isinstance(e, EdgeCircle))
+        return (n_circ, len(items))
+
+    if axis is not None:
+        # Prefer cluster aligned with entity axis
+        aligned = [
+            g for g in clusters if abs(float(g["n"].dot(axis))) > 0.92
+        ]
+        lat_g = max(aligned or clusters, key=_score)
+        ax = axis
+    else:
+        lat_g = max(clusters, key=_score)
+        ax = Vec3(lat_g["n"]).normalize()
+
+    lat_edges = [e for e, *_ in lat_g["items"]]
+    lat_set = set(id(e) for e in lat_edges)
+
+    # Origin: average of latitude centers projected (already on axis ideally)
+    centers = [c for _, c, _, _ in lat_g["items"]]
+    if origin is not None:
+        o = origin
+    else:
+        o = sum(centers[1:], centers[0]) * (1.0 / len(centers))
+        # Snap onto axis through first center
+        o = centers[0] + ax * float((o - centers[0]).dot(ax))
+
+    # Peel interior bridge-holes only (cap circles stay on outer)
+    outer_edges, _bridged_holes = _split_bridge_holes(edges, origin=o, axis=ax)
+    outer_lat = [e for e in outer_edges if id(e) in lat_set or (
+        isinstance(e, EdgeCircle) and abs(float(Vec3(e.normal).normalize().dot(ax))) > 0.92
+    )]
+    outer_meridians = [e for e in outer_edges if id(e) not in lat_set and not (
+        isinstance(e, EdgeCircle) and abs(float(Vec3(e.normal).normalize().dot(ax))) > 0.92
+    )]
+    meridians = outer_meridians or [e for e in edges if id(e) not in lat_set]
+    if not meridians and not outer_edges:
+        return None
+
+    # θ frame from a mid-boundary hint
+    hint_pts = _edge_samples(meridians[0], n=8) if meridians else _edge_samples(outer_edges[0], n=8)
+    if not hint_pts:
+        return None
+    hint = Vec3(hint_pts[len(hint_pts) // 2]) - o
+    u, v = _revolve_frame(ax, hint)
+
+    # Profile from all outer edges (chain meridians; fill from full boundary)
+    profile = _revolve_profile_from_edges(outer_edges or edges, o, ax, u, v)
+    if len(profile) < 2:
+        return None
+
+    def _theta_of_pt(p: Vec3) -> float | None:
+        w = p - o
+        radial = w - ax * float(w.dot(ax))
+        if radial.magnitude_square < 1e-12:
+            return None
+        return math.atan2(float(radial.dot(v)), float(radial.dot(u)))
+
+    mer_thetas: list[float] = []
+    for e in outer_meridians:
+        # Skip non-generator rails (cut splines with large Δθ)
+        angs = []
+        for p in _edge_samples(e, n=12):
+            t = _theta_of_pt(Vec3(p))
+            if t is not None:
+                angs.append(t)
+        if not angs:
+            continue
+        un = _unwrap_theta_chain(angs)
+        if max(un) - min(un) > 0.15:
+            continue  # not a meridian
+        sx = sum(math.cos(t) for t in angs)
+        sy = sum(math.sin(t) for t in angs)
+        if sx * sx + sy * sy < 1e-18:
+            continue
+        mer_thetas.append(math.atan2(sy, sx))
+    uniq: list[float] = []
+    for t in mer_thetas:
+        if not any(
+            abs(math.atan2(math.sin(t - u0), math.cos(t - u0))) < 1e-2 for u0 in uniq
+        ):
+            uniq.append(t)
+    mer_thetas = uniq
+
+    # Per-parallel latitude coverage (a top full circle must not hide a
+    # bottom notch when deciding full_turn / opening angle).
+    lat_by_h: dict[int, list[float]] = {}
+    for e in outer_lat:
+        pts = _edge_samples(e, n=48)
+        if not pts:
+            continue
+        hs = [float((Vec3(p) - o).dot(ax)) for p in pts]
+        h_key = int(round(0.5 * (min(hs) + max(hs))))
+        bucket = lat_by_h.setdefault(h_key, [])
+        for p in pts:
+            t = _theta_of_pt(Vec3(p))
+            if t is not None:
+                bucket.append(t)
+
+    full_turn = False
+    use_th0, use_th1 = -math.pi, math.pi
+    if th0 is not None and th1 is not None and abs(th1 - th0) > 2 * math.pi - 1e-3:
+        full_turn = True
+    elif lat_by_h:
+        # Opening = most incomplete parallel; full only if every parallel is full
+        worst_span = 2 * math.pi
+        worst_th = (-math.pi, math.pi)
+        all_full = True
+        for angs in lat_by_h.values():
+            a0, a1, is_full = _latitude_coverage_span(angs)
+            if not is_full:
+                all_full = False
+                span = abs(a1 - a0)
+                if span < worst_span:
+                    worst_span = span
+                    worst_th = (a0, a1)
+        if all_full and any(isinstance(e, EdgeCircle) for e in outer_lat):
+            full_turn = True
+        elif all_full and len(mer_thetas) <= 1:
+            # Two coincident seams + full parallels
+            full_turn = True
+        else:
+            use_th0, use_th1 = worst_th
+            if abs(use_th1 - use_th0) < 1e-3:
+                return None
+    elif len(mer_thetas) >= 2:
+        a, b = mer_thetas[0], mer_thetas[1]
+        d_ccw = (b - a) % (2 * math.pi)
+        d_cw = (a - b) % (2 * math.pi)
+        target = (
+            abs(float(th1) - float(th0))
+            if (th0 is not None and th1 is not None)
+            else None
+        )
+        if target is not None and target > 1e-6:
+            if abs(d_ccw - target) <= abs(d_cw - target):
+                use_th0, use_th1 = a, a + d_ccw
+            else:
+                use_th0, use_th1 = a, a - d_cw
+        else:
+            if d_ccw >= d_cw:
+                use_th0, use_th1 = a, a + d_ccw
+            else:
+                use_th0, use_th1 = a, a - d_cw
+        if abs(use_th1 - use_th0) < 1e-3:
+            return None
+    else:
+        return None
+
+    if full_turn:
+        use_th0, use_th1 = -math.pi, math.pi
+
+    # Polyline / multi-edge profile: each line/arc sub-segment → its own (s0,s1)
+    # so generators and latitudes are walked per piece (not one lazy full span).
+    cum_tmp, tot_tmp = _profile_cumlen(profile)
+
+    def _meridian_piece_s(
+        e: Edge,
+    ) -> tuple[float, float, float] | None:
+        """Return (mean_θ, s0, s1) for a const-θ generator edge, else None."""
+        if isinstance(e, EdgeLine):
+            pts = [
+                _v3(Vec3(e.a) * (1.0 - t) + Vec3(e.b) * t)
+                for t in [i / 16 for i in range(17)]
+            ]
+        else:
+            pts = _edge_samples(e, n=24)
+        if len(pts) < 2:
+            return None
+        ths = [t for p in pts if (t := _theta_of_pt(Vec3(p))) is not None]
+        if len(ths) < 2:
+            return None
+        un = _unwrap_theta_chain(ths)
+        if max(un) - min(un) > 0.2:
+            return None  # cut / non-meridian
+        sx = sum(math.cos(t) for t in ths)
+        sy = sum(math.sin(t) for t in ths)
+        if sx * sx + sy * sy < 1e-18:
+            return None
+        mean_th = math.atan2(sy, sx)
+        svals: list[float] = []
+        for p in pts:
+            w = Vec3(p) - o
+            h = float(w.dot(ax))
+            rho = float((w - ax * h).magnitude)
+            svals.append(_hr_to_s(h, rho, profile, cum_tmp, tot_tmp))
+        if len(svals) < 2:
+            return None
+        sa, sb = min(svals), max(svals)
+        if sb - sa < 1e-6:
+            return None
+        return mean_th, sa, sb
+
+    # Group meridian edges by θ; pick the generator with the most pieces
+    # (polyline line+arc chain) and keep each piece as its own span.
+    by_th: dict[int, list[tuple[float, float]]] = {}
+    for e in outer_meridians:
+        piece = _meridian_piece_s(e)
+        if piece is None:
+            continue
+        mean_th, sa, sb = piece
+        key = int(round(mean_th / 0.05))
+        by_th.setdefault(key, []).append((sa, sb))
+    profile_segs: list[tuple[float, float]] = []
+    if by_th:
+        best_key = max(by_th, key=lambda k: (len(by_th[k]), sum(b - a for a, b in by_th[k])))
+        pieces = sorted(by_th[best_key], key=lambda t: t[0])
+        # Drop near-duplicate copies only; never glue adjacent line|arc joints
+        for a, b in pieces:
+            if profile_segs and abs(a - profile_segs[-1][0]) < 1e-3 and abs(
+                b - profile_segs[-1][1]
+            ) < 1e-3:
+                continue
+            profile_segs.append((a, b))
+    if not profile_segs:
+        profile_segs = [(0.0, 1.0)]
+
+    # Centroid sample at mid profile / mid angle
+    h_mid = 0.5 * (profile[0][0] + profile[-1][0])
+    rho_mid = 0.5 * (profile[0][1] + profile[-1][1])
+    th_mid = 0.5 * (use_th0 + use_th1)
+    cen = o + ax * h_mid + u * (rho_mid * math.cos(th_mid)) + v * (
+        rho_mid * math.sin(th_mid)
+    )
+    return {
+        "origin": _v3(o),
+        "axis": _v3(ax),
+        "u": _v3(u),
+        "v": _v3(v),
+        "profile": profile,
+        "profile_segs": profile_segs,
+        "th0": float(use_th0),
+        "th1": float(use_th1),
+        "full_turn": bool(full_turn),
+        "cen": _v3(cen),
+    }
+
+
+def _revolve_eval(
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+    h: float,
+    rho: float,
+    th: float,
+) -> tuple:
+    p = origin + axis * h + u * (rho * math.cos(th)) + v * (rho * math.sin(th))
+    return _v3(p)
+
+
+def _phase_closed_samples(
+    samples: list[tuple], anchor: Sequence[float] | Vec3
+) -> list[tuple]:
+    """Rotate a closed ring so it starts at the sample nearest ``anchor``."""
+    if len(samples) < 3:
+        return samples
+    pts = samples[:-1] if samples[0] == samples[-1] else list(samples)
+    if not pts:
+        return samples
+    av = Vec3(anchor)
+    k0 = min(range(len(pts)), key=lambda i: av.distance(Vec3(pts[i])))
+    out = pts[k0:] + pts[:k0]
+    out.append(out[0])
+    return out
+
+
+def _chain_loop_pts3(edges: list[Edge]) -> list[tuple]:
+    """Ordered 3D samples around a coedge loop; phase full circles to joins."""
+    pts3: list[tuple] = []
+    for e in edges:
+        seg = _edge_boundary_samples(e)
+        if not seg:
+            continue
+        if pts3 and isinstance(e, EdgeCircle):
+            seg = _phase_closed_samples(seg, pts3[-1])
+        if not pts3:
+            pts3.extend(seg)
+        elif Vec3(pts3[-1]).distance(Vec3(seg[0])) < 1e-6:
+            pts3.extend(seg[1:])
+        else:
+            # Prefer reverse if the circle/arc was sampled opposite to coedge sense
+            if Vec3(pts3[-1]).distance(Vec3(seg[-1])) < 1e-6:
+                seg = list(reversed(seg))
+                pts3.extend(seg[1:])
+            else:
+                pts3.extend(seg)
+    return _uniq_ring(pts3)
+
+
+def _edge_h_range(
+    edge: Edge, origin: Vec3, axis: Vec3
+) -> tuple[float, float] | None:
+    pts = _edge_samples(edge, n=16)
+    if not pts:
+        return None
+    hs = [float((Vec3(p) - origin).dot(axis)) for p in pts]
+    return min(hs), max(hs)
+
+
+def _split_bridge_holes(
+    edges: list[Edge],
+    origin: Vec3 | None = None,
+    axis: Vec3 | None = None,
+) -> tuple[list[Edge], list[list[Edge]]]:
+    """Peel ACIS bridge digons + *interior* full-circle holes.
+
+    Pattern: EdgeLine → EdgeCircle+ → reverse EdgeLine.  Cap circles at the
+    axial ends of the face (annulus top/bottom) stay on the outer loop — only
+    true mid-height punched holes are peeled.  Cancelling bridge lines are
+    always dropped when the circle is kept as a cap.
+    """
+    n = len(edges)
+    if n < 3:
+        return list(edges), []
+    bridges: list[tuple[int, int]] = []
+    for i, a in enumerate(edges):
+        if not isinstance(a, EdgeLine):
+            continue
+        for j in range(i + 1, n):
+            b = edges[j]
+            if not isinstance(b, EdgeLine):
+                continue
+            if (
+                Vec3(a.a).distance(Vec3(b.b)) < 1e-4
+                and Vec3(a.b).distance(Vec3(b.a)) < 1e-4
+            ):
+                bridges.append((i, j))
+    # Axial extent of the whole loop (for cap vs interior test)
+    h_lo, h_hi = 1e300, -1e300
+    if origin is not None and axis is not None and axis.magnitude_square > 1e-18:
+        axn = axis.normalize()
+        for e in edges:
+            hr = _edge_h_range(e, origin, axn)
+            if hr:
+                h_lo = min(h_lo, hr[0])
+                h_hi = max(h_hi, hr[1])
+    h_span = h_hi - h_lo if h_hi >= h_lo else 0.0
+    cap_eps = max(1.0, 0.02 * h_span) if h_span > 0 else 1.0
+
+    skip: set[int] = set()
+    holes: list[list[Edge]] = []
+    for i, j in bridges:
+        mid = list(range(i + 1, j))
+        if not mid or not all(isinstance(edges[k], EdgeCircle) for k in mid):
+            continue
+        # Drop cancelling bridges always
+        skip.update({i, j})
+        for k in mid:
+            circ = edges[k]
+            is_cap = False
+            if (
+                origin is not None
+                and axis is not None
+                and h_span > 1e-6
+                and isinstance(circ, EdgeCircle)
+            ):
+                ch = float((Vec3(circ.center) - origin).dot(axis.normalize()))
+                if ch <= h_lo + cap_eps or ch >= h_hi - cap_eps:
+                    is_cap = True
+            if is_cap:
+                continue  # keep circle on outer
+            holes.append([circ])
+            skip.add(k)
+    if not skip:
+        return list(edges), []
+    outer = [e for k, e in enumerate(edges) if k not in skip]
+    return outer, holes
+
+
+def _revolve_profile_from_edges(
+    edges: list[Edge],
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+) -> list[tuple[float, float]]:
+    """Build generating (h, ρ) profile from boundary edges (not a single cut)."""
+
+    def _hr_of(p: Sequence[float] | Vec3) -> tuple[float, float]:
+        w = Vec3(p) - origin
+        h = float(w.dot(axis))
+        rho = float((w - axis * h).magnitude)
+        return h, rho
+
+    def _theta_of(p: Sequence[float] | Vec3) -> float | None:
+        w = Vec3(p) - origin
+        radial = w - axis * float(w.dot(axis))
+        if radial.magnitude_square < 1e-12:
+            return None
+        return math.atan2(float(radial.dot(v)), float(radial.dot(u)))
+
+    def _dedup(seq: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        out: list[tuple[float, float]] = []
+        for h, r in seq:
+            if out and math.hypot(h - out[-1][0], r - out[-1][1]) < 1e-3:
+                continue
+            out.append((h, r))
+        return out
+
+    def _span(pr: list[tuple[float, float]]) -> float:
+        if len(pr) < 2:
+            return 0.0
+        return max(p[0] for p in pr) - min(p[0] for p in pr)
+
+    def _sort_by_h(pr: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        """Open generating curve: unique ρ(h), sorted by h."""
+        buckets: dict[int, list[float]] = {}
+        for h, r in pr:
+            key = int(round(h * 20.0))
+            buckets.setdefault(key, []).append(r)
+        keys = sorted(buckets)
+        return [
+            (k / 20.0, sorted(buckets[k])[len(buckets[k]) // 2]) for k in keys
+        ]
+
+    # 1) Group near-constant-θ edges by θ — each group is one generator
+    groups: dict[int, list[tuple[float, float]]] = {}
+    for e in edges:
+        if _edge_is_revolve_latitude(e, axis):
+            continue
+        if isinstance(e, EdgeLine):
+            a, b = Vec3(e.a), Vec3(e.b)
+            pts = [
+                _v3(a * (1.0 - t) + b * t) for t in [i / 48 for i in range(49)]
+            ]
+        else:
+            pts = _edge_samples(e, n=64)
+        if len(pts) < 2:
+            continue
+        ths = [t for p in pts if (t := _theta_of(p)) is not None]
+        if len(ths) < 2:
+            continue
+        un = _unwrap_theta_chain(ths)
+        if max(un) - min(un) > 0.2:
+            continue  # cut / non-meridian
+        sx = sum(math.cos(t) for t in ths)
+        sy = sum(math.sin(t) for t in ths)
+        if sx * sx + sy * sy < 1e-18:
+            continue
+        mean = math.atan2(sy, sx)
+        key = int(round(mean / 0.05))  # ~3° bins
+        groups.setdefault(key, []).extend(_hr_of(p) for p in pts)
+
+    profile: list[tuple[float, float]] = []
+    if groups:
+        # Pick the generator with the largest axial span
+        best: list[tuple[float, float]] = []
+        for hr in groups.values():
+            ordered = _sort_by_h(hr)
+            if _span(ordered) > _span(best):
+                best = ordered
+        profile = best
+
+    # Required axial span from ALL boundary samples
+    all_hr = [_hr_of(p) for e in edges for p in _edge_samples(e, n=32)]
+    if not all_hr:
+        return profile
+    need = max(p[0] for p in all_hr) - min(p[0] for p in all_hr)
+
+    # 2) Fallback: single-valued ρ(h) from all boundary samples (cones / flares)
+    if _span(profile) < 0.85 * need - 1e-6:
+        mono = _sort_by_h(all_hr)
+        if _span(mono) >= _span(profile):
+            profile = mono
+
+    return profile if len(profile) >= 2 else _dedup(all_hr)
+
+
+def _profile_cumlen(
+    profile: list[tuple[float, float]],
+) -> tuple[list[float], float]:
+    cum = [0.0]
+    for i in range(len(profile) - 1):
+        h0, r0 = profile[i]
+        h1, r1 = profile[i + 1]
+        cum.append(cum[-1] + math.hypot(h1 - h0, r1 - r0))
+    return cum, cum[-1]
+
+
+def _profile_at_s(
+    profile: list[tuple[float, float]], cum: list[float], total: float, s: float
+) -> tuple[float, float]:
+    """(h, ρ) at normalized s∈[0,1] along profile."""
+    if total < 1e-12 or len(profile) < 2:
+        return profile[0]
+    s = max(0.0, min(1.0, s))
+    dist = total * s
+    j = 0
+    while j + 1 < len(cum) and cum[j + 1] < dist - 1e-15:
+        j += 1
+    if j + 1 >= len(cum):
+        return profile[-1]
+    seg = cum[j + 1] - cum[j]
+    t = 0.0 if seg < 1e-15 else (dist - cum[j]) / seg
+    h = profile[j][0] * (1.0 - t) + profile[j + 1][0] * t
+    rho = profile[j][1] * (1.0 - t) + profile[j + 1][1] * t
+    return h, rho
+
+
+def _hr_to_s(
+    h: float,
+    rho: float,
+    profile: list[tuple[float, float]],
+    cum: list[float],
+    total: float,
+) -> float:
+    """Closest point on profile in (h,ρ) → normalized arc-length s∈[0,1]."""
+    if total < 1e-12 or len(profile) < 2:
+        return 0.0
+    best_d = 1e300
+    best_s = 0.0
+    for i in range(len(profile) - 1):
+        h0, r0 = profile[i]
+        h1, r1 = profile[i + 1]
+        dh, dr = h1 - h0, r1 - r0
+        L2 = dh * dh + dr * dr
+        if L2 < 1e-24:
+            t = 0.0
+        else:
+            t = max(0.0, min(1.0, ((h - h0) * dh + (rho - r0) * dr) / L2))
+        hh, rr = h0 + t * dh, r0 + t * dr
+        d = (h - hh) ** 2 + (rho - rr) ** 2
+        if d < best_d:
+            best_d = d
+            best_s = (cum[i] + t * (cum[i + 1] - cum[i])) / total
+    return best_s
+
+
+def _h_to_s(
+    h: float,
+    profile: list[tuple[float, float]],
+    cum: list[float],
+    total: float,
+) -> float:
+    """Map axial height to profile s (for trim curves that leave the ρ(h) graph)."""
+    if total < 1e-12 or len(profile) < 2:
+        return 0.0
+    h_lo = min(p[0] for p in profile)
+    h_hi = max(p[0] for p in profile)
+    if h <= h_lo:
+        # endpoint with min h
+        i = min(range(len(profile)), key=lambda k: profile[k][0])
+        return cum[i] / total
+    if h >= h_hi:
+        i = max(range(len(profile)), key=lambda k: profile[k][0])
+        return cum[i] / total
+    for i in range(len(profile) - 1):
+        h0, h1 = profile[i][0], profile[i + 1][0]
+        if abs(h1 - h0) < 1e-15:
+            continue
+        lo, hi = (h0, h1) if h0 <= h1 else (h1, h0)
+        if lo - 1e-9 <= h <= hi + 1e-9:
+            t = (h - h0) / (h1 - h0)
+            t = max(0.0, min(1.0, t))
+            return (cum[i] + t * (cum[i + 1] - cum[i])) / total
+    return _hr_to_s(h, 0.0, profile, cum, total)
+
+
+def _revolve_ts_of_point(
+    p: Sequence[float] | Vec3,
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+    profile: list[tuple[float, float]],
+    cum: list[float],
+    total: float,
+) -> tuple[float, float] | None:
+    w = Vec3(p) - origin
+    h = float(w.dot(axis))
+    radial = w - axis * h
+    rho = float(radial.magnitude)
+    if radial.magnitude_square < 1e-16:
+        th = 0.0
+    else:
+        th = math.atan2(float(radial.dot(v)), float(radial.dot(u)))
+    # Prefer axial s so notch/cut meridians (ρ ≠ profile) still form a
+    # vertical UV wall at their θ — (h,ρ) nearest would warp the clip.
+    s_h = _h_to_s(h, profile, cum, total)
+    s_hr = _hr_to_s(h, rho, profile, cum, total)
+    # On-surface: both agree; off-profile cut: trust height
+    s = s_h if abs(s_h - s_hr) > 1e-3 else s_hr
+    return th, s
+
+
+def _revolve_rect_uv(th0: float, th1: float) -> list[tuple[float, float]]:
+    """Full-mantle rectangle in (θ, s) for an untrimmed 360° revolve."""
+    a, b = (th0, th1) if th1 >= th0 else (th1, th0)
+    if abs(b - a) < 1e-9:
+        b = a + 2 * math.pi
+    return [(a, 0.0), (a, 1.0), (b, 1.0), (b, 0.0), (a, 0.0)]
+
+
+def _revolve_is_simple_mantle(edges: list[Edge]) -> bool:
+    """Untrimmed full mantle: two latitude circles (± optional seam generators).
+
+    After bridge-peel of coincident EdgeLine seams, only the two cap circles
+    remain — that case must still use a rectangular (θ,s) domain, not a
+    double-wound unwrap of the two circles (which empties the mesh).
+    """
+    n_circ = sum(1 for e in edges if isinstance(e, EdgeCircle))
+    if n_circ != 2:
+        return False
+    if len(edges) == 2:
+        return all(isinstance(e, EdgeCircle) for e in edges)
+    if len(edges) == 4:
+        return True
+    return False
+
+
+def _revolve_param_poly(
+    edges: list[Edge],
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+    profile: list[tuple[float, float]],
+    cum: list[float],
+    total: float,
+    *,
+    th0: float | None = None,
+    th1: float | None = None,
+    full_turn: bool = False,
+) -> list[tuple[float, float]]:
+    """Boundary loop in (θ, s) for isoline clipping (holes / notches)."""
+    if not edges or total < 1e-12:
+        return []
+    # Untrimmed full revolves: avoid double-wind unwrap from two EdgeCircles
+    if (
+        full_turn
+        and th0 is not None
+        and th1 is not None
+        and _revolve_is_simple_mantle(edges)
+    ):
+        return _revolve_rect_uv(th0, th1)
+    pts3 = _chain_loop_pts3(edges)
+    if len(pts3) < 3:
+        # Lone full circle (hole): sample once around
+        if len(edges) == 1 and isinstance(edges[0], EdgeCircle):
+            pts3 = _edge_boundary_samples(edges[0])
+        if len(pts3) < 3:
+            return []
+    raw: list[tuple[float, float]] = []
+    for p in pts3:
+        ts = _revolve_ts_of_point(p, origin, axis, u, v, profile, cum, total)
+        if ts is not None:
+            raw.append(ts)
+    if len(raw) < 3:
+        return []
+    ths = _unwrap_theta_chain([t for t, _ in raw])
+    uv = list(zip(ths, [s for _, s in raw]))
+    # Closed 3D loops that wind once about the axis unwrap with Δθ≈±2π;
+    # closing with a diagonal would cut the domain — close along constant-s seam.
+    dth = uv[-1][0] - uv[0][0]
+    ds = uv[-1][1] - uv[0][1]
+    if abs(dth) > 1e-6 or abs(ds) > 1e-6:
+        if abs(abs(dth) - 2 * math.pi) < 0.05 and abs(ds) < 1e-3:
+            # already a near-full latitude ring; snap close in θ
+            uv = list(uv)
+            uv[-1] = (uv[0][0] + math.copysign(2 * math.pi, dth), uv[0][1])
+            uv.append(uv[0])
+        elif abs(dth) > math.pi:
+            # seam close: vertical then to start
+            uv = list(uv) + [(uv[-1][0], uv[0][1]), uv[0]]
+        else:
+            uv = list(uv) + [uv[0]]
+    return uv
+
+
+def _revolve_trim_loops(
+    loops: list[list[Edge]],
+    origin: Vec3 | None = None,
+    axis: Vec3 | None = None,
+) -> list[list[Edge]]:
+    """Outer + holes, peeling interior bridge-to-circle holes out of loop[0]."""
+    if not loops:
+        return []
+    outer, bridged = _split_bridge_holes(loops[0], origin=origin, axis=axis)
+    out: list[list[Edge]] = []
+    if outer:
+        out.append(outer)
+    out.extend(bridged)
+    out.extend(loops[1:])
+    return out
+
+
+def _inside_spans_1d(
+    u0: float,
+    u1: float,
+    inside_at,
+    *,
+    n_sample: int = 96,
+    refine: int = 20,
+) -> list[tuple[float, float]]:
+    """Inside intervals on [u0,u1] via dense PIP samples + bisection to the trim.
+
+    No cosmetic inset: endpoints lie on the PIP boundary to search tolerance.
+    """
+    if abs(u1 - u0) < 1e-15:
+        return []
+    if u1 < u0:
+        u0, u1 = u1, u0
+    n = max(8, int(n_sample))
+    us = [u0 + (u1 - u0) * i / n for i in range(n + 1)]
+    flags = [bool(inside_at(u)) for u in us]
+
+    def _bisect(ua: float, ub: float, fa: bool, fb: bool) -> float:
+        a, b, fa_ = ua, ub, fa
+        for _ in range(refine):
+            m = 0.5 * (a + b)
+            fm = bool(inside_at(m))
+            if fm == fa_:
+                a, fa_ = m, fm
+            else:
+                b = m
+        return a if fa_ else b
+
+    spans: list[tuple[float, float]] = []
+    i = 0
+    while i <= n:
+        if not flags[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and flags[j + 1]:
+            j += 1
+        lo, hi = us[i], us[j]
+        if i > 0 and not flags[i - 1]:
+            lo = _bisect(us[i - 1], us[i], False, True)
+        elif i == 0 and flags[0]:
+            lo = u0
+        if j < n and not flags[j + 1]:
+            hi = _bisect(us[j], us[j + 1], True, False)
+        elif j == n and flags[n]:
+            hi = u1
+        if hi - lo > 1e-12:
+            spans.append((lo, hi))
+        i = j + 1
+    return spans
+
+
+def _revolve_mesh_segs(
+    face: dict[str, Any],
+    n_th: int = _REVOLVE_MESH_TH,
+    n_prof: int = _REVOLVE_MESH_PROF,
+) -> list[tuple[tuple, tuple]]:
+    """Isolines clipped to SAB trim in (θ, s), including holes / notches."""
+    profile = face.get("profile") or []
+    loops = face.get("loops") or []
+    if len(profile) < 2:
+        return []
+    origin = Vec3(face["origin"])
+    axis = Vec3(face["axis"]).normalize()
+    u, v = Vec3(face["u"]), Vec3(face["v"])
+    th0 = float(face["th0"])
+    th1 = float(face["th1"])
+    full = bool(face.get("full_turn"))
+    cum, total = _profile_cumlen(profile)
+    if total < 1e-12:
+        return []
+
+    trim = _revolve_trim_loops(loops, origin=origin, axis=axis)
+    # Parametric trim polygons (outer + holes)
+    outer_uv = _revolve_param_poly(
+        trim[0] if trim else [],
+        origin,
+        axis,
+        u,
+        v,
+        profile,
+        cum,
+        total,
+        th0=th0,
+        th1=th1,
+        full_turn=full,
+    )
+    hole_uvs = []
+    for hole in trim[1:] if trim else []:
+        huv = _revolve_param_poly(
+            hole,
+            origin,
+            axis,
+            u,
+            v,
+            profile,
+            cum,
+            total,
+            th0=th0,
+            th1=th1,
+            full_turn=full,
+        )
+        if len(huv) < 3:
+            continue
+        # Drop degenerate holes (e.g. full latitude → zero area in (θ,s))
+        area = abs(
+            sum(
+                huv[i][0] * huv[i + 1][1] - huv[i + 1][0] * huv[i][1]
+                for i in range(len(huv) - 1)
+            )
+            * 0.5
+        )
+        if area < 1e-6:
+            continue
+        hole_uvs.append(huv)
+    use_clip = len(outer_uv) >= 3
+    if use_clip:
+        ths = [p[0] for p in outer_uv]
+        ss = [p[1] for p in outer_uv]
+        th_lo, th_hi = min(ths), max(ths)
+        s_lo, s_hi = min(ss), max(ss)
+        # Full-turn only: collapse double-wind unwrap to the face window.
+        # Partial faces must keep the polygon's unwrap branch (clamping to
+        # face th0/th1 on another sheet drops almost all isolines).
+        if full and (th_hi - th_lo) > abs(th1 - th0) + 0.25:
+            th_lo, th_hi = (min(th0, th1), max(th0, th1))
+        # Degenerate / empty PIP domain (e.g. two circles unwrapped as a
+        # spiral): fall back to the rectangular mantle so polyline line
+        # segments of a 360° revolve still get generators that reach the caps.
+        if full:
+            mid_th = 0.5 * (th_lo + th_hi)
+            mid_s = 0.5 * (s_lo + s_hi)
+            if not _pip2(mid_th, mid_s, outer_uv):
+                outer_uv = _revolve_rect_uv(th0, th1)
+                th_lo, th_hi = (min(th0, th1), max(th0, th1))
+                if abs(th_hi - th_lo) < 1e-9:
+                    th_lo, th_hi = -math.pi, math.pi
+                s_lo, s_hi = 0.0, 1.0
+    else:
+        th_lo, th_hi = (th0, th1) if th1 >= th0 else (th1, th0)
+        s_lo, s_hi = 0.0, 1.0
+
+    def _at(th: float, s: float) -> tuple:
+        h, rho = _profile_at_s(profile, cum, total, s)
+        if rho < 1e-9:
+            return _v3(origin + axis * h)
+        return _revolve_eval(origin, axis, u, v, h, rho, th)
+
+    def _uv_inside(th: float, s: float) -> bool:
+        if use_clip:
+            if not _pip2(th, s, outer_uv):
+                return False
+            for huv in hole_uvs:
+                if _pip2(th, s, huv):
+                    return False
+            return True
+        return (th_lo - 1e-12) <= th <= (th_hi + 1e-12) and (
+            s_lo - 1e-12
+        ) <= s <= (s_hi + 1e-12)
+
+    # Tip snap by isoline class so a notch spline cannot drag a parallel
+    # off its height (that left a visible gap before the red boundary).
+    lat_edge_pts: list[list[tuple]] = []
+    mer_edge_pts: list[list[tuple]] = []
+    if use_clip:
+        for lp in trim:
+            for e in lp:
+                seg = _edge_boundary_samples(e)
+                if len(seg) < 2:
+                    continue
+                if _edge_is_revolve_latitude(e, axis):
+                    lat_edge_pts.append(seg)
+                else:
+                    mer_edge_pts.append(seg)
+    snap_tol = 0.0
+    snap_tol_h = 0.0
+    h_span_face = 1.0
+    all_snap = lat_edge_pts + mer_edge_pts
+    if all_snap:
+        flat = [p for seg in all_snap for p in seg]
+        xs = [p[0] for p in flat]
+        ys = [p[1] for p in flat]
+        zs = [p[2] for p in flat]
+        diag = math.hypot(
+            max(xs) - min(xs),
+            math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
+        )
+        hs = [float((Vec3(p) - origin).dot(axis)) for p in flat]
+        h_span_face = max(hs) - min(hs) if hs else 1.0
+        # Axial-constrained (keep_h) snaps may travel radially to a cut
+        # meridian; unconstrained snaps stay tight so tips cannot jump edges.
+        snap_tol = max(2.0, 0.025 * diag)
+        snap_tol_h = max(snap_tol, 0.08 * diag)
+
+    def _snap_tip(
+        p: tuple,
+        edge_pts: list[list[tuple]],
+        *,
+        keep_h: bool = False,
+    ) -> tuple:
+        tol = snap_tol_h if keep_h else snap_tol
+        if not edge_pts or tol <= 0:
+            return p
+        pv = Vec3(p)
+        h0 = float((pv - origin).dot(axis))
+        best = p
+        best_d = 1e300
+        for seg in edge_pts:
+            for i in range(len(seg) - 1):
+                a = Vec3(seg[i])
+                b = Vec3(seg[i + 1])
+                if keep_h:
+                    # Intersect the parallel (const h) with the meridian edge
+                    ha = float((a - origin).dot(axis))
+                    hb = float((b - origin).dot(axis))
+                    if abs(hb - ha) < 1e-12:
+                        if abs(ha - h0) > 1e-3:
+                            continue
+                        q = a
+                    else:
+                        t = (h0 - ha) / (hb - ha)
+                        if t < -1e-6 or t > 1.0 + 1e-6:
+                            continue
+                        t = max(0.0, min(1.0, t))
+                        q = a + (b - a) * t
+                else:
+                    ab = b - a
+                    L2 = ab.magnitude_square
+                    if L2 < 1e-24:
+                        q = a
+                    else:
+                        t = max(0.0, min(1.0, float((pv - a).dot(ab) / L2)))
+                        q = a + ab * t
+                d = pv.distance(q)
+                if d < best_d:
+                    best_d = d
+                    best = _v3(q)
+        return best if best_d <= tol else p
+
+    def _emit_span(
+        u_a: float,
+        u_b: float,
+        *,
+        nsub: int,
+        point_at,
+        tip_edges: list[list[tuple]],
+        keep_h: bool = False,
+    ) -> None:
+        """Emit subdivided isoline; snap tips onto matching SAB wire class."""
+        if abs(u_b - u_a) < 1e-12:
+            return
+        nsub = max(2, nsub)
+        pts = [point_at(u_a + (u_b - u_a) * j / nsub) for j in range(nsub + 1)]
+        pts[0] = _snap_tip(pts[0], tip_edges, keep_h=keep_h)
+        pts[-1] = _snap_tip(pts[-1], tip_edges, keep_h=keep_h)
+        for j in range(nsub):
+            if Vec3(pts[j]).distance(Vec3(pts[j + 1])) > 1e-9:
+                segs.append((pts[j], pts[j + 1]))
+
+    segs: list[tuple[tuple, tuple]] = []
+
+    # Polyline profile → isolines per line/arc sub-segment (not one lazy pass)
+    raw_segs = face.get("profile_segs") or [(0.0, 1.0)]
+    prof_segs: list[tuple[float, float]] = []
+    for a, b in raw_segs:
+        aa, bb = max(a, s_lo), min(b, s_hi)
+        # UV samples often undershoot 0/1 by 1e-5; pin so generators meet caps
+        if abs(aa - s_lo) < 1e-3 and s_lo < 1e-3:
+            aa = 0.0
+        if abs(bb - s_hi) < 1e-3 and s_hi > 1.0 - 1e-3:
+            bb = 1.0
+        if bb - aa > 1e-9:
+            prof_segs.append((aa, bb))
+    if not prof_segs:
+        prof_segs = [(0.0, 1.0)] if s_lo < 1e-3 and s_hi > 1.0 - 1e-3 else [(s_lo, s_hi)]
+
+    th_list = [
+        th_lo + (th_hi - th_lo) * k / max(n_th, 1) for k in range(n_th + 1)
+    ]
+    if full or abs(th_hi - th_lo) > 1e-9:
+        th_list = th_list[1:-1] if len(th_list) > 2 else []
+
+    # Generators: constant θ, one span walk per profile sub-segment
+    for th in th_list:
+        for seg_s0, seg_s1 in prof_segs:
+            spans = _inside_spans_1d(
+                seg_s0,
+                seg_s1,
+                lambda s, _th=th: _uv_inside(_th, s),
+                n_sample=max(48, n_prof * 10),
+            )
+            for sa, sb in spans:
+                # Pin to sub-segment ends (polyline joints / surface caps)
+                pin = max(1e-4, 2e-3 * max(seg_s1 - seg_s0, 1e-9))
+                if abs(sa - seg_s0) < pin:
+                    sa = seg_s0
+                if abs(sb - seg_s1) < pin:
+                    sb = seg_s1
+                _emit_span(
+                    sa,
+                    sb,
+                    nsub=max(4, int(round((sb - sa) * n_prof)) + 1),
+                    point_at=lambda s, _th=th: _at(_th, s),
+                    tip_edges=lat_edge_pts,
+                    keep_h=False,
+                )
+
+    # Latitudes follow arc length. A short line/arc piece must not get a full
+    # n_prof grid — that packs parallels into the small revolved patch.
+    lat_s: list[float] = []
+    span_all = max(s_hi - s_lo, 1e-9)
+    for seg_s0, seg_s1 in prof_segs:
+        frac = (seg_s1 - seg_s0) / span_all
+        n_loc = max(1, int(round(n_prof * frac)))
+        if n_loc >= 2:
+            for k in range(1, n_loc):
+                lat_s.append(seg_s0 + (seg_s1 - seg_s0) * k / n_loc)
+        elif frac >= 1.0 / max(n_prof, 1):
+            lat_s.append(0.5 * (seg_s0 + seg_s1))
+        # Polyline joint (shared end) — one parallel, not a second full grid
+        for joint in (seg_s0, seg_s1):
+            if s_lo + 1e-4 < joint < s_hi - 1e-4:
+                lat_s.append(joint)
+    # Unique
+    lat_s_u: list[float] = []
+    for s in sorted(lat_s):
+        if not lat_s_u or abs(s - lat_s_u[-1]) > 1e-4:
+            lat_s_u.append(s)
+    for s in lat_s_u:
+        spans = _inside_spans_1d(
+            th_lo,
+            th_hi,
+            lambda th, _s=s: _uv_inside(th, _s),
+            n_sample=max(
+                96, int(abs(th_hi - th_lo) / (2 * math.pi) * 128) + 16
+            ),
+        )
+        for ta, tb in spans:
+            if abs(ta - th_lo) < 1e-4:
+                ta = th_lo
+            if abs(tb - th_hi) < 1e-4:
+                tb = th_hi
+            _emit_span(
+                ta,
+                tb,
+                nsub=max(12, int(round(abs(tb - ta) / (2 * math.pi) * 48))),
+                point_at=lambda th, _s=s: _at(th, _s),
+                tip_edges=mer_edge_pts,
+                keep_h=True,
+            )
+
+    return segs
+
+
+def _emit_revolve_mesh(face: dict[str, Any]) -> list[str]:
+    L: list[str] = []
+    for a, b in _revolve_mesh_segs(face):
+        L.append(f"  \\stpDmeshSeg{{{_fmt_xyz(a)}}}{{{_fmt_xyz(b)}}}")
+    return L
+
+
+def revolve_extent_pts(face: dict[str, Any], n: int = 24) -> list[tuple]:
+    """Samples on revolved mantle for scale / envelope."""
+    profile = face.get("profile") or []
+    if len(profile) < 2:
+        return []
+    origin = Vec3(face["origin"])
+    axis = Vec3(face["axis"]).normalize()
+    u, v = Vec3(face["u"]), Vec3(face["v"])
+    th0, th1 = float(face["th0"]), float(face["th1"])
+    pts: list[tuple] = []
+    for h, rho in (profile[0], profile[len(profile) // 2], profile[-1]):
+        for i in range(n):
+            th = th0 + (th1 - th0) * i / max(n - 1, 1)
+            pts.append(_revolve_eval(origin, axis, u, v, h, rho, th))
+    return pts
 
 
 def _plane_frame(
@@ -441,7 +1607,7 @@ def _plane_frame(
     """Origin + orthonormal u,v in plane + outer ring in UV."""
     if not loops:
         return None
-    poly = loop_polyline(loops[0], n=64)
+    poly = loop_polyline(loops[0], n=128)
     if len(poly) < 3:
         return None
     # Newell normal
@@ -517,7 +1683,7 @@ def _loop_uv_poly(
     origin: Vec3,
     u_ax: Vec3,
     v_ax: Vec3,
-    n: int = 64,
+    n: int = 128,
 ) -> list[tuple[float, float]]:
     """Project a boundary loop into the plane UV frame."""
     poly = loop_polyline(edges, n=n)
@@ -553,9 +1719,6 @@ def _plane_mesh_segs(
         for hole in loops[1:]
         if len(huv := _loop_uv_poly(hole, origin, u_ax, v_ax)) >= 3
     ]
-    # Inset outer / expand holes slightly so isolines clear trim curves
-    eps_u = max(1e-4, 0.004 * (umax - umin))
-    eps_v = max(1e-4, 0.004 * (vmax - vmin))
     segs: list[tuple[tuple, tuple]] = []
 
     def _emit_spans(
@@ -575,14 +1738,10 @@ def _plane_mesh_segs(
     def _clipped_spans(
         outer_hits: list[float],
         hole_hits_list: list[list[float]],
-        eps: float,
     ) -> list[tuple[float, float]]:
-        spans = _inset_spans(_hits_to_spans(outer_hits), eps)
+        spans = _hits_to_spans(outer_hits)
         for hh in hole_hits_list:
-            hole_sp = [
-                (a - eps, b + eps) for a, b in _hits_to_spans(hh)
-            ]
-            spans = _clip_intervals_subtract(spans, hole_sp)
+            spans = _clip_intervals_subtract(spans, _hits_to_spans(hh))
         return spans
 
     for k in range(1, max(nu, 0) + 1):
@@ -593,7 +1752,6 @@ def _plane_mesh_segs(
                 _poly_line_hits(huv, const=uu, horizontal=False)
                 for huv in hole_uvs
             ],
-            eps_v,
         )
         _emit_spans(spans, horizontal=False, const=uu)
     for k in range(1, max(nv, 0) + 1):
@@ -604,7 +1762,6 @@ def _plane_mesh_segs(
                 _poly_line_hits(huv, const=vv, horizontal=True)
                 for huv in hole_uvs
             ],
-            eps_u,
         )
         _emit_spans(spans, horizontal=True, const=vv)
     return segs
@@ -615,9 +1772,10 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
 
     Display is AutoCAD-style wire mesh (no fill):
       - plane-surface → ``plane`` (boundary + UV grid)
-      - cone-surface (full or partial cylinder) → ``cylinder`` (arc rings + gens)
-      - spline-surface with 4-edge ruled loop → ``ruled`` (curved latitudes)
-      - other spline-surface → ``wire`` (boundary only; AutoCAD often skips mesh)
+      - cone-surface (cylinder) → ``cylinder``; tapered → ``revolve``
+      - torus / revolved spline profile → ``revolve``
+      - spline-surface with 4-edge ruled loop → ``ruled``
+      - other → ``wire`` (boundary only)
     FE always keeps boundary edge equations.
     """
     sab = getattr(entity, "sab", None) or getattr(entity, "acis_data", None)
@@ -627,6 +1785,26 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
         records = _parse_sab_records(sab)
     except Exception:
         return []
+    # Entity-level REVOLVEDSURFACE axis / sweep angle (shared by multi-face)
+    ent_axis = None
+    ent_origin = None
+    ent_th0 = None
+    ent_th1 = None
+    try:
+        ap = getattr(entity.dxf, "axis_point", None)
+        av = getattr(entity.dxf, "axis_vector", None)
+        if ap is not None and av is not None:
+            ent_origin = Vec3(ap)
+            av = Vec3(av)
+            if av.magnitude_square > 1e-18:
+                ent_axis = av.normalize()
+        ang = getattr(entity.dxf, "revolve_angle", None)
+        st = getattr(entity.dxf, "start_angle", None)
+        if ang is not None and abs(float(ang)) > 1e-6:
+            ent_th0 = float(st or 0.0)
+            ent_th1 = ent_th0 + float(ang)
+    except Exception:
+        pass
     out: list[dict[str, Any]] = []
     for face_id in [rid for rid, r in records.items() if r["type"] == "face"]:
         loops: list[list[Edge]] = []
@@ -653,20 +1831,30 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
                     }
                 )
                 continue
-            cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
-            out.append({"kind": "wire", "loops": loops, "cen": _k(cen)})
-            continue
-        if stype == "plane-surface":
+            # tapered cone → revolve below
+        elif stype == "plane-surface":
             cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
             out.append({"kind": "plane", "loops": loops, "cen": _k(cen)})
             continue
-        # spline-surface: ruled / extrusion strip (curved latitudes); holes OK
-        if stype == "spline-surface" and loops and (
+        elif stype == "spline-surface" and loops and (
             _is_ruled_loop(loops[0]) or _extract_extrusion_rails(loops[0]) is not None
         ):
+            # ruled / extrusion strip (curved latitudes); holes OK
             cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
             out.append({"kind": "ruled", "loops": loops, "cen": _k(cen)})
             continue
+        # Revolve: torus / tapered cone / spline·LWPOLYLINE·arc profiles
+        if loops:
+            rev = _revolve_params_from_loop(
+                loops[0],
+                axis=ent_axis,
+                origin=ent_origin,
+                th0=ent_th0,
+                th1=ent_th1,
+            )
+            if rev is not None:
+                out.append({"kind": "revolve", "loops": loops, **rev})
+                continue
         cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
         out.append({"kind": "wire", "loops": loops, "cen": _k(cen)})
     return out
@@ -1037,10 +2225,6 @@ def _cylinder_mesh_segs(
         )
         return _v3(p)
 
-    # Slight inset so isolines stop inside SAB intersection / trim curves
-    eps_th = max(1e-4, 0.004 * (th_max - th_min))
-    eps_h = max(1e-4, 0.004 * (h_max - h_min))
-
     def _emit_spans(
         spans: list[tuple[float, float]], *, horizontal: bool, const: float
     ) -> None:
@@ -1063,12 +2247,10 @@ def _cylinder_mesh_segs(
     def _clipped(
         outer_hits: list[float],
         hole_hits_list: list[list[float]],
-        eps: float,
     ) -> list[tuple[float, float]]:
-        spans = _inset_spans(_hits_to_spans(outer_hits), eps)
+        spans = _hits_to_spans(outer_hits)
         for hh in hole_hits_list:
-            hole_sp = [(a - eps, b + eps) for a, b in _hits_to_spans(hh)]
-            spans = _clip_intervals_subtract(spans, hole_sp)
+            spans = _clip_intervals_subtract(spans, _hits_to_spans(hh))
         return spans
 
     # Generators: constant θ (vertical in (θ,h) → horizontal=False)
@@ -1086,7 +2268,6 @@ def _cylinder_mesh_segs(
                 _poly_line_hits(huv, const=th, horizontal=False)
                 for huv in hole_uvs
             ],
-            eps_h,
         )
         _emit_spans(spans, horizontal=False, const=th)
     # Rings: constant h (skip exact ends — boundary wire draws those)
@@ -1119,7 +2300,6 @@ def _cylinder_mesh_segs(
                 _poly_line_hits(huv, const=hh, horizontal=True)
                 for huv in hole_uvs
             ],
-            eps_th,
         )
         _emit_spans(spans, horizontal=True, const=hh)
 
@@ -1358,14 +2538,14 @@ def _rail_s_of_point(p: Vec3, A: list[tuple], axis: Vec3) -> float:
 
 
 def _edge_boundary_samples(edge: Edge) -> list[tuple]:
-    """Dense samples of a SAB boundary edge (intersection / rail / gen)."""
+    """Dense samples of a SAB boundary edge for exact trim clipping."""
     if isinstance(edge, EdgeLine):
         return [edge.a, edge.b]
     if isinstance(edge, (EdgeArc, EdgeCircle)):
-        return _edge_samples(edge, n=48)
+        return _edge_samples(edge, n=96)
     if isinstance(edge, EdgeSpline):
-        return _edge_samples(edge, n=max(64, len(edge.cps) * 12))
-    return _edge_samples(edge, n=32)
+        return _edge_samples(edge, n=max(128, len(edge.cps) * 16))
+    return _edge_samples(edge, n=64)
 
 
 def _ruled_param_poly(
@@ -1401,8 +2581,39 @@ def _ruled_param_poly(
     return out
 
 
+def _on_poly_boundary(
+    x: float, y: float, poly: list[tuple[float, float]], eps: float = 1e-9
+) -> bool:
+    """True if (x,y) lies on an edge of the polygon (inclusive trim)."""
+    n = len(poly)
+    if n < 2:
+        return False
+    closed = (
+        abs(poly[0][0] - poly[-1][0]) < 1e-12
+        and abs(poly[0][1] - poly[-1][1]) < 1e-12
+    )
+    n_seg = n - 1 if closed else n
+    for i in range(n_seg):
+        x0, y0 = poly[i]
+        x1, y1 = poly[i + 1] if closed else poly[(i + 1) % n]
+        dx, dy = x1 - x0, y1 - y0
+        L2 = dx * dx + dy * dy
+        if L2 < 1e-24:
+            if abs(x - x0) <= eps and abs(y - y0) <= eps:
+                return True
+            continue
+        t = ((x - x0) * dx + (y - y0) * dy) / L2
+        if t < -1e-12 or t > 1.0 + 1e-12:
+            continue
+        t = max(0.0, min(1.0, t))
+        px, py = x0 + t * dx, y0 + t * dy
+        if abs(x - px) <= eps and abs(y - py) <= eps:
+            return True
+    return False
+
+
 def _pip2(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
-    """Even-odd point-in-polygon (poly may be open or closed)."""
+    """Even-odd point-in-polygon; boundary counts as inside (CAE trim)."""
     n = len(poly)
     if n < 3:
         return False
@@ -1414,6 +2625,9 @@ def _pip2(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
         n -= 1
     if n < 3:
         return False
+    # Inclusive: points on the SAB trim curve are part of the face
+    if _on_poly_boundary(x, y, poly, eps=1e-7):
+        return True
     inside = False
     j = n - 1
     for i in range(n):
@@ -1532,20 +2746,6 @@ def _hits_to_spans(hits: list[float]) -> list[tuple[float, float]]:
     return spans
 
 
-def _inset_spans(
-    spans: list[tuple[float, float]], eps: float
-) -> list[tuple[float, float]]:
-    """Slightly shrink spans so isolines stop inside the SAB trim curve."""
-    if eps <= 0:
-        return spans
-    out: list[tuple[float, float]] = []
-    for a, b in spans:
-        aa, bb = a + eps, b - eps
-        if bb - aa > 1e-9:
-            out.append((aa, bb))
-    return out
-
-
 def _ruled_mesh_segs(
     loops: list[list[Edge]],
     n_gen: int = 12,
@@ -1603,27 +2803,19 @@ def _ruled_mesh_segs(
     # Use (s, h) clipping when we have a reliable param polygon from SAB edges
     use_clip = len(outer_uv) >= 3
     if use_clip:
-        # Inset so isolines stop just inside SAB intersection curves
-        eps_h = max(1e-4, 0.003 * abs(hB - hA))
-        eps_s = 0.003
-        # Generators: constant s → hits in h
+        # Exact trim hits — no cosmetic inset
         for k in range(1, n_gen):
             s = k / n_gen
-            spans = _inset_spans(
-                _hits_to_spans(
-                    _poly_line_hits(outer_uv, const=s, horizontal=False)
-                ),
-                eps_h,
+            spans = _hits_to_spans(
+                _poly_line_hits(outer_uv, const=s, horizontal=False)
             )
             for huv in hole_uvs:
-                # Expand hole slightly (subtract more) so mesh clears the hole edge
-                hole_sp = [
-                    (a - eps_h, b + eps_h)
-                    for a, b in _hits_to_spans(
+                spans = _clip_intervals_subtract(
+                    spans,
+                    _hits_to_spans(
                         _poly_line_hits(huv, const=s, horizontal=False)
-                    )
-                ]
-                spans = _clip_intervals_subtract(spans, hole_sp)
+                    ),
+                )
             for ha, hb in spans:
                 if abs(hB - hA) < 1e-12:
                     continue
@@ -1636,20 +2828,16 @@ def _ruled_mesh_segs(
         for k in range(1, n_lat):
             t = k / n_lat
             hh = hA + (hB - hA) * t
-            spans = _inset_spans(
-                _hits_to_spans(
-                    _poly_line_hits(outer_uv, const=hh, horizontal=True)
-                ),
-                eps_s,
+            spans = _hits_to_spans(
+                _poly_line_hits(outer_uv, const=hh, horizontal=True)
             )
             for huv in hole_uvs:
-                hole_sp = [
-                    (a - eps_s, b + eps_s)
-                    for a, b in _hits_to_spans(
+                spans = _clip_intervals_subtract(
+                    spans,
+                    _hits_to_spans(
                         _poly_line_hits(huv, const=hh, horizontal=True)
-                    )
-                ]
-                spans = _clip_intervals_subtract(spans, hole_sp)
+                    ),
+                )
             for s0, s1 in spans:
                 if s1 < s0:
                     s0, s1 = s1, s0
@@ -1703,7 +2891,25 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
         return L
     if kind == "cylinder":
         L.extend(_emit_cylinder_mesh(face))
-        L.extend(_emit_loop_wire(loops))
+        # Full 360°: each end circle own loop (avoid -- chords between circles)
+        full = abs(float(face.get("th1", 0)) - float(face.get("th0", 0))) > 2 * math.pi - 0.15
+        if full:
+            L.extend(
+                _emit_revolve_wire(
+                    {
+                        "loops": loops,
+                        "axis": face.get("axis") or (0, 0, 1),
+                        "full_turn": True,
+                    }
+                )
+            )
+        else:
+            L.extend(_emit_loop_wire(loops))
+        L.extend(_emit_loop_eq(loops))
+        return L
+    if kind == "revolve":
+        L.extend(_emit_revolve_mesh(face))
+        L.extend(_emit_revolve_wire(face))
         L.extend(_emit_loop_eq(loops))
         return L
     if kind == "ruled":
@@ -1729,16 +2935,97 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
     return L
 
 
-def _emit_loop_wire(loops: list[list[Edge]]) -> list[str]:
-    """Stroke face boundary once (no fill)."""
+def _emit_loop_wire(
+    loops: list[list[Edge]], *, skip_seam_lines: bool = False
+) -> list[str]:
+    """Stroke face boundary once (no fill).
+
+    ``skip_seam_lines``: for full 360° cylinder, drop EdgeLine seams
+    (often duplicated forward/back); keep circles / arcs.
+    """
     if not loops:
         return []
     L = ["  \\begin{stpDwireEnv}"]
     for edges in loops:
         L.append("    \\begin{stpDfaceLoop}")
         for e in edges:
+            if skip_seam_lines and isinstance(e, EdgeLine):
+                continue
             L.append(_emit_edge_tex(e))
         L.append("    \\end{stpDfaceLoop}")
+    L.append("  \\end{stpDwireEnv}")
+    return L
+
+
+def _edge_is_revolve_latitude(edge: Edge, axis: Vec3) -> bool:
+    """True if circular edge lies in a plane ⊥ revolve axis (a parallel)."""
+    info = _circular_lat_info(edge)
+    if info is None:
+        return False
+    _c, n, _r = info
+    return abs(float(n.dot(axis))) > 0.92
+
+
+def _emit_revolve_wire(face: dict[str, Any]) -> list[str]:
+    """Stroke revolve boundary without false chords across full circles.
+
+    Full 360°: each outer latitude Circle is its own loop (chaining two
+    ``EdgeCircle`` in one path draws ``--`` chords between them). Seam
+    meridians omitted; bridge-hole circles still stroked.
+    Partial: outer trim loop (gens + arcs, bridges peeled) + hole loops.
+    """
+    loops = face.get("loops") or []
+    if not loops:
+        return []
+    axis = Vec3(face.get("axis") or (0, 0, 1))
+    if axis.magnitude_square > 1e-18:
+        axis = axis.normalize()
+    full = bool(face.get("full_turn"))
+    origin = Vec3(face["origin"]) if face.get("origin") else None
+    trim = _revolve_trim_loops(loops, origin=origin, axis=axis)
+    L = ["  \\begin{stpDwireEnv}"]
+    if full:
+        seen: set[tuple] = set()
+        # Outer latitudes only (skip seam generators); then hole circles
+        for li, edges in enumerate(trim):
+            for e in edges:
+                if li == 0 and isinstance(e, EdgeLine):
+                    continue
+                if li == 0 and not _edge_is_revolve_latitude(e, axis):
+                    continue  # meridian seam
+                if isinstance(e, EdgeCircle):
+                    key = (
+                        "C",
+                        round(e.center[0], 3),
+                        round(e.center[1], 3),
+                        round(e.center[2], 3),
+                        round(e.radius, 3),
+                    )
+                elif isinstance(e, EdgeArc):
+                    key = (
+                        "A",
+                        round(e.center[0], 3),
+                        round(e.center[1], 3),
+                        round(e.center[2], 3),
+                        round(e.t0, 5),
+                        round(e.t1, 5),
+                    )
+                else:
+                    key = ("E", id(e))
+                if key in seen:
+                    continue
+                seen.add(key)
+                L.append("    \\begin{stpDfaceLoop}")
+                L.append(_emit_edge_tex(e))
+                L.append("    \\end{stpDfaceLoop}")
+    else:
+        for edges in trim:
+            if not edges:
+                continue
+            L.append("    \\begin{stpDfaceLoop}")
+            for e in edges:
+                L.append(_emit_edge_tex(e))
+            L.append("    \\end{stpDfaceLoop}")
     L.append("  \\end{stpDwireEnv}")
     return L
 
@@ -1795,3 +3082,224 @@ def curve_loops_centroid(loops: list[list[Edge]]) -> tuple[float, float, float] 
 def curve_loops_as_polylines(loops: list[list[Edge]], n: int = 32) -> list[list[tuple]]:
     """For mass / legacy callers that still want polylines (not FE export)."""
     return [loop_polyline(edges, n=n) for edges in loops if edges]
+
+
+def _newell_area(pts: list[tuple]) -> float:
+    """Unsigned Newell polygon area in 3D (mm²)."""
+    n = len(pts)
+    if n < 3:
+        return 0.0
+    nx = ny = nz = 0.0
+    for i in range(n):
+        x1, y1, z1 = float(pts[i][0]), float(pts[i][1]), float(pts[i][2])
+        x2, y2, z2 = (
+            float(pts[(i + 1) % n][0]),
+            float(pts[(i + 1) % n][1]),
+            float(pts[(i + 1) % n][2]),
+        )
+        nx += (y1 - y2) * (z1 + z2)
+        ny += (z1 - z2) * (x1 + x2)
+        nz += (x1 - x2) * (y1 + y2)
+    return 0.5 * math.sqrt(nx * nx + ny * ny + nz * nz)
+
+
+def _shoelace2(poly: list[tuple[float, float]]) -> float:
+    """Unsigned 2D shoelace area."""
+    n = len(poly)
+    if n < 3:
+        return 0.0
+    if (
+        abs(poly[0][0] - poly[-1][0]) < 1e-12
+        and abs(poly[0][1] - poly[-1][1]) < 1e-12
+    ):
+        n -= 1
+    if n < 3:
+        return 0.0
+    a = 0.0
+    j = n - 1
+    for i in range(n):
+        a += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1]
+        j = i
+    return abs(a) * 0.5
+
+
+def _tri_area3(a: Sequence[float], b: Sequence[float], c: Sequence[float]) -> float:
+    ab = Vec3(b) - Vec3(a)
+    ac = Vec3(c) - Vec3(a)
+    return 0.5 * ab.cross(ac).magnitude
+
+
+def _planar_loops_area(loops: list[list[Edge]], n: int = 64) -> float:
+    """Outer − holes via Newell (planar / near-planar faces)."""
+    polys = curve_loops_as_polylines(loops, n=n)
+    if not polys or len(polys[0]) < 3:
+        return 0.0
+    area = _newell_area(polys[0])
+    for hole in polys[1:]:
+        if len(hole) >= 3:
+            area -= _newell_area(hole)
+    return max(0.0, area)
+
+
+def _cylinder_loops_th_h(
+    face: dict[str, Any],
+) -> tuple[list[tuple[float, float]], list[list[tuple[float, float]]]] | None:
+    """Outer + hole polygons in (θ, h) for a cylinder face."""
+    origin = Vec3(face["origin"])
+    axis = Vec3(face["axis"])
+    if axis.magnitude_square < 1e-18:
+        return None
+    axis = axis.normalize()
+    u, v = _cyl_basis(axis)
+    loops = face.get("loops") or []
+    if not loops:
+        return None
+
+    def _one(edges: list[Edge]) -> list[tuple[float, float]]:
+        pts3: list[tuple] = []
+        for e in edges:
+            seg = _edge_boundary_samples(e)
+            if not seg:
+                continue
+            if not pts3:
+                pts3.extend(seg)
+            elif pts3[-1] == seg[0]:
+                pts3.extend(seg[1:])
+            else:
+                pts3.extend(seg)
+        pts3 = _uniq_ring(pts3)
+        if len(pts3) < 3:
+            return []
+        raw = [_cyl_th_h(p, origin, axis, u, v) for p in pts3]
+        ths = _unwrap_theta_chain([t for t, _ in raw])
+        return list(zip(ths, [h for _, h in raw]))
+
+    uvs = [_one(edges) for edges in loops]
+    uvs = [uv for uv in uvs if len(uv) >= 3]
+    if not uvs:
+        return None
+    uvs.sort(key=len, reverse=True)
+    return uvs[0], uvs[1:]
+
+
+def _cylinder_surface_area(face: dict[str, Any]) -> float:
+    """Mantle area = r · Area(θ,h), outer minus holes."""
+    r = float(face.get("radius") or 0.0)
+    if r <= 1e-12:
+        return 0.0
+    packed = _cylinder_loops_th_h(face)
+    if packed is None:
+        # Fallback: full rectangular sector from mesh params
+        th0 = float(face.get("th0", -math.pi))
+        th1 = float(face.get("th1", math.pi))
+        h0 = float(face.get("h0", 0.0))
+        h1 = float(face.get("h1", 0.0))
+        return r * abs(th1 - th0) * abs(h1 - h0)
+    outer, holes = packed
+    area_th = _shoelace2(outer)
+    for h in holes:
+        area_th -= _shoelace2(h)
+    return max(0.0, r * area_th)
+
+
+def _ruled_surface_area(
+    loops: list[list[Edge]], n_s: int = 48, n_h: int = 24
+) -> float:
+    """Ruled / extrusion strip area via (s,t) grid, clipped to SAB trim + holes."""
+    if not loops:
+        return 0.0
+    edges = loops[0]
+    rails = _extract_extrusion_rails(edges, n_rail=max(32, n_s))
+    if rails is None and _is_ruled_loop(edges):
+        eds = list(edges)
+        if isinstance(eds[0], EdgeLine):
+            eds = eds[1:] + eds[:1]
+        A = _edge_samples(eds[0], n=n_s)
+        B = _edge_samples(eds[2], n=n_s)
+        if len(A) < 2 or len(B) < 2:
+            return _planar_loops_area(loops)
+        if Vec3(B[0]).distance(Vec3(A[0])) > Vec3(B[-1]).distance(Vec3(A[0])):
+            B = list(reversed(B))
+        A, B = _resample_polyline(A, n_s), _resample_polyline(B, n_s)
+        axis = Vec3(B[len(A) // 2]) - Vec3(A[len(A) // 2])
+        if axis.magnitude_square < 1e-18:
+            return _planar_loops_area(loops)
+        axis = axis.normalize()
+    elif rails is None:
+        return _planar_loops_area(loops)
+    else:
+        A, B, axis = rails
+        A, B = _resample_polyline(A, n_s), _resample_polyline(B, n_s)
+
+    n = min(len(A), len(B))
+    if n < 2:
+        return _planar_loops_area(loops)
+    A, B = A[:n], B[:n]
+    hA = float(Vec3(A[0]).dot(axis))
+    hB = float(Vec3(B[0]).dot(axis))
+    outer_uv = _ruled_param_poly(edges, A, axis)
+    hole_uvs = [
+        huv
+        for hole in loops[1:]
+        if len(huv := _ruled_param_poly(hole, A, axis)) >= 3
+    ]
+    use_clip = len(outer_uv) >= 3
+
+    def _at(s: float, t: float) -> tuple:
+        s = max(0.0, min(1.0, s))
+        t = max(0.0, min(1.0, t))
+        i = min(n - 2, int(s * (n - 1)))
+        u = s * (n - 1) - i
+        pa = Vec3(A[i]) * (1.0 - u) + Vec3(A[i + 1]) * u
+        pb = Vec3(B[i]) * (1.0 - u) + Vec3(B[i + 1]) * u
+        return _v3(pa * (1.0 - t) + pb * t)
+
+    area = 0.0
+    for i in range(n_s):
+        s0, s1 = i / n_s, (i + 1) / n_s
+        for j in range(n_h):
+            t0, t1 = j / n_h, (j + 1) / n_h
+            sc, tc = 0.5 * (s0 + s1), 0.5 * (t0 + t1)
+            if use_clip:
+                hc = hA + (hB - hA) * tc
+                if not _sh_inside(sc, hc, outer_uv, hole_uvs):
+                    continue
+            p00, p10 = _at(s0, t0), _at(s1, t0)
+            p01, p11 = _at(s0, t1), _at(s1, t1)
+            area += _tri_area3(p00, p10, p11) + _tri_area3(p00, p11, p01)
+    return max(0.0, area)
+
+
+def _revolve_surface_area(face: dict[str, Any]) -> float:
+    """Revolve mantle ≈ ∫ 2π_frac · ρ ds along profile (mm²)."""
+    profile = face.get("profile") or []
+    if len(profile) < 2:
+        return _planar_loops_area(face.get("loops") or [])
+    th0, th1 = float(face.get("th0", -math.pi)), float(face.get("th1", math.pi))
+    frac = abs(th1 - th0)
+    if frac < 1e-9:
+        return 0.0
+    area = 0.0
+    for i in range(len(profile) - 1):
+        h0, r0 = profile[i]
+        h1, r1 = profile[i + 1]
+        ds = math.hypot(h1 - h0, r1 - r0)
+        rho = 0.5 * (abs(r0) + abs(r1))
+        area += rho * ds * frac
+    return max(0.0, area)
+
+
+def analytic_face_area_mm2(face: dict[str, Any]) -> float:
+    """Shell mid-surface area (mm²) for mass: plane / cylinder / ruled / fallback."""
+    loops = face.get("loops") or []
+    kind = face.get("kind")
+    if kind == "cylinder":
+        return _cylinder_surface_area(face)
+    if kind == "revolve":
+        return _revolve_surface_area(face)
+    if kind == "ruled":
+        return _ruled_surface_area(loops)
+    if kind in ("plane", "region"):
+        return _planar_loops_area(loops)
+    # wire / unknown: boundary Newell (OK near-planar; underestimates freeform)
+    return _planar_loops_area(loops)

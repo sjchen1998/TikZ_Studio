@@ -287,18 +287,37 @@ def accumulate_from_dxf(
         mass += v * dens
         n_beam += 1
 
+    # Modern *SURFACE + classic shells (thickness×mid-surface area)
+    _SHELL_TYPES = (
+        "REGION",
+        "SURFACE",
+        "EXTRUDEDSURFACE",
+        "PLANESURFACE",
+        "LOFTEDSURFACE",
+        "REVOLVEDSURFACE",
+        "SWEPTSURFACE",
+        "NURBSSURFACE",
+        "3DSOLID",
+        "BODY",
+        "3DFACE",
+        "MESH",
+        "LWPOLYLINE",
+        "CIRCLE",
+        "ELLIPSE",
+        "HATCH",
+    )
+    from .cae_face_curves import (
+        analytic_face_area_mm2,
+        analytic_faces_from_entity,
+        curve_loops_as_polylines,
+    )
+
     for e in msp:
         layer = (e.dxf.layer or "").upper()
         if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
             continue
-        if e.dxftype() not in (
-            "REGION",
-            "SURFACE",
-            "3DSOLID",
-            "3DFACE",
-            "MESH",
-            "LWPOLYLINE",
-        ):
+        et = e.dxftype()
+        if et not in _SHELL_TYPES and not str(et).endswith("SURFACE"):
             continue
         try:
             tags = e.get_xdata("MY_CAE_SHELL_PROP")
@@ -308,24 +327,27 @@ def accumulate_from_dxf(
         if not prop:
             continue
         thick, mat = prop
-        if face_loops_fn is None:
-            skipped += 1
-            continue
-        raw = face_loops_fn(e) or []
-        # Accept polyline loops or curve-edge loops (via curve_loops_as_polylines)
-        if raw and raw[0] and hasattr(raw[0][0], "kind"):
-            from .cae_face_curves import curve_loops_as_polylines
-
-            loops = curve_loops_as_polylines(raw)
-        else:
-            loops = raw
-        # Outer minus holes (outer first, then holes)
-        if not loops:
-            skipped += 1
-            continue
-        area = abs(polygon_area_3d(loops[0]))
-        for hole in loops[1:]:
-            area -= abs(polygon_area_3d(hole))
+        area = 0.0
+        # Prefer per-SAB-face analytic area (plane / cylinder / ruled; multi-face OK)
+        try:
+            for face in analytic_faces_from_entity(e):
+                a = analytic_face_area_mm2(face)
+                if a > 0:
+                    area += a
+        except Exception:
+            area = 0.0
+        # Fallback: legacy polyline loops (MESH / 3DFACE / …)
+        if area <= 0 and face_loops_fn is not None:
+            raw = face_loops_fn(e) or []
+            if raw and raw[0] and hasattr(raw[0][0], "kind"):
+                loops = curve_loops_as_polylines(raw)
+            else:
+                loops = raw
+            if loops:
+                area = abs(polygon_area_3d(loops[0]))
+                for hole in loops[1:]:
+                    area -= abs(polygon_area_3d(hole))
+                area = max(0.0, area)
         if area <= 0:
             skipped += 1
             continue

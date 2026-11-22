@@ -210,7 +210,7 @@ SETSEC / DELSEC
   & Section type, material, orientation, offset \\
 SETSHELLLOAD / DELSHELLLOAD
   & Shell edge line load or face pressure/force \\
-SETSHELL & Shell theory, thickness, offset, material \\
+SETSHELLSEC & Shell section: theory, thickness, offset, material \\
 ADDSHELLBC / DELSHELLBC
   & Edge or face shell BC \\
 SETSPOTWELD / DELSPOTWELD
@@ -320,7 +320,7 @@ Pipes/circles and rods skip orientation/offset in the stored frame.
 Supported host types (loads/props/BC): \texttt{MESH}, \texttt{REGION},
 \texttt{SURFACE}, \texttt{3DSOLID}, \texttt{3DFACE}, \texttt{LWPOLYLINE}.
 
-\subsection{\cadcmd{SETSHELL}}
+\subsection{\cadcmd{SETSHELLSEC}}
 Writes \appid{MY\_CAE\_SHELL\_PROP} and geometry helper
 \appid{MY\_CAE\_SHELL\_GEOM}:
 \begin{itemize}[nosep]
@@ -411,7 +411,7 @@ so deletions stay consistent in both directions.
 \begin{enumerate}[nosep]
   \item Model geometry in millimetres; keep OSNAP on for ends and edges.
   \item \cadcmd{SETBEAM}/\cadcmd{SETROD} as needed; \cadcmd{SETSEC} /
-        \cadcmd{SETSHELL} for properties.
+        \cadcmd{SETSHELLSEC} for properties.
   \item Apply loads and BCs; use edge/face shell restraints rather than
         single vertices.
   \item Adjust symbol size with \cadcmd{SETSCALE}; hide clutter with
