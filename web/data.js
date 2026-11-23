@@ -84,7 +84,7 @@ const TPLS = {
 \end{tikzpicture}`,
   struct3d: String.raw`% Auto-generated from 3d_examlpe_hole.dxf
 % Drawing scale 1:50 (projected 480.8×334.8 cm @1:1 → A0 84.1×118.9 cm; ladder 1…5000)
-\stpDsetView{1}{-1}{1}
+\stpDsetView{1}{-0.35}{0.85}
 \stpDsetAxis{xyz}
 \renewcommand{\stpDscale}{0.002}
 \renewcommand{\stpDsupLen}{0.35}
@@ -133,6 +133,14 @@ const TPLS = {
   \stpDpoint{N37}{600.0000}{6000.0000}{0.0000}
   \stpDpoint{N38}{800.0000}{6000.0000}{0.0000}
   \stpDaxis{N0}
+  \begin{stpDfaceEnv}
+    \begin{stpDfaceLoop}
+      \stpDedgeLine{0,5000,1200}{0,1000,1200}
+      \stpDedgeLine{0,1000,1200}{0,1000,0}
+      \stpDedgeLine{0,1000,0}{0,5000,0}
+      \stpDedgeLine{0,5000,0}{0,5000,1200}
+    \end{stpDfaceLoop}
+  \end{stpDfaceEnv}
   \stpDmember{beam}{N0}{N4}  % sec=Circle D50 Q355B
   \stpDmember{beam}{N4}{N10}  % sec=Circle D50 Q355B
   \stpDmember{beam}{N10}{N16}  % sec=Circle D50 Q355B
@@ -229,59 +237,18 @@ const TPLS = {
   \end{stpDfaceEnv}
   \begin{stpDfaceEnv}
     \begin{stpDfaceLoop}
-      \stpDedgeLine{0,5000,1200}{0,1000,1200}
-      \stpDedgeLine{0,1000,1200}{0,1000,0}
-      \stpDedgeLine{0,1000,0}{0,5000,0}
-      \stpDedgeLine{0,5000,0}{0,5000,1200}
+      \stpDedgeLine{800,1000,0}{800,5000,0}
+      \stpDedgeLine{800,5000,0}{800,5000,1200}
+      \stpDedgeLine{800,5000,1200}{800,1000,1200}
+      \stpDedgeLine{800,1000,1200}{800,1000,0}
+    \end{stpDfaceLoop}
+    \begin{stpDfaceLoop}
+      \stpDedgeLine{800,1200,1000}{800,2800,1000}
+      \stpDedgeLine{800,2800,1000}{800,2800,200}
+      \stpDedgeLine{800,2800,200}{800,1200,200}
+      \stpDedgeLine{800,1200,200}{800,1200,1000}
     \end{stpDfaceLoop}
   \end{stpDfaceEnv}
-  \stpDmeshSeg{800,4428.57,1195.2}{800,4428.57,4.8}
-  \stpDmeshSeg{800,3857.14,1195.2}{800,3857.14,4.8}
-  \stpDmeshSeg{800,3285.71,1195.2}{800,3285.71,4.8}
-  \stpDmeshSeg{800,2714.29,1195.2}{800,2714.29,1004.8}
-  \stpDmeshSeg{800,2714.29,195.2}{800,2714.29,4.8}
-  \stpDmeshSeg{800,2142.86,1195.2}{800,2142.86,1004.8}
-  \stpDmeshSeg{800,2142.86,195.2}{800,2142.86,4.8}
-  \stpDmeshSeg{800,1571.43,1195.2}{800,1571.43,1004.8}
-  \stpDmeshSeg{800,1571.43,195.2}{800,1571.43,4.8}
-  \stpDmeshSeg{800,4984,1028.57}{800,1016,1028.57}
-  \stpDmeshSeg{800,4984,857.143}{800,2816,857.143}
-  \stpDmeshSeg{800,1184,857.143}{800,1016,857.143}
-  \stpDmeshSeg{800,4984,685.714}{800,2816,685.714}
-  \stpDmeshSeg{800,1184,685.714}{800,1016,685.714}
-  \stpDmeshSeg{800,4984,514.286}{800,2816,514.286}
-  \stpDmeshSeg{800,1184,514.286}{800,1016,514.286}
-  \stpDmeshSeg{800,4984,342.857}{800,2816,342.857}
-  \stpDmeshSeg{800,1184,342.857}{800,1016,342.857}
-  \stpDmeshSeg{800,4984,171.429}{800,1016,171.429}
-  \begin{stpDwireEnv}
-    \begin{stpDfaceLoop}
-      \stpDedgeLine{800,1000,0}{800,5000,0}
-      \stpDedgeLine{800,5000,0}{800,5000,1200}
-      \stpDedgeLine{800,5000,1200}{800,1000,1200}
-      \stpDedgeLine{800,1000,1200}{800,1000,0}
-    \end{stpDfaceLoop}
-    \begin{stpDfaceLoop}
-      \stpDedgeLine{800,1200,1000}{800,2800,1000}
-      \stpDedgeLine{800,2800,1000}{800,2800,200}
-      \stpDedgeLine{800,2800,200}{800,1200,200}
-      \stpDedgeLine{800,1200,200}{800,1200,1000}
-    \end{stpDfaceLoop}
-  \end{stpDwireEnv}
-  \begin{stpDruledEq}
-    \begin{stpDruledRail}
-      \stpDedgeLine{800,1000,0}{800,5000,0}
-      \stpDedgeLine{800,5000,0}{800,5000,1200}
-      \stpDedgeLine{800,5000,1200}{800,1000,1200}
-      \stpDedgeLine{800,1000,1200}{800,1000,0}
-    \end{stpDruledRail}
-    \begin{stpDruledRail}
-      \stpDedgeLine{800,1200,1000}{800,2800,1000}
-      \stpDedgeLine{800,2800,1000}{800,2800,200}
-      \stpDedgeLine{800,2800,200}{800,1200,200}
-      \stpDedgeLine{800,1200,200}{800,1200,1000}
-    \end{stpDruledRail}
-  \end{stpDruledEq}
   \stpDsupport{pin}{N35}[1][0][1][0][0][0]  % BC GLOBAL[101000]
   \stpDsupport{pin}{N38}[1][0][1][0][0][0]  % BC GLOBAL[101000]
   \stpDsupport{pin}{N0}[1][1][1][1][1][1]  % BC GLOBAL[111111]
@@ -304,9 +271,9 @@ const TPLS = {
   \node[stpLabel, below right=1.5mm] at (N3) {$B$};
   \node[stpLabel, above left=1.5mm] at (N35) {$D$};
   \node[stpLabel, above right=1.5mm] at (N38) {$C$};
-  \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}[$L_x=800\,\mathrm{mm}$]
-  \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}[$L_y=6000\,\mathrm{mm}$]
-  \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}[$L_z=1200\,\mathrm{mm}$]
+  \stpDdimEnv{x}{0.0000}{0.0000}{0.0000}{800.0000}(0.95cm)[$L_x=800\,\mathrm{mm}$]
+  \stpDdimEnv{y}{0.0000}{0.0000}{0.0000}{6000.0000}(0.95cm)[$L_y=6000\,\mathrm{mm}$]
+  \stpDdimEnv{z}{0.0000}{0.0000}{0.0000}{1200.0000}(0.95cm)[$L_z=1200\,\mathrm{mm}$]
   % Structure mass properties (UR of current figure bbox)
   \stpStructInfo{$V=2.19\times 10^{-1}\,\mathrm{m}^{3}$}{$m=1.72\,\mathrm{t}$}
 \end{tikzpicture}`,
