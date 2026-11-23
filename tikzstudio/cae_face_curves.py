@@ -1877,7 +1877,9 @@ def analytic_faces_from_entity(e) -> list[dict[str, Any]]:
     """Primary export API — two display paths (AutoCAD-like):
 
     - REGION / planar curve entities → ``kind=region`` (even-odd fill, no mesh)
-    - SURFACE / 3DSOLID / BODY → cylinder / ruled / plane mesh + wire
+    - SURFACE / 3DSOLID / BODY → cylinder / ruled / plane / revolve.
+      A non-region face whose boundary curves are coplanar is filled like
+      REGION when emitted (see ``format_stp_analytic_face``).
     """
     t = e.dxftype()
     if t == "REGION":
@@ -2161,6 +2163,44 @@ def _unwrap_theta_chain(ths: list[float]) -> list[float]:
     return out
 
 
+def _boundary_polylines(loops: list[list[Edge]]) -> list[list[tuple]]:
+    """One sample polyline per SAB edge, for snapping isoline tips."""
+    out: list[list[tuple]] = []
+    for lp in loops:
+        for e in lp:
+            seg = _edge_boundary_samples(e)
+            if len(seg) >= 2:
+                out.append(seg)
+    return out
+
+
+def _snap_point_to_polylines(
+    p: tuple, polylines: list[list[tuple]], tol: float
+) -> tuple:
+    """Project p onto the nearest boundary segment, if it lies within tol."""
+    if tol <= 0 or not polylines:
+        return p
+    pv = Vec3(p)
+    best = p
+    best_d = 1e300
+    for seg in polylines:
+        for i in range(len(seg) - 1):
+            a = Vec3(seg[i])
+            b = Vec3(seg[i + 1])
+            ab = b - a
+            L2 = ab.magnitude_square
+            if L2 < 1e-24:
+                q = a
+            else:
+                t = max(0.0, min(1.0, float((pv - a).dot(ab) / L2)))
+                q = a + ab * t
+            d = pv.distance(q)
+            if d < best_d:
+                best_d = d
+                best = _v3(q)
+    return best if best_d <= tol else p
+
+
 def _cylinder_mesh_segs(
     face: dict[str, Any],
     ngen: int = _CYL_MESH_GEN,
@@ -2225,24 +2265,43 @@ def _cylinder_mesh_segs(
         )
         return _v3(p)
 
+    bd = _boundary_polylines(loops)
+    flat = [p for seg in bd for p in seg]
+    snap_tol = 0.0
+    if flat:
+        xs = [p[0] for p in flat]
+        ys = [p[1] for p in flat]
+        zs = [p[2] for p in flat]
+        diag = math.hypot(
+            max(xs) - min(xs),
+            math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
+        )
+        snap_tol = max(1.0, 0.02 * diag)
+
+    def _tip(p: tuple) -> tuple:
+        return _snap_point_to_polylines(p, bd, snap_tol)
+
     def _emit_spans(
         spans: list[tuple[float, float]], *, horizontal: bool, const: float
     ) -> None:
         # horizontal=True: const is h, spans are theta — sample the CIRCULAR
         # arc (not a single chord). Generators stay straight in h.
+        # Only the span tips are snapped; chord joints stay on the cylinder.
         for a, b in spans:
             if b - a < 1e-7:
                 continue
             if horizontal:
                 nsub = max(8, int(round(abs(b - a) / (2 * math.pi) * 48)))
-                prev = _to_xyz(a, const)
-                for s in range(1, nsub + 1):
-                    th = a + (b - a) * s / nsub
-                    cur = _to_xyz(th, const)
-                    segs.append((prev, cur))
-                    prev = cur
+                pts = [
+                    _to_xyz(a + (b - a) * s / nsub, const) for s in range(nsub + 1)
+                ]
+                pts[0] = _tip(pts[0])
+                pts[-1] = _tip(pts[-1])
+                for s in range(nsub):
+                    if Vec3(pts[s]).distance(Vec3(pts[s + 1])) > 1e-9:
+                        segs.append((pts[s], pts[s + 1]))
             else:
-                segs.append((_to_xyz(const, a), _to_xyz(const, b)))
+                segs.append((_tip(_to_xyz(const, a)), _tip(_to_xyz(const, b))))
 
     def _clipped(
         outer_hits: list[float],
@@ -2253,14 +2312,12 @@ def _cylinder_mesh_segs(
             spans = _clip_intervals_subtract(spans, _hits_to_spans(hh))
         return spans
 
-    # Generators: constant θ (vertical in (θ,h) → horizontal=False)
+    # Generators: constant θ. Skip θ = th_min/th_max — those are the
+    # boundary meridians already stroked in red. Extra samples near one
+    # end stacked a second bundle of lines on top of that edge.
     th_samples = [
-        th_min + (th_max - th_min) * k / max(ngen, 1) for k in range(ngen + 1)
+        th_min + (th_max - th_min) * k / max(ngen, 1) for k in range(1, max(ngen, 1))
     ]
-    span = th_max - th_min
-    if span > 1e-6:
-        for f in (0.92, 0.96, 0.98):
-            th_samples.append(th_min + span * f)
     for th in th_samples:
         spans = _clipped(
             _poly_line_hits(best, const=th, horizontal=False),
@@ -2270,29 +2327,12 @@ def _cylinder_mesh_segs(
             ],
         )
         _emit_spans(spans, horizontal=False, const=th)
-    # Rings: constant h (skip exact ends — boundary wire draws those)
+    # Rings: constant h (skip exact ends — boundary wire draws those).
+    # Do not add a second set from partial arcs; that redrew full rings
+    # on top of this grid.
     h_samples = [
         h_min + (h_max - h_min) * k / nring for k in range(1, max(nring, 1))
     ]
-    for edges in loops:
-        for e in edges:
-            if isinstance(e, EdgeLine):
-                continue
-            hs_e = [
-                float((Vec3(p) - origin).dot(axis))
-                for p in _edge_samples(e, n=8)
-            ]
-            if len(hs_e) < 2:
-                continue
-            lo, hi = min(hs_e), max(hs_e)
-            if not (h_min + 1e-3 < lo and hi < h_max - 1e-3):
-                continue
-            if hi - lo < 1e-3:
-                h_samples.append(0.5 * (lo + hi))
-            else:
-                h_samples.extend(
-                    [lo + (hi - lo) * t for t in (0.25, 0.5, 0.75)]
-                )
     for hh in h_samples:
         spans = _clipped(
             _poly_line_hits(best, const=hh, horizontal=True),
@@ -2303,54 +2343,7 @@ def _cylinder_mesh_segs(
         )
         _emit_spans(spans, horizontal=True, const=hh)
 
-    # Drop fragments that leave the SAB trim in (θ, h), including holes
-    def _th_in(p: tuple) -> bool:
-        th, hh = _cyl_th_h(p, origin, axis, u, v)
-        while th < th_min - 1e-9:
-            th += 2 * math.pi
-        while th > th_max + 1e-9:
-            th -= 2 * math.pi
-        if not _pip2(th, hh, best):
-            return False
-        for huv in hole_uvs:
-            if _pip2(th, hh, huv):
-                return False
-        return True
-
-    kept: list[tuple[tuple, tuple]] = []
-    for a, b in segs:
-        va, vb = Vec3(a), Vec3(b)
-        if va.distance(vb) < 1e-12:
-            continue
-        fa, fb = _th_in(a), _th_in(b)
-        mid = _v3(va * 0.5 + vb * 0.5)
-        fm = _th_in(mid)
-        if fa and fb and fm:
-            kept.append((a, b))
-            continue
-        if not fa and not fb and not fm:
-            continue
-        nsub = 8
-        flags: list[bool] = []
-        pts: list[tuple] = []
-        for k in range(nsub + 1):
-            t = k / nsub
-            p = _v3(va * (1.0 - t) + vb * t)
-            pts.append(p)
-            flags.append(_th_in(p))
-        i = 0
-        while i <= nsub:
-            while i <= nsub and not flags[i]:
-                i += 1
-            if i > nsub:
-                break
-            j = i
-            while j <= nsub and flags[j]:
-                j += 1
-            if j - 1 > i:
-                kept.append((pts[i], pts[j - 1]))
-            i = j
-    return kept
+    return segs
 
 
 def _emit_cylinder_mesh(face: dict[str, Any]) -> list[str]:
@@ -2799,11 +2792,27 @@ def _ruled_mesh_segs(
         return _v3(pa * (1.0 - t) + pb * t)
 
     segs: list[tuple[tuple, tuple]] = []
+    bd = _boundary_polylines(loops)
+    flat = [p for seg in bd for p in seg]
+    snap_tol = 0.0
+    if flat:
+        xs = [p[0] for p in flat]
+        ys = [p[1] for p in flat]
+        zs = [p[2] for p in flat]
+        diag = math.hypot(
+            max(xs) - min(xs),
+            math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
+        )
+        snap_tol = max(1.0, 0.02 * diag)
+
+    def _tip(p: tuple) -> tuple:
+        return _snap_point_to_polylines(p, bd, snap_tol)
 
     # Use (s, h) clipping when we have a reliable param polygon from SAB edges
     use_clip = len(outer_uv) >= 3
     if use_clip:
-        # Exact trim hits — no cosmetic inset
+        # Exact trim hits. Do not PIP-chop afterwards: endpoints that lie on
+        # the polygon were classed as outside and the generator lost its tip.
         for k in range(1, n_gen):
             s = k / n_gen
             spans = _hits_to_spans(
@@ -2823,7 +2832,7 @@ def _ruled_mesh_segs(
                 t1 = max(0.0, min(1.0, (hb - hA) / (hB - hA)))
                 if abs(t1 - t0) < 1e-7:
                     continue
-                segs.append((_at(s, t0), _at(s, t1)))
+                segs.append((_tip(_at(s, t0)), _tip(_at(s, t1))))
         # Latitudes: constant h (skip exact rail ends) — curved rail lerp
         for k in range(1, n_lat):
             t = k / n_lat
@@ -2843,18 +2852,16 @@ def _ruled_mesh_segs(
                     s0, s1 = s1, s0
                 if s1 - s0 < 1e-7:
                     continue
-                # Dense samples along s so endpoints sit on the trim
                 n_sub = max(8, int(round((s1 - s0) * (n - 1))) + 1)
-                prev = _at(s0, t)
-                for j in range(1, n_sub + 1):
-                    sj = s0 + (s1 - s0) * j / n_sub
-                    cur = _at(sj, t)
-                    if Vec3(prev).distance(Vec3(cur)) > 1e-9:
-                        segs.append((prev, cur))
-                    prev = cur
-        # Second pass: drop fragments that still leave the SAB trim
-        # (nearest-s on complex intersection curves can slightly overshoot)
-        return _clip_segs_to_sh(segs, A, axis, outer_uv, hole_uvs)
+                pts = [
+                    _at(s0 + (s1 - s0) * j / n_sub, t) for j in range(n_sub + 1)
+                ]
+                pts[0] = _tip(pts[0])
+                pts[-1] = _tip(pts[-1])
+                for j in range(n_sub):
+                    if Vec3(pts[j]).distance(Vec3(pts[j + 1])) > 1e-9:
+                        segs.append((pts[j], pts[j + 1]))
+        return segs
 
     # Unclipped fallback (simple strip)
     for k in range(1, n_gen):
@@ -2880,13 +2887,178 @@ def _emit_ruled_mesh(loops: list[list[Edge]]) -> list[str]:
     return L
 
 
+# Spline whose control points do not lie in one plane (the curve leaves every plane).
+_NONPLANAR = object()
+
+
+def _bbox_diag(pts: list[Vec3]) -> float:
+    if len(pts) < 2:
+        return 1.0
+    xs = [p.x for p in pts]
+    ys = [p.y for p in pts]
+    zs = [p.z for p in pts]
+    return max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs), 1.0)
+
+
+def _dist_plane(p: Vec3, origin: Vec3, normal: Vec3) -> float:
+    return abs((p - origin).dot(normal))
+
+
+def _plane_from_points(pts: list[Vec3], tol: float):
+    """Plane through three non-collinear points. None when the set is straight."""
+    if len(pts) < 3:
+        return None
+    origin = pts[0]
+    for i in range(len(pts)):
+        d1 = pts[i] - origin
+        if d1.magnitude <= tol:
+            continue
+        for j in range(i + 1, len(pts)):
+            d2 = pts[j] - origin
+            cross = d1.cross(d2)
+            scale = max(d1.magnitude, d2.magnitude, 1.0)
+            if cross.magnitude > tol * scale:
+                return origin, cross.normalize()
+    return None
+
+
+def _edge_scale_points(edge: Edge) -> list[Vec3]:
+    if isinstance(edge, EdgeLine):
+        return [Vec3(edge.a), Vec3(edge.b)]
+    if isinstance(edge, EdgeCircle):
+        return [Vec3(edge.center)]
+    if isinstance(edge, EdgeArc):
+        return [Vec3(edge.center), Vec3(edge.center) + Vec3(edge.major)]
+    if isinstance(edge, EdgeSpline):
+        return [Vec3(p) for p in edge.cps]
+    return []
+
+
+def _curve_plane(edge: Edge, tol: float):
+    """Plane the curve itself spans, or None if it is straight.
+
+    ``_NONPLANAR`` means the curve (spline control polygon) is not planar,
+    so no common face plane can contain it.
+    """
+    if isinstance(edge, EdgeCircle):
+        nrm = Vec3(edge.normal)
+        if abs(float(edge.radius)) <= tol or nrm.magnitude_square < 1e-30:
+            return None
+        return Vec3(edge.center), nrm.normalize()
+    if isinstance(edge, EdgeArc):
+        major = Vec3(edge.major)
+        nrm = Vec3(edge.normal)
+        if major.magnitude <= tol or nrm.magnitude_square < 1e-30:
+            return None
+        # P(t) = C + cos(t)*major + sin(t)*ratio*(n̂ × major)
+        minor = nrm.normalize().cross(major) * float(edge.ratio)
+        if minor.magnitude <= tol:
+            return None
+        nn = major.cross(minor)
+        if nn.magnitude <= tol * max(major.magnitude, minor.magnitude, 1.0):
+            return None
+        return Vec3(edge.center), nn.normalize()
+    if isinstance(edge, EdgeSpline):
+        cps = [Vec3(p) for p in edge.cps]
+        plane = _plane_from_points(cps, tol)
+        if plane is None:
+            return None
+        origin, normal = plane
+        if any(_dist_plane(p, origin, normal) > tol for p in cps):
+            return _NONPLANAR
+        return plane
+    return None
+
+
+def _curve_lies_in_plane(edge: Edge, origin: Vec3, normal: Vec3, tol: float) -> bool:
+    """Whole curve in the plane — not a sample of points on the curve.
+
+    A line is the segment between its ends. An arc/circle lies in the plane
+    only when its own axes do. A spline lies in the plane only when every
+    control point does (the curve is an affine combination of them).
+    """
+    if isinstance(edge, EdgeLine):
+        return (
+            _dist_plane(Vec3(edge.a), origin, normal) <= tol
+            and _dist_plane(Vec3(edge.b), origin, normal) <= tol
+        )
+    if isinstance(edge, EdgeCircle):
+        nrm = Vec3(edge.normal)
+        if nrm.magnitude_square < 1e-30:
+            return _dist_plane(Vec3(edge.center), origin, normal) <= tol
+        # Rim leaves the plane by r*|n̂ × N| when the circle plane is tilted.
+        lift = abs(float(edge.radius)) * nrm.normalize().cross(normal).magnitude
+        return _dist_plane(Vec3(edge.center), origin, normal) <= tol and lift <= tol
+    if isinstance(edge, EdgeArc):
+        major = Vec3(edge.major)
+        nrm = Vec3(edge.normal)
+        if nrm.magnitude_square < 1e-30 or major.magnitude_square < 1e-30:
+            return _dist_plane(Vec3(edge.center), origin, normal) <= tol
+        minor = nrm.normalize().cross(major) * float(edge.ratio)
+        return (
+            _dist_plane(Vec3(edge.center), origin, normal) <= tol
+            and abs(major.dot(normal)) <= tol
+            and abs(minor.dot(normal)) <= tol
+        )
+    if isinstance(edge, EdgeSpline):
+        return all(
+            _dist_plane(Vec3(p), origin, normal) <= tol for p in edge.cps
+        )
+    return False
+
+
+def loops_are_coplanar(loops: list[list[Edge]]) -> bool:
+    """True when every boundary curve lies in one common plane.
+
+    The plane is taken from a circle/arc's own plane or from a spline's
+    control points. Sample points on a curve are never used: coplanar
+    samples do not imply a coplanar curve.
+    """
+    edges: list[Edge] = [e for lp in (loops or []) for e in lp]
+    if not edges:
+        return False
+    scale_pts: list[Vec3] = []
+    for e in edges:
+        scale_pts.extend(_edge_scale_points(e))
+    tol = max(1e-4, 1e-6 * _bbox_diag(scale_pts))
+    candidates: list[tuple[Vec3, Vec3]] = []
+    for e in edges:
+        owned = _curve_plane(e, tol)
+        if owned is _NONPLANAR:
+            return False
+        if owned is not None:
+            candidates.append(owned)
+    if not candidates:
+        anchors: list[Vec3] = []
+        for e in edges:
+            if isinstance(e, EdgeLine):
+                anchors.append(Vec3(e.a))
+                anchors.append(Vec3(e.b))
+            elif isinstance(e, EdgeSpline):
+                anchors.extend(Vec3(p) for p in e.cps)
+        plane = _plane_from_points(anchors, tol)
+        if plane is None:
+            return False
+        candidates.append(plane)
+    for origin, normal in candidates:
+        if all(_curve_lies_in_plane(e, origin, normal, tol) for e in edges):
+            return True
+    return False
+
+
 def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
-    """Emit face TeX: REGION → fill; SURFACE/solid → mesh + wire + FE eq."""
+    """REGION, or any face whose boundary curves are coplanar → even-odd fill.
+
+    REGION is already a planar face and is not retested. Other kinds use the
+    region fill when ``loops_are_coplanar`` holds; curved shells keep the
+    mesh, red wire, and FE edge equations.
+    """
     loops = face.get("loops") or []
     kind = face.get("kind")
     L: list[str] = []
-    # Planar REGION / closed curves: even-odd fill (holes), compact TeX
-    if kind == "region":
+    # Planar REGION / closed curves: even-odd fill (holes), compact TeX.
+    # Coplanar SURFACE boundaries take the same path (curve test, not samples).
+    if kind == "region" or loops_are_coplanar(loops):
         L.extend(format_stp_dface_curves(loops))
         return L
     if kind == "cylinder":
@@ -2918,7 +3090,7 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
         L.extend(_emit_loop_eq(loops))
         return L
     if kind == "plane":
-        # Planar face on SURFACE/3DSOLID — AutoCAD-style isolines
+        # Boundary curves were not coplanar — keep the UV isoline mesh.
         L.extend(
             _emit_plane_mesh(
                 loops,

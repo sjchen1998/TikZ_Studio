@@ -288,6 +288,7 @@ function planDrag(c, dwx, dwy, sn) {
 function pointText(c, fx, fy) {
   if (c.stp === 'node') return `${+Number(fx).toFixed(4)},${+Number(fy).toFixed(4)}`;
   if (c.stp === 'point') return `${+Number(fx).toFixed(4)}}{${+Number(fy).toFixed(4)}`;
+  if (c.stp === 'dpoint') return `${+Number(fx).toFixed(4)}}{${+Number(fy).toFixed(4)}}{${+Number(c.z || 0).toFixed(4)}`;
   if (c.kind === 'anchor') return `($(${c.base})+(${fx},${fy})$)`;
   if (c.kind === 'lerp') return `!${fx}!`;
   if (c.kind === 'polar') return `(${+Number(fx).toFixed(2)}:${fmtNum(fy, c.uy)})`;

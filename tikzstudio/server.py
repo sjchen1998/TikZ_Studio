@@ -570,6 +570,21 @@ def add_paths(code, pts, probes, used, spans, ranges, resolved):
             rot, m.start(), _at(spans, m.start())[0],
         )
 
+def _stp_dscale(code: str) -> float:
+    """Model→TikZ factor from ``\\renewcommand{\\stpDscale}{...}``. Default 1."""
+    m = re.search(
+        r'\\(?:renewcommand|newcommand|def)\s*\{\s*\\stpDscale\s*\}\s*\{\s*([-+]?\d*\.?\d+)\s*\}',
+        code,
+    )
+    if not m:
+        return 1.0
+    try:
+        v = float(m.group(1))
+    except ValueError:
+        return 1.0
+    return v if v != 0.0 else 1.0
+
+
 def parse_points(code):
     pts, probes, used = [], [], set()
     p_calc = re.compile(r'\$\s*\(\s*([^()$]+?)\s*\)\s*\+\s*\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*\)\s*\$')
@@ -581,6 +596,7 @@ def parse_points(code):
     p_anc = re.compile(r'(?<![+\w.$!])\s*\(\s*([A-Za-z][A-Za-z0-9_]*(?:\.(?:[+\-]|[A-Za-z0-9_]+|north east|north west|south east|south west))?(?:\s*(?:\|-|-\|)\s*[A-Za-z][A-Za-z0-9_.+\-]*)?)\s*\)')
     p_scope = re.compile(r'\\begin\{scope\}\s*\[[^\]]*?shift\s*=\s*\{\s*\(\s*([-+]?\d*\.?\d+)\s*,\s*([-+]?\d*\.?\d+)\s*(?:,\s*([-+]?\d*\.?\d+)\s*)?\)\s*\}[^\]]*\]')
     ranges, spans = _scope_table(code), _line_table(code)
+    dscale = _stp_dscale(code)
     lines = code.splitlines(True)
     off, sx_off, sy_off, in_fe, fe_xs = 0, 0.0, 0.0, False, []
     for ln, line in enumerate(lines, 1):
@@ -683,6 +699,31 @@ def parse_points(code):
                 "x": xv, "y": yv, "sx": sx_off, "sy": sy_off, "s": s, "e": e, "l": ln, "pid": pid,
             })
             for k in range(off + m.start(), off + m.end()): used.add(k)
+        # satopdf: \stpDpoint{name}{x}{y}{z}  — scaled by \stpDscale, drawn in stpDCoords
+        for m in re.finditer(
+            r'\\stpDpoint(?![A-Za-z])\s*\{([A-Za-z][A-Za-z0-9_]*)\}\s*'
+            r'\{\s*([-+]?\d*\.?\d+)\s*\}\s*\{\s*([-+]?\d*\.?\d+)\s*\}\s*\{\s*([-+]?\d*\.?\d+)\s*\}',
+            line,
+        ):
+            xs, xe = m.start(2), m.end(4)
+            s, e = off + xs, off + xe
+            if s in used: continue
+            xv, yv, zv = float(m.group(2)), float(m.group(3)), float(m.group(4))
+            pid = len(probes)
+            probes.append((
+                pid,
+                f"{{{m.group(2).strip()}*\\stpDscale}},{{{m.group(3).strip()}*\\stpDscale}},{{{m.group(4).strip()}*\\stpDscale}}",
+                s,
+            ))
+            pts.append({
+                "kind": "xyz", "stp": "dpoint", "label": m.group(1), "base": m.group(1),
+                "x": xv, "y": yv, "z": zv,
+                "xs": dscale, "ys": dscale, "zs": dscale,
+                "cx": xv * dscale, "cy": yv * dscale, "cz": zv * dscale,
+                "sx": sx_off, "sy": sy_off, "s": s, "e": e, "l": ln, "pid": pid,
+                "uzx": 0.0, "uzy": 0.0,
+            })
+            for k in range(off + m.start(), off + m.end()): used.add(k)
         for m in p_abs.finditer(line):
             lp = line.find('(', m.start(), m.end()); s, e = off + lp, off + m.end()
             if s in used: continue
@@ -742,6 +783,11 @@ def _cal_span(pts):
     m = 0.0
     for pt in pts or []:
         if pt.get("kind") in ("abs", "xyz"):
+            if pt.get("cx") is not None:
+                m = max(m, abs(float(pt["cx"])), abs(float(pt.get("cy") or 0)))
+                if pt.get("cz") is not None:
+                    m = max(m, abs(float(pt["cz"] or 0)))
+                continue
             m = max(m, abs(float(pt.get("x", 0) or 0)), abs(float(pt.get("y", 0) or 0)))
             if pt.get("z") is not None:
                 m = max(m, abs(float(pt["z"] or 0)))
@@ -896,6 +942,9 @@ def run_tex(req: Req):
                 if "wx" not in pt: pt["wx"] = pt["x"] + pt.get("sx", 0.0); pt["wy"] = pt["y"] + pt.get("sy", 0.0)
             elif pt["pid"] in pm:
                 pt["wx"], pt["wy"] = _to_tikz(cal, *pm[pt["pid"]])
+            elif pt.get("stp") == "dpoint":
+                pt["wx"] = float(pt.get("cx", pt["x"]))
+                pt["wy"] = float(pt.get("cy", pt["y"]))
             elif pt.get("kind") in ("abs", "xyz"):
                 # probe color missed — numeric TikZ coords still place the handle
                 pt["wx"] = pt["x"] + pt.get("sx", 0.0)

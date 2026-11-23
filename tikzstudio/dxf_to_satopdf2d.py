@@ -19,7 +19,29 @@ from .cae_section_mass import (
     emit_struct_info_tex,
     format_length_mm_tex as _fmt_len_mm,
 )
+from .cae_face_curves import (
+    analytic_faces_from_entity,
+    curve_loops_as_polylines,
+    format_stp_analytic_face,
+    loops_are_coplanar,
+)
 from .cae_welds import emit_weld_tex_2d, parse_seam_welds, parse_spot_welds
+
+# Shell faces only. Loose CIRCLE / LWPOLYLINE stay beams or geometry.
+_SHELL_FACE_TYPES = (
+    "REGION",
+    "SURFACE",
+    "EXTRUDEDSURFACE",
+    "PLANESURFACE",
+    "LOFTEDSURFACE",
+    "REVOLVEDSURFACE",
+    "SWEPTSURFACE",
+    "NURBSSURFACE",
+    "3DSOLID",
+    "BODY",
+    "3DFACE",
+    "MESH",
+)
 
 
 def _k(p, tol=1e-4):
@@ -202,6 +224,27 @@ def dxf_to_satopdf2d(
         nodes[s.a] = s.a
         nodes[s.b] = s.b
 
+    # REGION is filled as-is. Other shell faces are filled the same way only
+    # when the boundary curves (not sample points) lie in one plane.
+    face_lines: list[str] = []
+    face_xy: list[tuple[float, float]] = []
+    n_faces = 0
+    for e in msp:
+        layer = (e.dxf.layer or "").upper()
+        if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
+            continue
+        if e.dxftype() not in _SHELL_FACE_TYPES:
+            continue
+        for af in analytic_faces_from_entity(e) or []:
+            loops = af.get("loops") or []
+            if af.get("kind") != "region" and not loops_are_coplanar(loops):
+                continue
+            face_lines.extend(format_stp_analytic_face(af))
+            n_faces += 1
+            for poly in curve_loops_as_polylines(loops, n=16):
+                for p in poly:
+                    face_xy.append((float(p[0]), float(p[1])))
+
     # Beam XDATA → vis-handle map for SETPTLOAD direction
     ptload_by_vis: dict[str, tuple[float, tuple[float, float], str]] = {}
     for e in msp.query("LINE"):
@@ -372,8 +415,13 @@ def dxf_to_satopdf2d(
     ordered = sorted(nodes.keys(), key=lambda t: (t[0], t[1]))
     nid = {p: f"N{i}" for i, p in enumerate(ordered)}
 
-    xs = [p[0] for p in ordered] or [0.0]
-    ys = [p[1] for p in ordered] or [0.0]
+    xs = [p[0] for p in ordered]
+    ys = [p[1] for p in ordered]
+    if face_xy:
+        xs.extend(p[0] for p in face_xy)
+        ys.extend(p[1] for p in face_xy)
+    if not xs:
+        xs, ys = [0.0], [0.0]
     span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
     u = _unit_scale(span)
 
@@ -401,6 +449,9 @@ def dxf_to_satopdf2d(
             notes.append("kind=rod")
         sec_note = f"  % {' '.join(notes)}" if notes else ""
         L.append(f"  \\stpMember{{{kind}}}{{{nid[a]}}}{{{nid[b]}}}{sec_note}")
+
+    # Coplanar shells / REGION: same even-odd fill as the 3D importer.
+    L.extend(face_lines)
 
     # Welds after members (above geometry, before BC/loads)
     L.extend(emit_weld_tex_2d(spot_welds, seam_welds, nid))
@@ -476,6 +527,7 @@ def dxf_to_satopdf2d(
     L.append("\\end{tikzpicture}")
     note = (
         f"satopdf 2D: {len(ordered)} nodes, {len(members)} members, "
+        f"{n_faces} planar faces, "
         f"{len(forces)} point loads, spots={len(spot_welds)}, seams={len(seam_welds)}"
         f"; V={mass_info['volume_mm3']:.3g} mm3, m={mass_info['mass_kg']:.3g} kg"
         f" (beams={mass_info['n_beam']}, shells={mass_info['n_shell']})"
