@@ -1450,6 +1450,28 @@
 \newcommand{\stpDzAng}{90}
 \newcommand{\stpDzLen}{1}
 \newcommand{\stpDscale}{1}
+% pgfmath stops at ±16384. CAE coordinates in mm are often larger; the
+% product with \stpDscale is a paper length and stays inside that limit.
+% Evaluate with l3fp and hand TikZ only the small result.
+\newcommand{\stp@fp}[2]{\edef#1{\fpeval{#2}}}
+% Point-pick marks. One TikZ path per node exhausts main memory on a large
+% frame, so coordinates are collected and written as a single PDF literal.
+% #1 #2 #3 = RGB in 0..1, #4 #5 #6 = TikZ coordinates.
+\def\stp@probeLit{}
+\newcommand{\stpProbe}[6]{%
+  \pgfextractx{\pgf@xa}{\pgfpointxyz{#4}{#5}{#6}}%
+  \pgfextracty{\pgf@ya}{\pgfpointxyz{#4}{#5}{#6}}%
+  \pgfmathsetmacro{\stp@px}{\pgf@xa/1bp-0.4}%
+  \pgfmathsetmacro{\stp@py}{\pgf@ya/1bp-0.4}%
+  \xdef\stp@probeLit{\stp@probeLit #1 #2 #3 rg \stp@px\space \stp@py\space 0.8 0.8 re f }%
+}
+\newcommand{\stp@flushProbes}{%
+  \ifx\stp@probeLit\empty\else
+    \pgfsysprotocol@literal{\stp@probeLit}%
+    \gdef\stp@probeLit{}%
+  \fi
+}
+\tikzset{every picture/.append style={execute at end picture=\stp@flushProbes}}
 \newcommand{\stpDhingeR}{1mm}
 \newcommand{\stpDhingeBigR}{1.5mm}
 \newcommand{\stpDsupLen}{1}
@@ -1711,9 +1733,9 @@
 
 % \stpDpoint{name}{x}{y}{z}  — args may be macros; expand via pgfmath first
 \NewDocumentCommand{\stpDpoint}{m m m m}{%
-  \pgfmathsetmacro{\stp@px}{(#2)*\stpDscale}%
-  \pgfmathsetmacro{\stp@py}{(#3)*\stpDscale}%
-  \pgfmathsetmacro{\stp@pz}{(#4)*\stpDscale}%
+  \stp@fp{\stp@px}{(#2)*\stpDscale}%
+  \stp@fp{\stp@py}{(#3)*\stpDscale}%
+  \stp@fp{\stp@pz}{(#4)*\stpDscale}%
   \node[coordinate] (#1) at (\stp@px,\stp@py,\stp@pz) {};%
   \ifstpDshowPoint
     \draw (\stp@px,\stp@py,\stp@pz) node[above,red,stpLabel] {#1};%
@@ -2172,14 +2194,14 @@
 \newcommand{\stpDface}[1]{\stp@faceFill{stpDface}{#1}}
 
 %-----------------------------------------------------------------------------
-% Equation-preserving face paths (FE geometry = macro arguments, NOT samples).
-% Display may sample arcs/splines with \stpFaceDispSegs for PDF only.
+% Equation-preserving face paths (FE geometry = macro arguments).
+% Display samples arcs and splines with \stpFaceDispSegs for PDF only.
 %   \begin{stpDfaceEnv}
 %     \begin{stpDfaceLoop}
 %       \stpDedgeLine{x0,y0,z0}{x1,y1,z1}
 %       \stpDedgeCircle{cx,cy,cz}{nx,ny,nz}{r}
 %       \stpDedgeArc{cx,cy,cz}{nx,ny,nz}{mx,my,mz}{ratio}{t0}{t1}
-%       \stpDedgeSpline{degree}{{x0,y0,z0},{x1,y1,z1},...}
+%       \stpDedgeSpline{degree}[k0,k1,...]{{x0,y0,z0},{x1,y1,z1},...}
 %     \end{stpDfaceLoop}
 %     \begin{stpDfaceLoop} ... holes ... \end{stpDfaceLoop}
 %   \end{stpDfaceEnv}
@@ -2196,9 +2218,9 @@
 }
 
 \newcommand{\stp@fAddPt}[3]{%
-  \pgfmathsetmacro{\stp@fx}{(#1)*\stpDscale}%
-  \pgfmathsetmacro{\stp@fy}{(#2)*\stpDscale}%
-  \pgfmathsetmacro{\stp@fz}{(#3)*\stpDscale}%
+  \stp@fp{\stp@fx}{(#1)*\stpDscale}%
+  \stp@fp{\stp@fy}{(#2)*\stpDscale}%
+  \stp@fp{\stp@fz}{(#3)*\stpDscale}%
   % Skip near-duplicate joins (shared edge ends) so filldraw does not stroke a zero chord
   \ifnum\stp@loopstarted=1\relax
     \pgfmathparse{abs(\stp@fx-\stp@flastx)+abs(\stp@fy-\stp@flasty)+abs(\stp@fz-\stp@flastz)<1e-6?1:0}%
@@ -2279,9 +2301,12 @@
   \pgfmathsetmacro{\stp@kz}{\stp@nx*\stp@my-\stp@ny*\stp@mx}%
   \foreach \stp@fi in {0,...,\stpFaceDispSegs} {%
     \pgfmathsetmacro{\stp@tt}{-pi+2*pi*\stp@fi/\stpFaceDispSegs}%
-    \pgfmathsetmacro{\stp@px}{\stp@cx+\stp@mx*cos(\stp@tt r)+\stp@kx*sin(\stp@tt r)}%
-    \pgfmathsetmacro{\stp@py}{\stp@cy+\stp@my*cos(\stp@tt r)+\stp@ky*sin(\stp@tt r)}%
-    \pgfmathsetmacro{\stp@pz}{\stp@cz+\stp@mz*cos(\stp@tt r)+\stp@kz*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@dx}{\stp@mx*cos(\stp@tt r)+\stp@kx*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@dy}{\stp@my*cos(\stp@tt r)+\stp@ky*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@dz}{\stp@mz*cos(\stp@tt r)+\stp@kz*sin(\stp@tt r)}%
+    \stp@fp{\stp@px}{\stp@cx+\stp@dx}%
+    \stp@fp{\stp@py}{\stp@cy+\stp@dy}%
+    \stp@fp{\stp@pz}{\stp@cz+\stp@dz}%
     \stp@fAddPt{\stp@px}{\stp@py}{\stp@pz}%
   }%
 }
@@ -2303,28 +2328,237 @@
   \pgfmathsetmacro{\stp@kz}{(\stp@nx*\stp@my-\stp@ny*\stp@mx)*\stp@rat}%
   \foreach \stp@fi in {0,...,\stpFaceDispSegs} {%
     \pgfmathsetmacro{\stp@tt}{\stp@tstart+(\stp@tend-\stp@tstart)*\stp@fi/\stpFaceDispSegs}%
-    \pgfmathsetmacro{\stp@px}{\stp@cx+\stp@mx*cos(\stp@tt r)+\stp@kx*sin(\stp@tt r)}%
-    \pgfmathsetmacro{\stp@py}{\stp@cy+\stp@my*cos(\stp@tt r)+\stp@ky*sin(\stp@tt r)}%
-    \pgfmathsetmacro{\stp@pz}{\stp@cz+\stp@mz*cos(\stp@tt r)+\stp@kz*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@dx}{\stp@mx*cos(\stp@tt r)+\stp@kx*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@dy}{\stp@my*cos(\stp@tt r)+\stp@ky*sin(\stp@tt r)}%
+    \pgfmathsetmacro{\stp@dz}{\stp@mz*cos(\stp@tt r)+\stp@kz*sin(\stp@tt r)}%
+    \stp@fp{\stp@px}{\stp@cx+\stp@dx}%
+    \stp@fp{\stp@py}{\stp@cy+\stp@dy}%
+    \stp@fp{\stp@pz}{\stp@cz+\stp@dz}%
     \stp@fAddPt{\stp@px}{\stp@py}{\stp@pz}%
   }%
 }
 
-\NewDocumentCommand{\stpDedgeSpline}{m m o}{%
-  % EQUATION: degree #1 + control points #2 = {x,y,z},{x,y,z},...
-  % Display: optional #3 = B-spline samples {P},{P},... (not control chords).
-  %   FE reads #1+#2 only; when #3 omitted, fall back to control polyline.
-  \IfNoValueTF{#3}{%
-    \foreach \stp@cpt in {#2} {%
-      \expandafter\stp@fParseXYZ\expandafter{\stp@cpt}\stp@sx\stp@sy\stp@sz
-      \stp@fAddPt{\stp@sx}{\stp@sy}{\stp@sz}%
+% 1 = evaluate the spline; 0 inside stpDruledEq (equation rail, no stroke).
+\def\stp@splineDraw{1}
+% de Boor on [U_p, U_{n+1}]. Missing or wrong-length knots → open uniform clamped.
+\ExplSyntaxOn
+\seq_new:N \l__stp_knots_seq
+\seq_new:N \l__stp_cpx_seq
+\seq_new:N \l__stp_cpy_seq
+\seq_new:N \l__stp_cpz_seq
+\seq_new:N \l__stp_dx_seq
+\seq_new:N \l__stp_dy_seq
+\seq_new:N \l__stp_dz_seq
+\seq_new:N \l__stp_xyz_seq
+\int_new:N \l__stp_p_int
+\int_new:N \l__stp_n_int
+\int_new:N \l__stp_k_int
+\int_new:N \l__stp_r_int
+\fp_new:N \l__stp_u_fp
+\fp_new:N \l__stp_lo_fp
+\fp_new:N \l__stp_hi_fp
+\fp_new:N \l__stp_alpha_fp
+\fp_new:N \l__stp_den_fp
+\fp_new:N \l__stp_x_fp
+\fp_new:N \l__stp_y_fp
+\fp_new:N \l__stp_z_fp
+\cs_generate_variant:Nn \seq_put_right:Nn { Ne }
+\cs_generate_variant:Nn \seq_set_item:Nnn { Nee }
+\cs_new:Npn \__stp_U:n #1
+  { \seq_item:Nn \l__stp_knots_seq { \int_eval:n { #1 + 1 } } }
+\cs_new:Npn \__stp_P:NNn #1#2#3
+  { \seq_item:Nn #1 { \int_eval:n { #2 + #3 + 1 } } }
+\cs_new_protected:Npn \__stp_store_cp:Nnn #1#2#3
+  { \seq_put_right:Ne #1 { \tl_trim_spaces:n {#3} } }
+\cs_generate_variant:Nn \__stp_store_cp:Nnn { Nne }
+\cs_new_protected:Npn \__stp_push_cp:n #1
+  {
+    \seq_set_split:Nnn \l__stp_xyz_seq { , } {#1}
+    \exp_args:Ne \tl_if_blank:nF
+      { \seq_item:Nn \l__stp_xyz_seq { 1 } }
+      {
+        \__stp_store_cp:Nne \l__stp_cpx_seq { } { \seq_item:Nn \l__stp_xyz_seq { 1 } }
+        \__stp_store_cp:Nne \l__stp_cpy_seq { } { \seq_item:Nn \l__stp_xyz_seq { 2 } }
+        \__stp_store_cp:Nne \l__stp_cpz_seq { } { \seq_item:Nn \l__stp_xyz_seq { 3 } }
+      }
+  }
+\cs_new_protected:Npn \__stp_uniform_knots:
+  {
+    \seq_clear:N \l__stp_knots_seq
+    \int_step_inline:nnn { 0 } { \l__stp_n_int + \l__stp_p_int + 1 }
+      {
+        \int_compare:nNnTF {##1} < { \l__stp_p_int + 1 }
+          { \seq_put_right:Nn \l__stp_knots_seq { 0 } }
+          {
+            \int_compare:nNnTF {##1} > { \l__stp_n_int }
+              {
+                \seq_put_right:Ne \l__stp_knots_seq
+                  { \int_eval:n { \l__stp_n_int - \l__stp_p_int + 1 } }
+              }
+              {
+                \seq_put_right:Ne \l__stp_knots_seq
+                  { \int_eval:n { ##1 - \l__stp_p_int } }
+              }
+          }
+      }
+  }
+\cs_new_protected:Npn \__stp_plot_cps:
+  {
+    \int_step_inline:nn { \seq_count:N \l__stp_cpx_seq }
+      {
+        \stp@fAddPt
+          { \seq_item:Nn \l__stp_cpx_seq {##1} }
+          { \seq_item:Nn \l__stp_cpy_seq {##1} }
+          { \seq_item:Nn \l__stp_cpz_seq {##1} }
+      }
+  }
+\cs_new_protected:Npn \__stp_find_span:
+  {
+    \int_set_eq:NN \l__stp_k_int \l__stp_p_int
+    \fp_compare:nTF { \l__stp_u_fp >= \__stp_U:n { \l__stp_n_int + 1 } }
+      { \int_set_eq:NN \l__stp_k_int \l__stp_n_int }
+      {
+        \int_step_inline:nnn { \l__stp_p_int } { \l__stp_n_int }
+          {
+            \fp_compare:nT
+              {
+                \l__stp_u_fp >= \__stp_U:n { ##1 }
+                && \l__stp_u_fp < \__stp_U:n { ##1 + 1 }
+              }
+              { \int_set:Nn \l__stp_k_int {##1} }
+          }
+      }
+  }
+\cs_new_protected:Npn \__stp_deboor_j:n #1
+  {
+    \fp_set:Nn \l__stp_den_fp
+      {
+        \__stp_U:n { #1 + 1 + \l__stp_k_int - \l__stp_r_int }
+        - \__stp_U:n { #1 + \l__stp_k_int - \l__stp_p_int }
+      }
+    \fp_compare:nNnTF { \fp_abs:n { \l__stp_den_fp } } < { 1e-12 }
+      { \fp_zero:N \l__stp_alpha_fp }
+      {
+        \fp_set:Nn \l__stp_alpha_fp
+          {
+            ( \l__stp_u_fp
+              - \__stp_U:n { #1 + \l__stp_k_int - \l__stp_p_int } )
+            / \l__stp_den_fp
+          }
+      }
+    \fp_set:Nn \l__stp_x_fp
+      {
+        ( 1 - \l__stp_alpha_fp ) * \seq_item:Nn \l__stp_dx_seq {#1}
+        + \l__stp_alpha_fp * \seq_item:Nn \l__stp_dx_seq { #1 + 1 }
+      }
+    \fp_set:Nn \l__stp_y_fp
+      {
+        ( 1 - \l__stp_alpha_fp ) * \seq_item:Nn \l__stp_dy_seq {#1}
+        + \l__stp_alpha_fp * \seq_item:Nn \l__stp_dy_seq { #1 + 1 }
+      }
+    \fp_set:Nn \l__stp_z_fp
+      {
+        ( 1 - \l__stp_alpha_fp ) * \seq_item:Nn \l__stp_dz_seq {#1}
+        + \l__stp_alpha_fp * \seq_item:Nn \l__stp_dz_seq { #1 + 1 }
+      }
+    \seq_set_item:Nee \l__stp_dx_seq { \int_eval:n { #1 + 1 } }
+      { \fp_to_tl:N \l__stp_x_fp }
+    \seq_set_item:Nee \l__stp_dy_seq { \int_eval:n { #1 + 1 } }
+      { \fp_to_tl:N \l__stp_y_fp }
+    \seq_set_item:Nee \l__stp_dz_seq { \int_eval:n { #1 + 1 } }
+      { \fp_to_tl:N \l__stp_z_fp }
+  }
+\cs_new_protected:Npn \__stp_deboor_r:n #1
+  {
+    \int_set:Nn \l__stp_r_int {#1}
+    \int_step_inline:nnnn { \l__stp_p_int } { -1 } {#1}
+      { \__stp_deboor_j:n {##1} }
+  }
+\cs_new_protected:Npn \__stp_deboor:
+  {
+    \seq_clear:N \l__stp_dx_seq
+    \seq_clear:N \l__stp_dy_seq
+    \seq_clear:N \l__stp_dz_seq
+    \int_step_inline:nnn { 0 } { \l__stp_p_int }
+      {
+        \seq_put_right:Ne \l__stp_dx_seq
+          { \__stp_P:NNn \l__stp_cpx_seq { \l__stp_k_int - \l__stp_p_int } {##1} }
+        \seq_put_right:Ne \l__stp_dy_seq
+          { \__stp_P:NNn \l__stp_cpy_seq { \l__stp_k_int - \l__stp_p_int } {##1} }
+        \seq_put_right:Ne \l__stp_dz_seq
+          { \__stp_P:NNn \l__stp_cpz_seq { \l__stp_k_int - \l__stp_p_int } {##1} }
+      }
+    \int_step_inline:nn { \l__stp_p_int }
+      { \__stp_deboor_r:n {##1} }
+    \fp_set:Nn \l__stp_x_fp
+      { \seq_item:Nn \l__stp_dx_seq { \l__stp_p_int + 1 } }
+    \fp_set:Nn \l__stp_y_fp
+      { \seq_item:Nn \l__stp_dy_seq { \l__stp_p_int + 1 } }
+    \fp_set:Nn \l__stp_z_fp
+      { \seq_item:Nn \l__stp_dz_seq { \l__stp_p_int + 1 } }
+  }
+\cs_new_protected:Npn \__stp_sample:n #1
+  {
+    \fp_set:Nn \l__stp_u_fp
+      {
+        \l__stp_lo_fp
+        + ( \l__stp_hi_fp - \l__stp_lo_fp ) * #1 / \stpFaceDispSegs
+      }
+    \int_compare:nNnT {#1} = { \stpFaceDispSegs }
+      { \fp_set_eq:NN \l__stp_u_fp \l__stp_hi_fp }
+    \__stp_find_span:
+    \__stp_deboor:
+    \stp@fAddPt
+      { \fp_to_tl:N \l__stp_x_fp }
+      { \fp_to_tl:N \l__stp_y_fp }
+      { \fp_to_tl:N \l__stp_z_fp }
+  }
+\cs_new_protected:Npn \stp_spline_draw:nnn #1#2#3
+  {
+    \seq_clear:N \l__stp_cpx_seq
+    \seq_clear:N \l__stp_cpy_seq
+    \seq_clear:N \l__stp_cpz_seq
+    \clist_map_inline:nn {#3} { \__stp_push_cp:n {##1} }
+    \int_set:Nn \l__stp_n_int { \seq_count:N \l__stp_cpx_seq - 1 }
+    \int_compare:nNnTF { \l__stp_n_int } < { 1 }
+      { \__stp_plot_cps: }
+      {
+        \int_set:Nn \l__stp_p_int {#1}
+        \int_compare:nNnT { \l__stp_p_int } > { \l__stp_n_int }
+          { \int_set_eq:NN \l__stp_p_int \l__stp_n_int }
+        \int_compare:nNnT { \l__stp_p_int } < { 1 }
+          { \int_set:Nn \l__stp_p_int { 1 } }
+        \seq_clear:N \l__stp_knots_seq
+        \tl_if_blank:nF {#2}
+          {
+            \clist_map_inline:nn {#2}
+              {
+                \seq_put_right:Ne \l__stp_knots_seq
+                  { \tl_trim_spaces:n {##1} }
+              }
+          }
+        \int_compare:nNnF
+          { \seq_count:N \l__stp_knots_seq }
+          = { \l__stp_n_int + \l__stp_p_int + 2 }
+          { \__stp_uniform_knots: }
+        \fp_set:Nn \l__stp_lo_fp { \__stp_U:n { \l__stp_p_int } }
+        \fp_set:Nn \l__stp_hi_fp { \__stp_U:n { \l__stp_n_int + 1 } }
+        \int_step_inline:nnn { 0 } { \stpFaceDispSegs }
+          { \__stp_sample:n {##1} }
+      }
+  }
+\cs_set_eq:NN \stp@splineEval \stp_spline_draw:nnn
+\ExplSyntaxOff
+\NewDocumentCommand{\stpDedgeSpline}{m o m o}{%
+  % EQUATION: degree #1, knot vector #2, control points #3.
+  % The stroke is de Boor on that NURBS. #4 is an old sample list and is ignored.
+  \ifnum\stp@splineDraw=0\relax\else
+    \IfNoValueTF{#2}{%
+      \stp@splineEval{#1}{}{#3}%
+    }{%
+      \stp@splineEval{#1}{#2}{#3}%
     }%
-  }{%
-    \foreach \stp@cpt in {#3} {%
-      \expandafter\stp@fParseXYZ\expandafter{\stp@cpt}\stp@sx\stp@sy\stp@sz
-      \stp@fAddPt{\stp@sx}{\stp@sy}{\stp@sz}%
-    }%
-  }%
+  \fi
 }
 
 %-----------------------------------------------------------------------------
@@ -2342,9 +2576,12 @@
   cylinder mesh rings/.code={\renewcommand{\stpCylMeshRing}{#1}}}
 % Helper: point on cylinder at height h and angle t (deg) → \stp@q{x,y,z} (scaled)
 \newcommand{\stp@cylPt}[2]{%
-  \pgfmathsetmacro{\stp@qx}{(\stp@ox+\stp@ax*(#1)+\stp@cux*cos(#2)+\stp@cvx*sin(#2))*\stpDscale}%
-  \pgfmathsetmacro{\stp@qy}{(\stp@oy+\stp@ay*(#1)+\stp@cuy*cos(#2)+\stp@cvy*sin(#2))*\stpDscale}%
-  \pgfmathsetmacro{\stp@qz}{(\stp@oz+\stp@az*(#1)+\stp@cuz*cos(#2)+\stp@cvz*sin(#2))*\stpDscale}%
+  \pgfmathsetmacro{\stp@qdx}{\stp@ax*(#1)+\stp@cux*cos(#2)+\stp@cvx*sin(#2)}%
+  \pgfmathsetmacro{\stp@qdy}{\stp@ay*(#1)+\stp@cuy*cos(#2)+\stp@cvy*sin(#2)}%
+  \pgfmathsetmacro{\stp@qdz}{\stp@az*(#1)+\stp@cuz*cos(#2)+\stp@cvz*sin(#2)}%
+  \stp@fp{\stp@qx}{(\stp@ox+\stp@qdx)*\stpDscale}%
+  \stp@fp{\stp@qy}{(\stp@oy+\stp@qdy)*\stpDscale}%
+  \stp@fp{\stp@qz}{(\stp@oz+\stp@qdz)*\stpDscale}%
 }
 \newcommand{\stp@cylBasis}{%
   \pgfmathsetmacro{\stp@alen}{sqrt(\stp@ax*\stp@ax+\stp@ay*\stp@ay+\stp@az*\stp@az)}%
@@ -2430,12 +2667,12 @@
 \NewDocumentCommand{\stpDmeshSeg}{m m}{%
   \stp@fParseXYZ{#1}\stp@ax\stp@ay\stp@az
   \stp@fParseXYZ{#2}\stp@bx\stp@by\stp@bz
-  \pgfmathsetmacro{\stp@ax}{\stp@ax*\stpDscale}%
-  \pgfmathsetmacro{\stp@ay}{\stp@ay*\stpDscale}%
-  \pgfmathsetmacro{\stp@az}{\stp@az*\stpDscale}%
-  \pgfmathsetmacro{\stp@bx}{\stp@bx*\stpDscale}%
-  \pgfmathsetmacro{\stp@by}{\stp@by*\stpDscale}%
-  \pgfmathsetmacro{\stp@bz}{\stp@bz*\stpDscale}%
+  \stp@fp{\stp@ax}{\stp@ax*\stpDscale}%
+  \stp@fp{\stp@ay}{\stp@ay*\stpDscale}%
+  \stp@fp{\stp@az}{\stp@az*\stpDscale}%
+  \stp@fp{\stp@bx}{\stp@bx*\stpDscale}%
+  \stp@fp{\stp@by}{\stp@by*\stpDscale}%
+  \stp@fp{\stp@bz}{\stp@bz*\stpDscale}%
   \draw[draw=\stpClrFaceMesh, line width=\stpMeshLW, line join=round, line cap=round]
     (\stp@ax,\stp@ay,\stp@az)--(\stp@bx,\stp@by,\stp@bz);%
 }
@@ -2467,18 +2704,18 @@
     \expandafter\stp@ruledGet\expandafter{\stp@railA}{\stp@rj}\stp@rbx\stp@rby\stp@rbz
     \expandafter\stp@ruledGet\expandafter{\stp@railB}{\stp@ri}\stp@rcx\stp@rcy\stp@rcz
     \expandafter\stp@ruledGet\expandafter{\stp@railB}{\stp@rj}\stp@rdx\stp@rdy\stp@rdz
-    \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
-    \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
-    \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
-    \pgfmathsetmacro{\stp@rbx}{\stp@rbx*\stpDscale}%
-    \pgfmathsetmacro{\stp@rby}{\stp@rby*\stpDscale}%
-    \pgfmathsetmacro{\stp@rbz}{\stp@rbz*\stpDscale}%
-    \pgfmathsetmacro{\stp@rcx}{\stp@rcx*\stpDscale}%
-    \pgfmathsetmacro{\stp@rcy}{\stp@rcy*\stpDscale}%
-    \pgfmathsetmacro{\stp@rcz}{\stp@rcz*\stpDscale}%
-    \pgfmathsetmacro{\stp@rdx}{\stp@rdx*\stpDscale}%
-    \pgfmathsetmacro{\stp@rdy}{\stp@rdy*\stpDscale}%
-    \pgfmathsetmacro{\stp@rdz}{\stp@rdz*\stpDscale}%
+    \stp@fp{\stp@rax}{\stp@rax*\stpDscale}%
+    \stp@fp{\stp@ray}{\stp@ray*\stpDscale}%
+    \stp@fp{\stp@raz}{\stp@raz*\stpDscale}%
+    \stp@fp{\stp@rbx}{\stp@rbx*\stpDscale}%
+    \stp@fp{\stp@rby}{\stp@rby*\stpDscale}%
+    \stp@fp{\stp@rbz}{\stp@rbz*\stpDscale}%
+    \stp@fp{\stp@rcx}{\stp@rcx*\stpDscale}%
+    \stp@fp{\stp@rcy}{\stp@rcy*\stpDscale}%
+    \stp@fp{\stp@rcz}{\stp@rcz*\stpDscale}%
+    \stp@fp{\stp@rdx}{\stp@rdx*\stpDscale}%
+    \stp@fp{\stp@rdy}{\stp@rdy*\stpDscale}%
+    \stp@fp{\stp@rdz}{\stp@rdz*\stpDscale}%
     \fill[fill=\stpClrFace, fill opacity=\stpFaceOpacity, draw=none]
       (\stp@rax,\stp@ray,\stp@raz)--(\stp@rbx,\stp@rby,\stp@rbz)--
       (\stp@rdx,\stp@rdy,\stp@rdz)--(\stp@rcx,\stp@rcy,\stp@rcz)--cycle;%
@@ -2486,23 +2723,23 @@
   \IfBooleanF{#1}{%
     % Outline: rail A, generator, rail B reversed, generator
     \expandafter\stp@ruledGet\expandafter{\stp@railA}{0}\stp@rax\stp@ray\stp@raz
-    \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
-    \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
-    \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+    \stp@fp{\stp@rax}{\stp@rax*\stpDscale}%
+    \stp@fp{\stp@ray}{\stp@ray*\stpDscale}%
+    \stp@fp{\stp@raz}{\stp@raz*\stpDscale}%
     \xdef\stp@crim{(\stp@rax,\stp@ray,\stp@raz)}%
     \foreach \stp@ri in {1,...,\stp@rnm} {%
       \expandafter\stp@ruledGet\expandafter{\stp@railA}{\stp@ri}\stp@rax\stp@ray\stp@raz
-      \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
-      \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
-      \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+      \stp@fp{\stp@rax}{\stp@rax*\stpDscale}%
+      \stp@fp{\stp@ray}{\stp@ray*\stpDscale}%
+      \stp@fp{\stp@raz}{\stp@raz*\stpDscale}%
       \xdef\stp@crim{\stp@crim--(\stp@rax,\stp@ray,\stp@raz)}%
     }%
     \foreach \stp@ri in {0,...,\stp@rnm} {%
       \pgfmathtruncatemacro{\stp@rk}{\stp@rnm-\stp@ri}%
       \expandafter\stp@ruledGet\expandafter{\stp@railB}{\stp@rk}\stp@rax\stp@ray\stp@raz
-      \pgfmathsetmacro{\stp@rax}{\stp@rax*\stpDscale}%
-      \pgfmathsetmacro{\stp@ray}{\stp@ray*\stpDscale}%
-      \pgfmathsetmacro{\stp@raz}{\stp@raz*\stpDscale}%
+      \stp@fp{\stp@rax}{\stp@rax*\stpDscale}%
+      \stp@fp{\stp@ray}{\stp@ray*\stpDscale}%
+      \stp@fp{\stp@raz}{\stp@raz*\stpDscale}%
       \xdef\stp@crim{\stp@crim--(\stp@rax,\stp@ray,\stp@raz)}%
     }%
     \draw[draw=\stpClrFaceEdge, line width=\stpTinyLW, fill=none] \stp@crim--cycle;%
@@ -2527,6 +2764,7 @@
 \newenvironment{stpDruledEq}{%
   \let\stp@fAddPt@saved\stp@fAddPt
   \renewcommand{\stp@fAddPt}[3]{}%
+  \def\stp@splineDraw{0}%
 }{%
   \let\stp@fAddPt\stp@fAddPt@saved
 }
@@ -2617,9 +2855,9 @@
   \ifx\stp@ax\stp@axX
     % Lx on XY @ z=z0, y = y0 − Δ_Y
     \stp@paperToModel{#6}{y}%
-    \pgfmathsetmacro{\stp@dimyo}{#3-\stp@dmod}%
-    \pgfmathsetmacro{\stp@dimxa}{#2}%
-    \pgfmathsetmacro{\stp@dimxb}{#2+#5}%
+    \stp@fp{\stp@dimyo}{#3-\stp@dmod}%
+    \stp@fp{\stp@dimxa}{#2}%
+    \stp@fp{\stp@dimxb}{#2+#5}%
     \stpDpoint{stp@dO}{\stp@dimxa}{#3}{#4}%
     \stpDpoint{stp@dE}{\stp@dimxb}{#3}{#4}%
     \stpDpoint{stp@da}{\stp@dimxa}{\stp@dimyo}{#4}%
@@ -2630,9 +2868,9 @@
   \ifx\stp@ax\stp@axY
     % Ly on XY @ z=z0, x = x0 − Δ_X
     \stp@paperToModel{#6}{x}%
-    \pgfmathsetmacro{\stp@dimxo}{#2-\stp@dmod}%
-    \pgfmathsetmacro{\stp@dimya}{#3}%
-    \pgfmathsetmacro{\stp@dimyb}{#3+#5}%
+    \stp@fp{\stp@dimxo}{#2-\stp@dmod}%
+    \stp@fp{\stp@dimya}{#3}%
+    \stp@fp{\stp@dimyb}{#3+#5}%
     \stpDpoint{stp@dO}{#2}{\stp@dimya}{#4}%
     \stpDpoint{stp@dE}{#2}{\stp@dimyb}{#4}%
     \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimya}{#4}%
@@ -2643,11 +2881,11 @@
   \ifx\stp@ax\stp@axZ
     % Lz on YZ @ x=x0−Δx, y=y0−Δy (same paper Δ)
     \stp@paperToModel{#6}{x}%
-    \pgfmathsetmacro{\stp@dimxo}{#2-\stp@dmod}%
+    \stp@fp{\stp@dimxo}{#2-\stp@dmod}%
     \stp@paperToModel{#6}{y}%
-    \pgfmathsetmacro{\stp@dimyo}{#3-\stp@dmod}%
-    \pgfmathsetmacro{\stp@dimza}{#4}%
-    \pgfmathsetmacro{\stp@dimzb}{#4+#5}%
+    \stp@fp{\stp@dimyo}{#3-\stp@dmod}%
+    \stp@fp{\stp@dimza}{#4}%
+    \stp@fp{\stp@dimzb}{#4+#5}%
     \stpDpoint{stp@dO}{#2}{#3}{\stp@dimza}%
     \stpDpoint{stp@dE}{#2}{#3}{\stp@dimzb}%
     \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimyo}{\stp@dimza}%

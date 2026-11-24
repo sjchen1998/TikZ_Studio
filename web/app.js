@@ -1,8 +1,9 @@
 const $ = id => document.getElementById(id);
 let pts = [], ports = [], W = 0, H = 0, cal = null, activeIdx = -1, multiSet = new Set(), lastGood = '', history = [];
-let place = null, placeHover = null, dimKeep = '';
+let place = null, placeHover = null, dimKeep = '', structSel = null;
 let shapeDrag = null;
 let statusNow = { kind: 'ready', n: 0, note: '', path: '' };
+let figureCode = '';
 let tabPad = '    ';
 async function loadEditorConfig() {
   try {
@@ -14,26 +15,133 @@ async function loadEditorConfig() {
     if (ta) ta.style.tabSize = String(n);
   } catch (_) {}
 }
-function paintStatus() {
+function countCode(text, re) {
+  let n = 0;
+  const r = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+  forCodeLines(text, body => { r.lastIndex = 0; while (r.exec(body)) n++; });
+  return n;
+}
+function plainTex(s) {
+  const sup = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻' };
+  return String(s || '').replace(/\$/g, '').replace(/\\,/g, '').replace(/\\mathrm\{([^{}]*)\}/g, '$1').replace(/\\times/g, '×').replace(/\^\{([^{}]+)\}/g, (_, e) => [...e].map(ch => sup[ch] || ch).join('')).replace(/\s+/g, '');
+}
+function figureStats(text) {
+  const src = String(text || '');
+  const names = new Set();
+  const nodeRe = /\\stp(?:Dpoint|Node|Point)\s*\{([A-Za-z][A-Za-z0-9_]*)\}/g;
+  forCodeLines(src, body => {
+    nodeRe.lastIndex = 0;
+    let m;
+    while ((m = nodeRe.exec(body))) if (!/^Dim/.test(m[1])) names.add(m[1]);
+  });
+  const model = src ? parseStruct(src) : { beams: [], faces: [], namedFaces: [] };
+  const dims = [];
+  const dimRe = /\$L_([xyz])=([^$]+)\$/g;
+  forCodeLines(src, body => {
+    dimRe.lastIndex = 0;
+    let m;
+    while ((m = dimRe.exec(body))) dims.push('L' + m[1] + '=' + plainTex(m[2]));
+  });
+  let volume = '', mass = '';
+  forCodeLines(src, body => {
+    const i = body.indexOf('\\stpStructInfo');
+    if (i < 0) return;
+    const got = grabArgs(body, i + '\\stpStructInfo'.length);
+    if (got.args.length < 2) return;
+    volume = plainTex(got.args[0]);
+    mass = plainTex(got.args[1]);
+  });
+  return {
+    nodes: names.size,
+    beams: model.beams.length,
+    faces: model.faces.length + model.namedFaces.length,
+    supports: countCode(src, /\\stp(?:Dsupport|Support)\b/g),
+    loads: countCode(src, /\\stp(?:Dpointload|Dlineload|Dfaceload|LineLoad(?:CAE)?|Load)\b/g),
+    welds: countCode(src, /\\stp(?:SpotWeld|SeamWeld|DspotWeld)\b/g),
+    dims, volume, mass
+  };
+}
+function figureBarText(stats) {
+  const st = stats || figureStats(figureCode);
+  if (!(st.nodes || st.beams || st.faces)) {
+    if (!figureCode || !pts.length) return '';
+    return tf('识别点 ' + pts.length, pts.length === 1 ? '1 point' : pts.length + ' points');
+  }
+  const bits = [tf('节点 ' + st.nodes, 'Nodes ' + st.nodes)];
+  if (st.beams) bits.push(tf('梁 ' + st.beams, 'Beams ' + st.beams));
+  if (st.faces) bits.push(tf('面 ' + st.faces, 'Faces ' + st.faces));
+  if (st.supports) bits.push(tf('约束 ' + st.supports, 'Supports ' + st.supports));
+  if (st.loads) bits.push(tf('载荷 ' + st.loads, 'Loads ' + st.loads));
+  if (st.welds) bits.push(tf('焊缝 ' + st.welds, 'Welds ' + st.welds));
+  st.dims.forEach(d => bits.push(d));
+  if (st.volume) bits.push(st.volume);
+  if (st.mass) bits.push(st.mass);
+  return bits.join('  ·  ');
+}
+const opLog = [];
+function logLevel(kind) {
+  if (kind === 'fail') return 'err';
+  if (kind === 'revert' || kind === 'fea' || kind === 'needpts' || kind === 'noscale' || kind === 'noselect' || kind === 'angpar' || kind === 'angskew' || kind === 'dupname' || kind === 'badname') return 'warn';
+  if (kind === 'ok' || kind === 'note' || kind === 'exported') return 'ok';
+  return 'info';
+}
+function escLog(s) {
+  return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+function pushLog(level, text) {
+  const msg = String(text || '').trim();
+  if (!msg) return;
+  const last = opLog[opLog.length - 1];
+  if (last && last.text === msg) return;
+  const tm = new Date();
+  const stamp = [tm.getHours(), tm.getMinutes(), tm.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+  opLog.push({ level, text: msg, stamp });
+  if (opLog.length > 200) opLog.shift();
+  const el = $('llog');
+  if (!el) return;
+  const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 28;
+  el.insertAdjacentHTML('beforeend', '<div class="lg ' + level + '"><span class="tm">' + stamp + '</span>' + escLog(msg) + '</div>');
+  if (stick) el.scrollTop = el.scrollHeight;
+}
+function statusShort() {
   const n = statusNow.n, note = statusNow.note;
   const count = tf(n + '点', n + (n === 1 ? ' point' : ' points'));
+  if (statusNow.kind === 'ok') {
+    const s = figureStats(figureCode);
+    const structish = !!(s.nodes || s.beams || s.faces);
+    return tf('✅ 成功', '✅ OK') + (structish ? '' : ' (' + count + ')');
+  }
+  if (statusNow.kind === 'note') return '✅ ' + note;
+  if (statusNow.kind === 'compiling') return t('⏳ 编译中...');
+  if (statusNow.kind === 'exporting') return t('⏳ 导出中...');
+  if (statusNow.kind === 'exported') return tf('✅ 已导出 ' + note, '✅ Exported ' + note);
+  if (statusNow.kind === 'importing') return t('⏳ 导入 DXF...');
+  if (statusNow.kind === 'fail') return t('❌ 失败');
+  if (statusNow.kind === 'revert') return t('↩ 已回退');
+  if (statusNow.kind === 'needpts') return t('请先在画布上取点，或把坐标填完整');
+  if (statusNow.kind === 'noscale') return t('没有可缩放的图形');
+  if (statusNow.kind === 'noselect') return t('选中的点不能缩放');
+  if (statusNow.kind === 'angpar') return t('这两条直线平行或共线，不能标角度');
+  if (statusNow.kind === 'angskew') return t('这两条直线不在同一个平面上，不能标角度');
+  if (statusNow.kind === 'dupname') return t('代号已存在');
+  if (statusNow.kind === 'badname') return t('代号需以字母开头，仅含字母数字下划线');
+  if (statusNow.kind === 'fea') return note;
+  return t('就绪');
+}
+function statusLine() {
+  const short = statusShort();
+  if (statusNow.kind === 'ok') {
+    const stats = figureStats(figureCode);
+    if (stats.nodes || stats.beams || stats.faces) return short + '  ·  ' + figureBarText(stats);
+    return short;
+  }
+  if ((statusNow.kind === 'fail' || statusNow.kind === 'revert') && statusNow.note) return statusNow.note;
+  if (statusNow.kind === 'exported' && statusNow.path) return short + '\n' + statusNow.path;
+  return short;
+}
+function paintStatus() {
   $('st').title = statusNow.kind === 'exported' ? (statusNow.path || '') : '';
-  if (statusNow.kind === 'ok') $('st').textContent = tf('✅ 成功', '✅ OK') + ' (' + count + ')';
-  else if (statusNow.kind === 'note') $('st').textContent = '✅ ' + note;
-  else if (statusNow.kind === 'compiling') $('st').textContent = t('⏳ 编译中...');
-  else if (statusNow.kind === 'exporting') $('st').textContent = t('⏳ 导出中...');
-  else if (statusNow.kind === 'exported') $('st').textContent = tf('✅ 已导出 ' + note, '✅ Exported ' + note);
-  else if (statusNow.kind === 'importing') $('st').textContent = t('⏳ 导入 DXF...');
-  else if (statusNow.kind === 'fail') $('st').textContent = t('❌ 失败');
-  else if (statusNow.kind === 'revert') $('st').textContent = t('↩ 已回退');
-  else if (statusNow.kind === 'needpts') $('st').textContent = t('请先在画布上取点，或把坐标填完整');
-  else if (statusNow.kind === 'noscale') $('st').textContent = t('没有可缩放的图形');
-  else if (statusNow.kind === 'noselect') $('st').textContent = t('选中的点不能缩放');
-  else if (statusNow.kind === 'angpar') $('st').textContent = t('这两条直线平行或共线，不能标角度');
-  else if (statusNow.kind === 'angskew') $('st').textContent = t('这两条直线不在同一个平面上，不能标角度');
-  else if (statusNow.kind === 'dupname') $('st').textContent = t('代号已存在');
-  else if (statusNow.kind === 'badname') $('st').textContent = t('代号需以字母开头，仅含字母数字下划线');
-  else $('st').textContent = t('就绪');
+  $('st').textContent = statusShort();
 }
 function usedNodeNames(code) {
   const set = new Set();
@@ -69,11 +177,15 @@ function syncBlockIdMsg() {
   msg.textContent = ''; msg.className = 'pid-msg'; return true;
 }
 function setStatus(kind, extra) {
+  const prev = statusNow.kind;
   statusNow.kind = kind;
   if (extra && extra.n != null) statusNow.n = extra.n;
-  if (extra && extra.note != null) statusNow.note = extra.note;
+  statusNow.note = extra && extra.note != null ? extra.note : '';
   statusNow.path = extra && extra.path ? extra.path : '';
   paintStatus();
+  if (extra && extra.skipLog) return;
+  if (kind === 'ok' && prev === 'fea') return;
+  pushLog(logLevel(kind), statusLine());
 }
 
 function insText() { startPlace('text'); }
@@ -189,6 +301,7 @@ function syncPickUi() {
     el.disabled = !on;
     if (el.parentElement) el.parentElement.style.opacity = on ? '' : '0.45';
   });
+  syncFeaUi();
 }
 function setPickPoints(on) {
   const el = $('pick-pts');
@@ -2575,7 +2688,7 @@ async function saveTex() {
     let d;
     try { d = await window.pywebview.api.save_tex(code); }
     catch (err) { exportFail(err); return; }
-    if (!d || d.cancelled) { setStatus('ready'); return; }
+    if (!d || d.cancelled) { setStatus('ready', { skipLog: true }); pushLog('warn', t('已取消')); return; }
     if (!d.ok) { exportFail(d.err || ''); return; }
     $('toast').style.display = 'none';
     setStatus('exported', { note: d.name, path: d.path });
@@ -2601,9 +2714,10 @@ async function saveTex() {
   setStatus('exported', { note: 'tikz.tex' });
 }
 function exportFail(msg) {
+  const text = t('❌ 导出失败：') + (msg ? '\n' + msg : '');
   $('toast').style.display = 'block';
-  $('toast').textContent = t('❌ 导出失败：') + '\n' + msg;
-  setStatus('fail');
+  $('toast').textContent = text;
+  setStatus('fail', { note: text });
 }
 async function exportFile(fmt) {
   const suggested = fmt === 'png' ? 'tikz_600dpi.png' : `tikz.${fmt}`;
@@ -2613,7 +2727,7 @@ async function exportFile(fmt) {
     let d;
     try { d = await window.pywebview.api.export_file($('code').value, $('comp').value, fmt); }
     catch (err) { exportFail(err); return; }
-    if (!d || d.cancelled) { setStatus('ready'); return; }
+    if (!d || d.cancelled) { setStatus('ready', { skipLog: true }); pushLog('warn', t('已取消')); return; }
     if (!d.ok) { exportFail(d.err || ''); return; }
     $('toast').style.display = 'none';
     setStatus('exported', { note: d.name, path: d.path });
@@ -2650,9 +2764,536 @@ function lineSpan(text, s) {
   return [st, ed];
 }
 function hideLine() { const hl = $('hl'); if (!hl) return; hl.style.display = 'none'; hl.dataset.line = ''; }
+function isStructPicture() {
+  const mode = typeof dxfImportMode === 'function' ? dxfImportMode() : 'geom';
+  return mode === 'struct2d' || mode === 'struct3d';
+}
+function forCodeLines(text, fn) {
+  let off = 0;
+  while (off <= text.length) {
+    let nl = text.indexOf('\n', off);
+    if (nl < 0) nl = text.length;
+    let line = text.slice(off, nl);
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    let cut = line.length;
+    for (let k = 0; k < line.length; k++) {
+      if (line[k] === '%' && (k === 0 || line[k - 1] !== '\\')) { cut = k; break; }
+    }
+    const end = nl < text.length ? nl + 1 : text.length;
+    fn(line.slice(0, cut), off, end);
+    if (nl >= text.length) break;
+    off = nl + 1;
+  }
+}
+function nameToken(name) {
+  return new RegExp('(?<![A-Za-z0-9_])' + String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_])');
+}
+function hasName(body, name) { return nameToken(name).test(body); }
+function isNodeDef(body, name) {
+  return new RegExp('\\\\stp(?:Node|Dpoint|Point)\\s*\\{\\s*' + String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\}').test(body);
+}
+function near3(a, b) {
+  return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05 && Math.abs((a.z || 0) - (b.z || 0)) < 0.05;
+}
+function parseXYZ(s) {
+  const p = String(s).split(',').map(v => parseFloat(v));
+  if (p.length < 2 || p.some(n => !Number.isFinite(n))) return null;
+  return { x: p[0], y: p[1], z: p.length > 2 && Number.isFinite(p[2]) ? p[2] : 0 };
+}
+function solveLS(rows, rhs) {
+  const n = rows[0].length;
+  if (rows.length < n) return null;
+  const A = Array.from({ length: n }, () => Array(n).fill(0));
+  const b = Array(n).fill(0);
+  rows.forEach((row, i) => {
+    for (let r = 0; r < n; r++) {
+      b[r] += row[r] * rhs[i];
+      for (let c = 0; c < n; c++) A[r][c] += row[r] * row[c];
+    }
+  });
+  for (let col = 0; col < n; col++) {
+    let piv = col, best = Math.abs(A[col][col]);
+    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > best) { best = Math.abs(A[r][col]); piv = r; }
+    if (best < 1e-8) return null;
+    if (piv !== col) { const tr = A[col]; A[col] = A[piv]; A[piv] = tr; const tb = b[col]; b[col] = b[piv]; b[piv] = tb; }
+    const div = A[col][col];
+    for (let c = col; c < n; c++) A[col][c] /= div;
+    b[col] /= div;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = A[r][col];
+      for (let c = col; c < n; c++) A[r][c] -= f * A[col][c];
+      b[r] -= f * b[col];
+    }
+  }
+  return b;
+}
+function structNodes() {
+  const out = [];
+  const seen = new Set();
+  pts.forEach(p => {
+    if (!p || !p.label || seen.has(p.label)) return;
+    if (p.stp !== 'node' && p.stp !== 'dpoint' && p.stp !== 'point') return;
+    seen.add(p.label);
+    out.push({ name: p.label, x: +p.x, y: +p.y, z: +(p.z || 0), wx: p.wx, wy: p.wy, s: p.s });
+  });
+  return out;
+}
+function makeProjector(nodes) {
+  const src = nodes.filter(n => n.wx != null && n.wy != null && Number.isFinite(n.x) && Number.isFinite(n.y));
+  if (src.length < 2) return null;
+  const zs = src.map(n => n.z || 0);
+  const dim3 = src.length >= 4 && (Math.max(...zs) - Math.min(...zs) > 1e-4);
+  const mx = src.reduce((s, n) => s + n.x, 0) / src.length;
+  const my = src.reduce((s, n) => s + n.y, 0) / src.length;
+  const mz = src.reduce((s, n) => s + (n.z || 0), 0) / src.length;
+  const rows = src.map(n => dim3 ? [n.x - mx, n.y - my, (n.z || 0) - mz, 1] : [n.x - mx, n.y - my, 1]);
+  const bx = solveLS(rows, src.map(n => n.wx));
+  const by = solveLS(rows, src.map(n => n.wy));
+  if (!bx || !by) return null;
+  return p => {
+    const r = dim3 ? [p.x - mx, p.y - my, (p.z || 0) - mz, 1] : [p.x - mx, p.y - my, 1];
+    let wx = 0, wy = 0;
+    for (let i = 0; i < r.length; i++) { wx += bx[i] * r[i]; wy += by[i] * r[i]; }
+    return [wx, wy];
+  };
+}
+function projectVert(p, nodes, proj) {
+  const hit = nodes.find(n => n.wx != null && near3(n, p));
+  if (hit) return [hit.wx, hit.wy];
+  return proj ? proj(p) : null;
+}
+function grabArgs(body, i) {
+  const args = [];
+  while (i < body.length && (body[i] === ' ' || body[i] === '\n' || body[i] === '\r')) i++;
+  while (i < body.length && (body[i] === '{' || body[i] === '[')) {
+    const open = body[i], close = open === '{' ? '}' : ']';
+    let d = 0, k = i;
+    for (; k < body.length; k++) {
+      if (body[k] === open) d++;
+      else if (body[k] === close) {
+        d--;
+        if (d === 0) { args.push(body.slice(i + 1, k)); i = k + 1; break; }
+      }
+    }
+    if (d !== 0) break;
+    while (i < body.length && (body[i] === ' ' || body[i] === '\n' || body[i] === '\r')) i++;
+  }
+  return { args, i };
+}
+function normVec(v) {
+  const L = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / L, y: v.y / L, z: v.z / L };
+}
+function circleAxes(normal, radius) {
+  const n = normVec(normal);
+  let m = { x: 1 - n.x * n.x, y: -n.x * n.y, z: -n.x * n.z };
+  if (Math.hypot(m.x, m.y, m.z) < 1e-8) m = { x: -n.y * n.z, y: 1 - n.y * n.y, z: -n.y * n.z };
+  const mlen = Math.hypot(m.x, m.y, m.z) || 1;
+  m = { x: m.x / mlen * radius, y: m.y / mlen * radius, z: m.z / mlen * radius };
+  const k = { x: n.y * m.z - n.z * m.y, y: n.z * m.x - n.x * m.z, z: n.x * m.y - n.y * m.x };
+  return [m, k];
+}
+function arcAxes(normal, major, ratio) {
+  const n = normVec(normal);
+  const k = {
+    x: (n.y * major.z - n.z * major.y) * ratio,
+    y: (n.z * major.x - n.x * major.z) * ratio,
+    z: (n.x * major.y - n.y * major.x) * ratio
+  };
+  return [major, k];
+}
+function sampleEllipse(c, major, minor, t0, t1, n) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = t0 + (t1 - t0) * i / n, ct = Math.cos(t), st = Math.sin(t);
+    pts.push({
+      x: c.x + major.x * ct + minor.x * st,
+      y: c.y + major.y * ct + minor.y * st,
+      z: c.z + major.z * ct + minor.z * st
+    });
+  }
+  return pts;
+}
+function splitNameLoops(arg) {
+  const loops = [];
+  const push = s => {
+    const names = String(s).split(',').map(x => x.trim()).filter(x => /^[A-Za-z][A-Za-z0-9_]*$/.test(x));
+    if (names.length) loops.push(names);
+  };
+  if (arg.includes('{')) {
+    let i = 0;
+    while (i < arg.length) {
+      if (arg[i] === '{') {
+        const g = grabArgs(arg, i);
+        push(g.args[0] || '');
+        i = g.i || (i + 1);
+      } else i++;
+    }
+  } else arg.split(';').forEach(push);
+  return loops;
+}
+function edgeLoops(body) {
+  const loops = [];
+  const re = /\\begin\{stpDfaceLoop\}([\s\S]*?)\\end\{stpDfaceLoop\}/g;
+  let m, any = false;
+  while ((m = re.exec(body))) { any = true; loops.push(edgesOf(m[1])); }
+  if (!any) loops.push(edgesOf(body));
+  return loops;
+}
+function edgesOf(body) {
+  const loop = [], anchors = [];
+  const re = /\\stpDedge(Line|Circle|Arc|Spline)\b/g;
+  let m;
+  while ((m = re.exec(body))) {
+    const got = grabArgs(body, m.index + m[0].length);
+    re.lastIndex = got.i;
+    const a = got.args;
+    if (m[1] === 'Line' && a.length >= 2) {
+      const p0 = parseXYZ(a[0]), p1 = parseXYZ(a[1]);
+      if (p0 && p1) { loop.push(p0, p1); anchors.push(p0, p1); }
+    } else if (m[1] === 'Circle' && a.length >= 3) {
+      const c = parseXYZ(a[0]), n = parseXYZ(a[1]), r = parseFloat(a[2]);
+      if (c && n && r > 0) {
+        const [maj, min] = circleAxes(n, r);
+        loop.push(...sampleEllipse(c, maj, min, -Math.PI, Math.PI, 24).slice(0, 24));
+      }
+    } else if (m[1] === 'Arc' && a.length >= 6) {
+      const c = parseXYZ(a[0]), n = parseXYZ(a[1]), maj = parseXYZ(a[2]);
+      const ratio = parseFloat(a[3]), t0 = parseFloat(a[4]), t1 = parseFloat(a[5]);
+      if (c && n && maj && [ratio, t0, t1].every(Number.isFinite)) {
+        const [M, k] = arcAxes(n, maj, ratio);
+        const samp = sampleEllipse(c, M, k, t0, t1, 16);
+        loop.push(...samp);
+        anchors.push(samp[0], samp[samp.length - 1]);
+      }
+    } else if (m[1] === 'Spline' && a.length >= 2) {
+      const controls = [];
+      const cre = /\{([^{}]+)\}/g;
+      let cm;
+      while ((cm = cre.exec(a[1]))) {
+        const p = parseXYZ(cm[1]);
+        if (p) controls.push(p);
+      }
+      const shown = a[2] ? [] : controls;
+      if (a[2]) {
+        const sre = /\{([^{}]+)\}/g;
+        let sm;
+        while ((sm = sre.exec(a[2]))) {
+          const p = parseXYZ(sm[1]);
+          if (p) shown.push(p);
+        }
+      }
+      loop.push(...(shown.length ? shown : controls));
+      anchors.push(...controls);
+    }
+  }
+  return { loop, anchors };
+}
+function parseStruct(text) {
+  const beams = [], faces = [], namedFaces = [];
+  const memberRe = /\\stp(?:Dmember|Member)\s*\{[^{}]+\}\s*\{([A-Za-z][A-Za-z0-9_]*)\}\s*\{([A-Za-z][A-Za-z0-9_]*)\}/g;
+  const aliasRe = /\\stp(?:BeamFiber|Beam|Truss|Rod|Ghost|Drod)\s*\{([A-Za-z][A-Za-z0-9_]*)\}\s*\{([A-Za-z][A-Za-z0-9_]*)\}/g;
+  forCodeLines(text, (body, a, b) => {
+    if (!body.trim()) return;
+    for (const re of [memberRe, aliasRe]) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(body))) beams.push({ a: m[1], b: m[2], s: a, e: b });
+    }
+    const faceRe = /\\stp(?:Face|StubPlate|Dface)(?!load)\b/g;
+    let fm;
+    while ((fm = faceRe.exec(body))) {
+      const got = grabArgs(body, fm.index + fm[0].length);
+      faceRe.lastIndex = got.i;
+      const loops = splitNameLoops(got.args[0] || '');
+      if (!loops.length) continue;
+      namedFaces.push({ names: loops.flat(), loops, s: a, e: b });
+    }
+  });
+  const envRe = /\\begin\{stpDfaceEnv\}/g;
+  let em;
+  while ((em = envRe.exec(text))) {
+    const end = text.indexOf('\\end{stpDfaceEnv}', em.index);
+    if (end < 0) break;
+    const endAt = end + '\\end{stpDfaceEnv}'.length;
+    const body = text.slice(em.index, endAt);
+    const parts = edgeLoops(body);
+    let s = text.lastIndexOf('\n', em.index - 1); s = s < 0 ? 0 : s + 1;
+    let e = text.indexOf('\n', endAt);
+    e = e < 0 ? text.length : e + 1;
+    faces.push({
+      s, e,
+      loops: parts.map(p => p.loop),
+      anchors: parts.flatMap(p => p.anchors)
+    });
+    envRe.lastIndex = endAt;
+  }
+  return { beams, faces, namedFaces };
+}
+function nodeBlocked(node, model) {
+  if (model.beams.some(b => b.a === node.name || b.b === node.name)) return true;
+  if (model.namedFaces.some(f => f.names.includes(node.name))) return true;
+  if (model.faces.some(f => f.anchors.some(v => near3(v, node)))) return true;
+  return false;
+}
+function nodeReferenced(text, node) {
+  let used = false;
+  forCodeLines(text, body => {
+    if (used || !body.trim() || !hasName(body, node.name) || isNodeDef(body, node.name)) return;
+    used = true;
+  });
+  return used;
+}
+function selectedFeaNodes() {
+  const ids = multiSet.size ? [...multiSet] : (activeIdx >= 0 ? [activeIdx] : []);
+  const seen = new Set();
+  const out = [];
+  ids.forEach(i => {
+    const p = pts[i];
+    if (!p || !p.label || seen.has(p.label)) return;
+    if (p.stp !== 'node' && p.stp !== 'dpoint' && p.stp !== 'point') return;
+    seen.add(p.label);
+    out.push({ name: p.label, x: +p.x, y: +p.y, z: +(p.z || 0), s: p.s });
+  });
+  return out;
+}
+function feaBtnTitle(el, text) {
+  if (!el) return;
+  el.title = text;
+}
+function syncFeaUi() {
+  const box = $('fea-tools');
+  if (!box) return;
+  const on = isStructPicture();
+  box.style.display = on ? 'inline-flex' : 'none';
+  const pick = pickPointsOn();
+  const offTitle = t('点识别关闭时不可用');
+  const del = $('fea-del'), nodeBtn = $('fea-del-node'), clean = $('fea-clean'), pointDel = $('del-btn');
+  const beamFace = structList().some(it => it.kind === 'beam' || it.kind === 'face');
+  if (del) {
+    del.disabled = !on || !pick || !beamFace;
+    feaBtnTitle(del, !pick && on ? offTitle : t('删除选中的梁或面'));
+  }
+  const chosen = on && pick ? selectedFeaNodes() : [];
+  const model = chosen.length ? parseStruct($('code').value || '') : null;
+  const locked = !!(model && chosen.some(n => nodeBlocked(n, model)));
+  if (nodeBtn) {
+    nodeBtn.disabled = !on || !pick || !chosen.length || locked;
+    feaBtnTitle(nodeBtn, !pick && on ? offTitle : (locked ? t('该节点被梁或面使用，不能删除') : t('删除未被梁或面使用的节点，并去掉该节点上的约束和载荷')));
+  }
+  if (pointDel && on) {
+    const one = activeIdx >= 0 ? pts[activeIdx] : null;
+    const structPt = one && (one.stp === 'node' || one.stp === 'dpoint' || one.stp === 'point');
+    if (structPt) pointDel.disabled = !pick || locked;
+    else pointDel.disabled = false;
+  }
+  if (clean) {
+    clean.disabled = !on || !pick;
+    feaBtnTitle(clean, !pick && on ? offTitle : t('删除没有被梁、面、约束、载荷等使用的节点'));
+  }
+}
+function applyCuts(spans) {
+  let t = $('code').value;
+  const merged = [];
+  spans.filter(sp => sp && sp[1] > sp[0]).sort((a, b) => a[0] - b[0]).forEach(sp => {
+    const last = merged[merged.length - 1];
+    if (last && sp[0] <= last[1]) last[1] = Math.max(last[1], sp[1]);
+    else merged.push([sp[0], sp[1]]);
+  });
+  for (let i = merged.length - 1; i >= 0; i--) t = t.slice(0, merged[i][0]) + t.slice(merged[i][1]);
+  structSel = null;
+  activeIdx = -1;
+  multiSet.clear();
+  $('inputs').style.display = 'none';
+  $('code').value = t;
+  go(true);
+}
+function spansNaming(text, name) {
+  const spans = [];
+  forCodeLines(text, (body, a, b) => {
+    if (!body.trim() || !hasName(body, name)) return;
+    spans.push([a, b]);
+  });
+  return spans;
+}
+function structList() {
+  if (!structSel) return [];
+  return Array.isArray(structSel) ? structSel : [structSel];
+}
+function sameStruct(a, b) {
+  if (!a || !b || a.kind !== b.kind || a.s !== b.s || a.e !== b.e) return false;
+  if (a.kind === 'beam') return a.a === b.a && a.b === b.b;
+  return true;
+}
+function deleteStructSelection() {
+  const items = structList().filter(it => it.kind === 'beam' || it.kind === 'face');
+  if (!pickPointsOn() || !items.length || statusNow.kind === 'compiling') return;
+  applyCuts(items.map(it => [it.s, it.e]));
+}
+function deleteSelectedNodes() {
+  if (!pickPointsOn() || statusNow.kind === 'compiling') return;
+  const chosen = selectedFeaNodes();
+  if (!chosen.length) return;
+  const text = $('code').value || '';
+  const model = parseStruct(text);
+  if (chosen.some(n => nodeBlocked(n, model))) {
+    setStatus('fea', { note: t('该节点被梁或面使用，不能删除') });
+    syncFeaUi();
+    return;
+  }
+  const spans = [];
+  chosen.forEach(n => spans.push(...spansNaming(text, n.name)));
+  if (!spans.length) return;
+  applyCuts(spans);
+}
+function cleanupUnusedNodes() {
+  if (!pickPointsOn() || !isStructPicture() || statusNow.kind === 'compiling') return;
+  const text = $('code').value || '';
+  const model = parseStruct(text);
+  const spans = [];
+  structNodes().forEach(n => {
+    if (nodeBlocked(n, model) || nodeReferenced(text, n)) return;
+    forCodeLines(text, (body, a, b) => {
+      if (body.trim() && isNodeDef(body, n.name)) spans.push([a, b]);
+    });
+  });
+  if (!spans.length) { setStatus('fea', { note: t('没有可清理的节点') }); return; }
+  applyCuts(spans);
+}
+function screenOf(wx, wy) {
+  const z = +$('zm').value, r = $('stage').getBoundingClientRect(), [px, py] = tikzToPage(wx, wy);
+  return [r.left + px * z, r.top + py * z];
+}
+function distSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  let t = l2 < 1e-9 ? 0 : ((px - ax) * dx + (py - ay) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+function evenOdd(x, y, rings) {
+  let w = 0;
+  rings.forEach(ring => {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[j], b = ring[i];
+      if ((a.y > y) !== (b.y > y)) {
+        const xh = (b.x - a.x) * (y - a.y) / ((b.y - a.y) || 1e-12) + a.x;
+        if (x < xh) w++;
+      }
+    }
+  });
+  return w % 2 === 1;
+}
+function ringArea(ring) {
+  let a = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) a += ring[j].x * ring[i].y - ring[i].x * ring[j].y;
+  return Math.abs(a) * 0.5;
+}
+function projectLoops(loops, nodes, proj) {
+  return loops.map(loop => loop.map(p => {
+    const w = projectVert(p, nodes, proj);
+    return w ? { x: w[0], y: w[1] } : null;
+  }).filter(Boolean)).filter(r => r.length >= 3);
+}
+function pickStruct(clientX, clientY) {
+  if (!pickPointsOn() || !cal || !isStructPicture()) return null;
+  const nodes = structNodes();
+  const byName = new Map(nodes.map(n => [n.name, n]));
+  const model = parseStruct($('code').value || '');
+  let bestBeam = null, bestD = 8;
+  model.beams.forEach(b => {
+    const A = byName.get(b.a), B = byName.get(b.b);
+    if (!A || !B || A.wx == null || B.wx == null) return;
+    const [ax, ay] = screenOf(A.wx, A.wy), [bx, by] = screenOf(B.wx, B.wy);
+    const d = distSeg(clientX, clientY, ax, ay, bx, by);
+    if (d < bestD) { bestD = d; bestBeam = b; }
+  });
+  if (bestBeam) return { kind: 'beam', a: bestBeam.a, b: bestBeam.b, s: bestBeam.s, e: bestBeam.e };
+  const proj = makeProjector(nodes);
+  let bestFace = null, bestArea = Infinity;
+  const consider = (rings, s, e) => {
+    if (!rings.length) return;
+    const page = rings.map(ring => ring.map(p => {
+      const [x, y] = screenOf(p.x, p.y);
+      return { x, y };
+    }));
+    if (!evenOdd(clientX, clientY, page)) return;
+    const area = page.reduce((s0, r) => s0 + ringArea(r), 0);
+    if (area < bestArea) { bestArea = area; bestFace = { kind: 'face', s, e, loops: rings }; }
+  };
+  model.faces.forEach(f => consider(projectLoops(f.loops, nodes, proj), f.s, f.e));
+  model.namedFaces.forEach(f => {
+    const rings = f.loops.map(names => names.map(nm => byName.get(nm)).filter(n => n && n.wx != null).map(n => ({ x: n.wx, y: n.wy }))).filter(r => r.length >= 3);
+    consider(rings, f.s, f.e);
+  });
+  return bestFace;
+}
+function labelStructSel() {
+  const items = structList();
+  if (!items.length) return;
+  const kind = items[0].kind, n = items.length;
+  if (kind === 'beam' && n === 1) $('sel-info').textContent = tf('已选梁 ' + items[0].a + '–' + items[0].b, 'Beam ' + items[0].a + '–' + items[0].b);
+  else if (kind === 'beam') $('sel-info').textContent = tf('已选 ' + n + ' 根梁', n + ' beams selected');
+  else if (n === 1) $('sel-info').textContent = t('已选面');
+  else $('sel-info').textContent = tf('已选 ' + n + ' 个面', n + ' faces selected');
+}
+function selectStruct(hit, add) {
+  const cur = structList();
+  if (add && cur.length) {
+    if (hit.kind !== cur[0].kind) {
+      setStatus('fea', { note: t('只能加选同一种图元') });
+      return;
+    }
+    const i = cur.findIndex(it => sameStruct(it, hit));
+    const next = i >= 0 ? cur.filter((_, j) => j !== i) : cur.concat(hit);
+    structSel = next.length ? next : null;
+  } else structSel = [hit];
+  if (statusNow.kind === 'fea') setStatus('ok', { n: pts.length });
+  activeIdx = -1;
+  multiSet.clear();
+  $('inputs').style.display = 'none';
+  hideDimEdit();
+  if (!structSel) { idleSel(); draw(); return; }
+  labelStructSel();
+  showLine({ s: hit.s }, true);
+  syncFeaUi();
+  draw();
+}
+function paintStructSel() {
+  const items = structList();
+  if (!items.length || !cal || !pickPointsOn()) return;
+  const nodes = structNodes();
+  const byName = new Map(nodes.map(n => [n.name, n]));
+  const z = +$('zm').value;
+  const pos = (x, y) => { const [px, py] = tikzToPage(x, y); return { x: px * z, y: py * z }; };
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'fea-sel');
+  items.forEach(it => {
+    if (it.kind === 'beam') {
+      const A = byName.get(it.a), B = byName.get(it.b);
+      if (!A || !B || A.wx == null || B.wx == null) return;
+      const a = pos(A.wx, A.wy), b = pos(B.wx, B.wy);
+      const ln = document.createElementNS(ns, 'line');
+      ln.setAttribute('x1', a.x); ln.setAttribute('y1', a.y);
+      ln.setAttribute('x2', b.x); ln.setAttribute('y2', b.y);
+      svg.appendChild(ln);
+    } else if (it.kind === 'face' && it.loops) {
+      it.loops.forEach(ring => {
+        if (ring.length < 3) return;
+        const poly = document.createElementNS(ns, 'polygon');
+        poly.setAttribute('points', ring.map(p => { const q = pos(p.x, p.y); return q.x + ',' + q.y; }).join(' '));
+        svg.appendChild(poly);
+      });
+    }
+  });
+  if (svg.childNodes.length) $('ov').appendChild(svg);
+}
 function idleSel() {
+  structSel = null;
   $('sel-info').textContent = t('拖拽框选或点全选，然后平移、缩放、旋转');
   hideLine(); hideDimEdit();
+  syncFeaUi();
   const ellBox = $('ell-extra'), paBox = $('planeaxes-extra'), xform = $('xform-wrap');
   if (ellBox) ellBox.style.display = 'none';
   if (paBox) paBox.style.display = 'none';
@@ -2698,6 +3339,7 @@ function showLine(c, selectText = false) {
 }
 function selectPt(idx, fi = false) {
   activeIdx = idx; const c = pts.at(idx); if (!c) return;
+  structSel = null;
   multiSet.clear();
   showLine(c, true);
   $('sel-info').textContent = planeAxesLocked(idx)
@@ -2706,6 +3348,7 @@ function selectPt(idx, fi = false) {
   $('inputs').style.display = 'inline-flex';
   showFields(c);
   showDimEdit(idx);
+  syncFeaUi();
   draw();
   if (fi) {
     const focusEl = planeAxesLocked(idx) ? $('pa-x0') : $('ix');
@@ -2766,15 +3409,17 @@ function applyEdit(idx, fx, fy, moveStmt = false) {
 }
 function movablePoint(c) { return !!(c && (c.kind === 'abs' || c.kind === 'xyz')); }
 function showMulti(focus) {
+  structSel = null;
   activeIdx = -1;
   hideDimEdit();
   const ellBox = $('ell-extra');
   if (ellBox) ellBox.style.display = 'none';
-  if (!multiSet.size) { $('inputs').style.display = 'none'; $('sel-info').textContent = t('没有可变换的坐标点'); hideLine(); draw(); return; }
+  if (!multiSet.size) { $('inputs').style.display = 'none'; $('sel-info').textContent = t('没有可变换的坐标点'); hideLine(); syncFeaUi(); draw(); return; }
   $('sel-info').textContent = tf(`已多选 ${multiSet.size} 点，可平移；缩放和旋转后点变换`, `${multiSet.size} points selected. Move them, or set scale and rotation, then Transform`);
   $('inputs').style.display = 'inline-flex';
   $('lx').textContent = 'ΔX:'; $('ix').value = '0';
   $('ly').style.display = 'inline'; $('iy').style.display = 'inline'; $('ly').textContent = 'ΔY:'; $('iy').value = '0';
+  syncFeaUi();
   draw();
   if (focus) { $('ix').focus(); $('ix').select(); }
 }
@@ -2798,7 +3443,11 @@ function beginMarquee(e) {
   const mv = ev => { if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 4) return; moved = true; paint(ev.clientX, ev.clientY); };
   const up = ev => {
     window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); box.remove();
-    if (!moved) { multiSet.clear(); activeIdx = -1; $('inputs').style.display = 'none'; idleSel(); draw(); return; }
+    if (!moved) {
+      const hit = pickStruct(x0, y0);
+      if (hit) { selectStruct(hit, e.ctrlKey || e.metaKey); return; }
+      multiSet.clear(); activeIdx = -1; $('inputs').style.display = 'none'; idleSel(); draw(); return;
+    }
     const l = Math.min(x0, ev.clientX), rgt = Math.max(x0, ev.clientX), t = Math.min(y0, ev.clientY), b = Math.max(y0, ev.clientY);
     if (!(e.shiftKey || e.ctrlKey || e.metaKey)) multiSet.clear();
     pts.forEach((c, i) => {
@@ -2852,9 +3501,10 @@ async function importDxfFile(f) {
     const r = await fetch('/api/dxf', {method:'POST', body: fd});
     d = await r.json();
   } catch (err) {
-    $('toast').style.display = 'block'; $('toast').textContent = t('❌ 导入失败：') + '\n' + err; setStatus('fail'); return;
+    const text = t('❌ 导入失败：') + '\n' + err;
+    $('toast').style.display = 'block'; $('toast').textContent = text; setStatus('fail', { note: text }); return;
   }
-  if (!d.ok) { $('toast').style.display = 'block'; $('toast').textContent = t('❌ 导入失败：') + '\n' + t(d.err); setStatus('fail'); return; }
+  if (!d.ok) { const text = t('❌ 导入失败：') + '\n' + t(d.err); $('toast').style.display = 'block'; $('toast').textContent = text; setStatus('fail', { note: text }); return; }
   // Server may upgrade geom → struct3d for REGION/SURFACE shell DXFs
   mode = (d.mode || mode || 'geom').toLowerCase();
   if (mode === 'struct3d' || mode === 'struct2d') activeTpl = mode;
@@ -2867,7 +3517,7 @@ async function importDxfFile(f) {
     tplSel.value = mode;
   }
   await go(false);
-  if (statusNow.kind === 'ok') setStatus('note', { note: d.note });
+  if (statusNow.kind === 'ok' && d.note) pushLog('info', d.note);
 }
 function rebuildAdim(raw) {
   const idm = adimOrigin(raw);
@@ -2919,9 +3569,20 @@ async function go(rb = false) {
   const r = await fetch('/api/compile', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code:cur, compiler:$('comp').value, pick: pickPointsOn()})});
   const d = await r.json();
   if (seq !== goSeq) return;
-  if (!d.ok) { $('toast').style.display = 'block'; if (rb && lastGood && lastGood !== cur) { $('code').value = lastGood; $('toast').textContent = t('⚠️ 已回退：') + '\n' + d.err; setStatus('revert'); draw(); } else { $('toast').textContent = t('❌ 编译错误：') + '\n' + d.err; setStatus('fail'); } return; }
+  if (!d.ok) {
+    $('toast').style.display = 'none';
+    if (rb && lastGood && lastGood !== cur) {
+      $('code').value = lastGood;
+      const text = t('⚠️ 已回退：') + '\n' + d.err;
+      setStatus('revert', { note: text }); draw();
+    } else {
+      const text = t('❌ 编译错误：') + '\n' + d.err;
+      setStatus('fail', { note: text });
+    }
+    return;
+  }
   $('toast').style.display = 'none'; if (cur !== lastGood) { lastGood = cur; history.push(cur); if (history.length > 30) history.shift(); }
-  $('svg').innerHTML = d.svg; W = d.w; H = d.h; pts = d.coords; ports = d.ports || []; cal = d.cal; activeIdx = -1; multiSet.clear(); $('inputs').style.display = 'none'; idleSel(); draw(); setStatus('ok', { n: pts.length });
+  $('svg').innerHTML = d.svg; W = d.w; H = d.h; pts = d.coords; ports = d.ports || []; cal = d.cal; activeIdx = -1; multiSet.clear(); $('inputs').style.display = 'none'; idleSel(); draw(); figureCode = cur; setStatus('ok', { n: pts.length });
   if (!keep) return;
   const i = pts.findIndex(p => cur.slice(cur.lastIndexOf('\n', p.s) + 1, p.s).includes('\\coordinate (' + keep + ')'));
   if (i >= 0) selectPt(i);
@@ -3282,6 +3943,7 @@ function draw() {
     $('ov').appendChild(d);
   });
   paintPlace();
+  paintStructSel();
 }
 function refreshLang() {
   applyI18n();
@@ -3289,7 +3951,8 @@ function refreshLang() {
   if ($('libbox').style.display === 'block') fillLibPick();
   if (place) paintPlaceForm();
   else if (multiSet.size) showMulti(false);
-  else if (activeIdx >= 0) { showFields(pts.at(activeIdx)); showDimEdit(activeIdx); }
+  else if (activeIdx >= 0) { showFields(pts.at(activeIdx)); showDimEdit(activeIdx); syncFeaUi(); }
+  else if (structList().length) { labelStructSel(); syncFeaUi(); }
   else idleSel();
   paintStatus();
 }
@@ -3299,6 +3962,9 @@ window.onload = () => {
   setStatus('ready');
   $('lang').onclick = () => { setLang(lang === 'en' ? 'zh' : 'en'); refreshLang(); };
   $('del-btn').onclick = delSel; $('xform-btn').onclick = xformSel; $('sel-all').onclick = selectAllPoints;
+  $('fea-del').onclick = deleteStructSelection;
+  $('fea-del-node').onclick = deleteSelectedNodes;
+  $('fea-clean').onclick = cleanupUnusedNodes;
   $('tpl-sel').onchange = e => {
     const key = e.target.value;
     if (!key) return;

@@ -6,7 +6,7 @@
   <button id="open-dxf" class="sec" data-i18n="导入 DXF">导入 DXF</button><input type="file" id="dxf-in" accept=".dxf" style="display:none">
   <button id="save-tex" class="sec" data-i18n="💾 保存">💾 保存</button>
   <select id="tpl-sel"><option value="" data-i18n="📑 模板...">📑 模板...</option><option value="rc" data-i18n="⚡ RC滤波">⚡ RC滤波</option><option value="buck">🔋 Buck</option><option value="opamp" data-i18n="📐 运放">📐 运放</option><option value="block" data-i18n="📦 框图">📦 框图</option><option value="struct2d" data-i18n="🏗 2D结构分析">🏗 2D结构分析</option><option value="struct3d" data-i18n="🏗 3D结构分析">🏗 3D结构分析</option><option value="plot" data-i18n="📈 曲线">📈 曲线</option><option value="plane" data-i18n="📏 二维">📏 二维</option><option value="cms" data-i18n="🌐 CMS三维">🌐 CMS三维</option><option value="gauss" data-i18n="📊 高斯分布">📊 高斯分布</option><option value="freq" data-i18n="〰️ 频率响应">〰️ 频率响应</option></select>
-  <select id="comp"><option value="xelatex">XeLaTeX</option><option value="pdflatex">pdfLaTeX</option></select>
+  <select id="comp"><option value="lualatex" selected>LuaLaTeX</option><option value="xelatex">XeLaTeX</option><option value="pdflatex">pdfLaTeX</option></select>
   <button id="lang" type="button" class="sec">EN</button>
   <span id="st" style="margin-left:auto;font-size:12px;color:#4ec9b0">就绪</span>
 </div><div id="cbar"></div>
@@ -21,7 +21,7 @@
   <label><span data-i18n="模板">模板</span> <input id="lib-tpl" placeholder="\draw {{1}} to[zD, l={{文字}}] {{2}};"></label>
   <div class="libhint" data-i18n="{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。">{{1}}、{{2}} 是点，{{文字}} 是文字或标注，{{角度}} 是旋转角度。</div>
   <button id="lib-add-custom" type="button" data-i18n="添加自定义">添加自定义</button><span id="lib-msg"></span>
-</div><div id="ed"><div id="hl"></div><textarea id="code"></textarea></div></div>
+</div><div id="ed"><div id="hl"></div><textarea id="code"></textarea></div><div id="lstat"><div id="lcap" data-i18n="日志">日志</div><div id="llog"></div></div></div>
 <div id="R"><div id="zbar">
   <label><span data-i18n="缩放">缩放</span> <input id="zm" type="range" min="0.05" max="8" step="0.05" value="1" title="也可在预览区用滚轮缩放（以光标为中心）"><span id="zm-val" style="min-width:2.8em;font:12px monospace">100%</span></label>
   <label style="font-weight:bold" title="关闭后不解析、不绘制任何可拖点（红/蓝/紫），可加快大图编译"><input id="pick-pts" type="checkbox" checked> <span data-i18n="点识别">点识别</span></label>
@@ -35,6 +35,11 @@
   <span style="margin-left:auto;display:flex;gap:4px"><button class="exp" onclick="exportFile('pdf')">PDF</button><button class="exp" onclick="exportFile('png')">PNG</button><button class="exp" onclick="exportFile('svg')">SVG</button></span>
 </div><div id="ebar">
   <button id="sel-all" type="button" class="sec" data-i18n="全选" data-i18n-title="选中全部可平移、缩放的坐标" title="选中全部可平移、缩放的坐标">全选</button>
+  <span id="fea-tools">
+    <button id="fea-del" type="button" class="del" disabled data-i18n="删除图元" data-i18n-title="删除选中的梁或面" title="删除选中的梁或面">删除图元</button>
+    <button id="fea-del-node" type="button" class="del" disabled data-i18n="删除节点" data-i18n-title="删除未被梁或面使用的节点，并去掉该节点上的约束和载荷" title="删除未被梁或面使用的节点，并去掉该节点上的约束和载荷">删除节点</button>
+    <button id="fea-clean" type="button" class="sec" disabled data-i18n="清理" data-i18n-title="删除没有被梁、面、约束、载荷等使用的节点" title="删除没有被梁、面、约束、载荷等使用的节点">清理</button>
+  </span>
   <span id="sel-info" data-i18n="拖拽框选或点全选，然后平移、缩放、旋转" style="color:#aaa">拖拽框选或点全选，然后平移、缩放、旋转</span>
   <span id="place"><b id="place-title"></b><span id="place-fields"></span><button id="place-ok" type="button" data-i18n="确认">确认</button><button id="place-cancel" type="button" class="sec" data-i18n="取消">取消</button></span>
   <span id="dimedit" style="display:none"><span data-i18n="样式">样式</span><button type="button" id="ed-h" class="sec" data-i18n="水平">水平</button><button type="button" id="ed-v" class="sec" data-i18n="竖直">竖直</button><button type="button" id="ed-a" class="sec" data-i18n="对齐">对齐</button><button type="button" id="ed-in" class="sec" data-i18n="内">内</button><button type="button" id="ed-out" class="sec" data-i18n="外">外</button><button type="button" id="ed-s1" class="sec" data-i18n="抑起点" data-i18n-title="不画起点一侧的箭头和引出线" title="不画起点一侧的箭头和引出线">抑起点</button><button type="button" id="ed-s2" class="sec" data-i18n="抑终点" data-i18n-title="不画终点一侧的箭头和引出线" title="不画终点一侧的箭头和引出线">抑终点</button><input id="ed-lab"></span>

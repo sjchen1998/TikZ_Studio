@@ -11,6 +11,7 @@ import ezdxf
 from ezdxf import recover
 
 from .cae_beam_mesh import (
+    collect_beam_segs_from_inserts,
     collect_beam_segs_from_msp,
     expand_dist_loads,
     mesh_beams,
@@ -28,9 +29,10 @@ from .cae_face_curves import (
     face_curve_loops_from_entity,
     format_stp_analytic_face,
     revolve_extent_pts,
+    transform_analytic_face,
 )
 from .cae_welds import emit_weld_tex_3d, parse_seam_welds, parse_spot_welds
-from .dxf_import import _A0, _SCALE_N, _TO_CM, _sheet_scale
+from .dxf_import import _A0, _SCALE_N, _TO_CM, _sheet_scale, iter_inserted_entities
 
 
 def _k(p, tol=1e-6):
@@ -106,12 +108,42 @@ def filter_beams_duplicating_shell_edges(beam_segs, faces, *, tol: float = 1.0):
                     edges.append((ed.a, ed.b))
     if not edges:
         return beam_segs
+    # Bin edge endpoints so each beam checks only nearby edges, not every face.
+    step = max(float(tol), 1e-9)
+    bins: dict[tuple[int, int, int], list[int]] = {}
+
+    def _bin(p) -> tuple[int, int, int]:
+        return (
+            math.floor(float(p[0]) / step),
+            math.floor(float(p[1]) / step),
+            math.floor(float(p[2]) / step),
+        )
+
+    for i, (ea, eb) in enumerate(edges):
+        bins.setdefault(_bin(ea), []).append(i)
+        bins.setdefault(_bin(eb), []).append(i)
+
+    def _nearby(p) -> set[int]:
+        ix, iy, iz = _bin(p)
+        hit: set[int] = set()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    hit.update(bins.get((ix + dx, iy + dy, iz + dz), ()))
+        return hit
+
     kept = []
     for seg in beam_segs:
         if _beam_attrs_structural(getattr(seg, "attrs", None)):
             kept.append(seg)
             continue
-        if any(_seg_matches_line_edge(seg.a, seg.b, ea, eb, tol) for ea, eb in edges):
+        matched = False
+        for i in _nearby(seg.a) & _nearby(seg.b):
+            ea, eb = edges[i]
+            if _seg_matches_line_edge(seg.a, seg.b, ea, eb, tol):
+                matched = True
+                break
+        if matched:
             continue
         kept.append(seg)
     return kept
@@ -482,6 +514,7 @@ def dxf_to_satopdf3d(
 
     nodes: dict[tuple, tuple] = {}
     beam_segs = collect_beam_segs_from_msp(msp, dim=3, key_tol=1e-6)
+    beam_segs.extend(collect_beam_segs_from_inserts(doc, msp, dim=3, key_tol=1e-6))
     for s in beam_segs:
         nodes[s.a] = s.a
         nodes[s.b] = s.b
@@ -510,15 +543,15 @@ def dxf_to_satopdf3d(
         "SPLINE",
         "HATCH",
     )
-    for e in msp:
+    def _take_face(e, xform=None):
         layer = (e.dxf.layer or "").upper()
         if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
-            continue
+            return
         if e.dxftype() not in _FACE_TYPES:
-            continue
+            return
         analytic = analytic_faces_from_entity(e)
         if not analytic:
-            continue
+            return
         shell_ld = None
         try:
             shell_ld = _parse_shell_load_xdata(e.get_xdata("MY_CAE_SHELL_LOAD"))
@@ -526,6 +559,8 @@ def dxf_to_satopdf3d(
             shell_ld = None
         mesh_u, mesh_v = _dxf_surface_isoline_counts(e)
         for af in analytic:
+            if xform is not None:
+                af = transform_analytic_face(af, xform)
             cen = _k(af.get("cen") or (0.0, 0.0, 0.0))
             if af.get("kind") == "cylinder":
                 extent_pts.extend(cylinder_extent_pts(af, n=24))
@@ -547,6 +582,12 @@ def dxf_to_satopdf3d(
             if shell_ld is not None:
                 nodes[cen] = cen
                 face_loads_by_idx[fi] = shell_ld
+
+    for e in msp:
+        _take_face(e)
+    # Associative ARRAY / block INSERT: source lives in an anonymous block.
+    for e, xform in iter_inserted_entities(doc, msp):
+        _take_face(e, xform)
 
     # Sweep/extrude often leaves profile/path LINEs on face edges — not beams
     if faces:

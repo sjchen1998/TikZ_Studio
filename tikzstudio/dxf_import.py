@@ -529,3 +529,50 @@ def _tex(s):
 def _safe_name(name):
     base = os.path.basename(name or "drawing.dxf").replace("%", "").replace("\n", " ").strip()
     return base or "drawing.dxf"
+
+
+def iter_inserted_entities(doc, space):
+    """Yield ``(entity, matrix44)`` for geometry inside modelspace INSERTs.
+
+    Associative ARRAY stores one source in an anonymous block and one INSERT
+    per item (polar / rectangular / path). ``matrix44`` maps that entity from
+    block coordinates into the space that owns the top-level INSERT. Nested
+    inserts compose child-then-parent (ezdxf row-vector matrices).
+    """
+    for e in space:
+        if e.dxftype() != "INSERT":
+            continue
+        layer = (getattr(e.dxf, "layer", "") or "").upper()
+        if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
+            continue
+        name = getattr(e.dxf, "name", "") or ""
+        if not name:
+            continue
+        try:
+            matrix = e.matrix44()
+        except Exception:
+            continue
+        blk = doc.blocks.get(name)
+        if blk is None:
+            continue
+        yield from _iter_block_entities(doc, blk, matrix, (name,))
+
+
+def _iter_block_entities(doc, block, matrix, stack: tuple):
+    if len(stack) > 8:
+        return
+    for be in block:
+        if be.dxftype() == "INSERT":
+            name = getattr(be.dxf, "name", "") or ""
+            if not name or name in stack:
+                continue
+            sub = doc.blocks.get(name)
+            if sub is None:
+                continue
+            try:
+                child = be.matrix44() @ matrix
+            except Exception:
+                continue
+            yield from _iter_block_entities(doc, sub, child, stack + (name,))
+        else:
+            yield be, matrix

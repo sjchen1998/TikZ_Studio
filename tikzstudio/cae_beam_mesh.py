@@ -347,39 +347,153 @@ def split_segment_at_points(
     return out
 
 
+def _seg_grid_cells(a: Sequence[float], b: Sequence[float], tol: float, cell: float, dim: int):
+    """Grid cells touched by segment ab, expanded by tol."""
+    ranges: list[tuple[int, int]] = []
+    span = 1
+    for i in range(dim):
+        lo = int(math.floor((min(a[i], b[i]) - tol) / cell))
+        hi = int(math.floor((max(a[i], b[i]) + tol) / cell))
+        ranges.append((lo, hi))
+        span *= hi - lo + 1
+        if span > 20000:
+            break
+    if span > 20000 or not ranges:
+        return
+    if dim <= 2:
+        x0, x1 = ranges[0]
+        y0, y1 = ranges[1] if dim > 1 else (0, 0)
+        for ix in range(x0, x1 + 1):
+            for iy in range(y0, y1 + 1):
+                yield (ix, iy)
+        return
+    x0, x1 = ranges[0]
+    y0, y1 = ranges[1]
+    z0, z1 = ranges[2]
+    for ix in range(x0, x1 + 1):
+        for iy in range(y0, y1 + 1):
+            for iz in range(z0, z1 + 1):
+                yield (ix, iy, iz)
+
+
+def _candidate_pairs(segs: Sequence[BeamSeg], tol: float) -> list[tuple[int, int]]:
+    """Index pairs whose bounding boxes can meet. Replaces the all-pairs loop."""
+    n = len(segs)
+    if n < 2:
+        return []
+    dim = len(segs[0].a)
+    lengths = [_norm(_sub(s.b, s.a)) for s in segs]
+    lengths.sort()
+    med = lengths[n // 2]
+    cell = max(med, tol * 8.0, 1e-6)
+    buckets: dict[tuple, list[int]] = {}
+    for i, s in enumerate(segs):
+        for key in _seg_grid_cells(s.a, s.b, tol, cell, dim):
+            buckets.setdefault(key, []).append(i)
+    pairs: set[tuple[int, int]] = set()
+    for ids in buckets.values():
+        m = len(ids)
+        if m < 2:
+            continue
+        # A very full cell is still correct, just less selective
+        for a in range(m):
+            ia = ids[a]
+            for b in range(a + 1, m):
+                ib = ids[b]
+                pairs.add((ia, ib) if ia < ib else (ib, ia))
+    return list(pairs)
+
+
+def _axis_box(seg: BeamSeg, tol: float, dim: int) -> tuple[list[float], list[float]]:
+    """Axis-aligned box of a segment: min corner and max corner, grown by tol."""
+    lo: list[float] = []
+    hi: list[float] = []
+    for i in range(dim):
+        a, b = seg.a[i], seg.b[i]
+        if a < b:
+            lo.append(a - tol)
+            hi.append(b + tol)
+        else:
+            lo.append(b - tol)
+            hi.append(a + tol)
+    return lo, hi
+
+
+def _boxes_separated(
+    a0: Sequence[float], a1: Sequence[float], b0: Sequence[float], b1: Sequence[float]
+) -> bool:
+    """True when the two boxes have no point in common.
+
+    Rejection is cheaper than an overlap test: on any axis, if both of B's
+    corners are left of A's min, or both are right of A's max, the boxes miss.
+    """
+    for i in range(len(a0)):
+        if (b0[i] < a0[i] and b1[i] < a0[i]) or (b0[i] > a1[i] and b1[i] > a1[i]):
+            return True
+    return False
+
+
+def _joint_points_and_cuts(
+    segs: Sequence[BeamSeg],
+    *,
+    tol: float,
+    key_fn: Callable[[Sequence[float]], Point],
+) -> tuple[list[Point], list[list[Point]]]:
+    """Shared joints, plus interior cut points stored per segment.
+
+    Pair tests use a spatial grid, then a box-separation reject before the
+    actual intersection. Cuts are only the hits that fall in a segment
+    interior, so splitting does not rescan every other endpoint.
+    """
+    pts: list[Point] = []
+    seen: set[Point] = set()
+    cuts: list[list[Point]] = [[] for _ in segs]
+    dim = len(segs[0].a) if segs else 3
+    boxes = [_axis_box(s, tol, dim) for s in segs]
+
+    def _add(p: Sequence[float]) -> Point:
+        k = key_fn(p)
+        if k not in seen:
+            seen.add(k)
+            pts.append(k)
+        return k
+
+    for s in segs:
+        _add(s.a)
+        _add(s.b)
+
+    for i, j in _candidate_pairs(segs, tol):
+        a0, a1 = boxes[i]
+        b0, b1 = boxes[j]
+        if _boxes_separated(a0, a1, b0, b1):
+            continue
+        si, sj = segs[i], segs[j]
+        for _t, _s, pt in segment_intersection(si.a, si.b, sj.a, sj.b, tol=tol):
+            on_i = project_point_on_segment(pt, si.a, si.b, tol=tol)
+            on_j = project_point_on_segment(pt, sj.a, sj.b, tol=tol)
+            if on_i is None or on_j is None:
+                continue
+            ti, tj = on_i[0], on_j[0]
+            interior_i = 1e-9 < ti < 1 - 1e-9
+            interior_j = 1e-9 < tj < 1 - 1e-9
+            if not (interior_i or interior_j):
+                continue
+            k = _add(pt)
+            if interior_i:
+                cuts[i].append(k)
+            if interior_j:
+                cuts[j].append(k)
+    return pts, cuts
+
+
 def find_all_joint_points(
     segs: Sequence[BeamSeg],
     *,
     tol: float,
     key_fn: Callable[[Sequence[float]], Point],
 ) -> list[Point]:
-    """Endpoints + true crossings / T-junctions between every pair of beams."""
-    pts: list[Point] = []
-    seen: set[Point] = set()
-
-    def _add(p: Sequence[float]) -> None:
-        k = key_fn(p)
-        if k not in seen:
-            seen.add(k)
-            pts.append(k)
-
-    for s in segs:
-        _add(s.a)
-        _add(s.b)
-
-    n = len(segs)
-    for i in range(n):
-        for j in range(i + 1, n):
-            si, sj = segs[i], segs[j]
-            for _t, _s, pt in segment_intersection(si.a, si.b, sj.a, sj.b, tol=tol):
-                # Only keep if it actually cuts at least one interior
-                on_i = project_point_on_segment(pt, si.a, si.b, tol=tol)
-                on_j = project_point_on_segment(pt, sj.a, sj.b, tol=tol)
-                if on_i is None or on_j is None:
-                    continue
-                ti, tj = on_i[0], on_j[0]
-                if (1e-9 < ti < 1 - 1e-9) or (1e-9 < tj < 1 - 1e-9):
-                    _add(pt)
+    """Endpoints + true crossings / T-junctions between beams."""
+    pts, _cuts = _joint_points_and_cuts(segs, tol=tol, key_fn=key_fn)
     return pts
 
 
@@ -465,20 +579,22 @@ def mesh_beams(
         base.append(BeamSeg(a=a, b=b, attrs=s.attrs))
 
     rods = [s for s in base if s.attrs.is_rod]
-    beams = [s for s in base if not s.attrs.is_rod]
 
-    # Joints among all geometry (rod–beam crossings still cut beams)
-    joints = find_all_joint_points(base, tol=tol, key_fn=key_fn)
+    # Joints among all geometry (rod–beam crossings still cut beams).
+    # Interior hits are stored per segment so each beam is split only by
+    # points that actually lie on it, not by every other endpoint.
+    _joints, cuts = _joint_points_and_cuts(base, tol=tol, key_fn=key_fn)
     extras = snap_points_to_beams(extra_points or [], base, tol=tol, key_fn=key_fn)
-
-    cut_pool = list(joints) + list(extras)
-    for s in base:
-        cut_pool.append(s.a)
-        cut_pool.append(s.b)
+    extra_list = list(extras)
 
     children: list[BeamSeg] = []
-    for s in beams:
-        children.extend(split_segment_at_points(s, cut_pool, tol=tol, key_fn=key_fn))
+    for i, s in enumerate(base):
+        if s.attrs.is_rod:
+            continue
+        pts = cuts[i]
+        if extra_list:
+            pts = list(pts) + extra_list
+        children.extend(split_segment_at_points(s, pts, tol=tol, key_fn=key_fn))
     # Rods pass through intact (no split at welds / crossings)
     for s in rods:
         attrs = s.attrs.inherit_for_child(
@@ -648,53 +764,82 @@ def parse_beam_attrs_from_entity(e) -> BeamAttrs:
     return attrs
 
 
+def _skip_beam_line(e) -> bool:
+    layer = (getattr(e.dxf, "layer", "") or "").upper()
+    if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
+        return True
+    # Seam-weld carrier lines are the weld path, not a beam.
+    try:
+        e.get_xdata("MY_CAE_SEAM_WELD")
+        return True
+    except Exception:
+        return False
+
+
+def _line_to_seg(e, a: Point, b: Point) -> BeamSeg | None:
+    if a == b:
+        return None
+    attrs = parse_beam_attrs_from_entity(e)
+    if attrs.is_rod:
+        # Rod: keep section size/material only; drop orient/offset/q;
+        # re-bind endpoint axial loads (+ tension / − compression).
+        if attrs.section:
+            attrs.section = {
+                "type": attrs.section.get("type"),
+                "spec": attrs.section.get("spec"),
+                "material": attrs.section.get("material"),
+            }
+        attrs.dist_load = None
+        attrs.moments = []
+        ab = _sub(b, a)
+        L = _norm(ab)
+        if L > 1e-18:
+            ex = _scale(ab, 1.0 / L)
+            for pl in attrs.point_loads:
+                end = str(pl.get("end", "")).upper()
+                # Direction = toward the other end; magnitude stays signed
+                pl["direction"] = (
+                    list(ex) if end == "START" else list(_scale(ex, -1.0))
+                )
+                pl["axial"] = True
+    elif attrs.dist_load is not None:
+        # Initial span = full parent LINE; rebound on every split child
+        attrs.dist_load["start"] = a
+        attrs.dist_load["end"] = b
+    return BeamSeg(a=a, b=b, attrs=attrs)
+
+
 def collect_beam_segs_from_msp(msp, *, dim: int = 3, key_tol: float = 1e-4) -> list[BeamSeg]:
     """All non-VIS LINE entities as BeamSeg with XData attrs."""
     segs: list[BeamSeg] = []
     for e in msp:
-        if e.dxftype() != "LINE":
+        if e.dxftype() != "LINE" or _skip_beam_line(e):
             continue
-        layer = (e.dxf.layer or "").upper()
-        if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
+        seg = _line_to_seg(
+            e,
+            key_point(e.dxf.start, key_tol, dim),
+            key_point(e.dxf.end, key_tol, dim),
+        )
+        if seg is not None:
+            segs.append(seg)
+    return segs
+
+
+def collect_beam_segs_from_inserts(doc, space, *, dim: int = 3, key_tol: float = 1e-4) -> list[BeamSeg]:
+    """LINE entities inside modelspace INSERTs (associative ARRAY items)."""
+    from .dxf_import import iter_inserted_entities
+
+    segs: list[BeamSeg] = []
+    for e, matrix in iter_inserted_entities(doc, space):
+        if e.dxftype() != "LINE" or _skip_beam_line(e):
             continue
-        # Skip seam-weld carrier lines (geometry is weld path, not a beam)
-        try:
-            e.get_xdata("MY_CAE_SEAM_WELD")
-            continue
-        except Exception:
-            pass
-        a = key_point(e.dxf.start, key_tol, dim)
-        b = key_point(e.dxf.end, key_tol, dim)
-        if a == b:
-            continue
-        attrs = parse_beam_attrs_from_entity(e)
-        if attrs.is_rod:
-            # Rod: keep section size/material only; drop orient/offset/q;
-            # re-bind endpoint axial loads (+ tension / − compression).
-            if attrs.section:
-                attrs.section = {
-                    "type": attrs.section.get("type"),
-                    "spec": attrs.section.get("spec"),
-                    "material": attrs.section.get("material"),
-                }
-            attrs.dist_load = None
-            attrs.moments = []
-            ab = _sub(b, a)
-            L = _norm(ab)
-            if L > 1e-18:
-                ex = _scale(ab, 1.0 / L)
-                for pl in attrs.point_loads:
-                    end = str(pl.get("end", "")).upper()
-                    # Direction = toward the other end; magnitude stays signed
-                    pl["direction"] = (
-                        list(ex) if end == "START" else list(_scale(ex, -1.0))
-                    )
-                    pl["axial"] = True
-        elif attrs.dist_load is not None:
-            # Initial span = full parent LINE; rebound on every split child
-            attrs.dist_load["start"] = a
-            attrs.dist_load["end"] = b
-        segs.append(BeamSeg(a=a, b=b, attrs=attrs))
+        seg = _line_to_seg(
+            e,
+            key_point(matrix.transform(e.dxf.start), key_tol, dim),
+            key_point(matrix.transform(e.dxf.end), key_tol, dim),
+        )
+        if seg is not None:
+            segs.append(seg)
     return segs
 
 

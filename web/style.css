@@ -19,6 +19,15 @@ button.comp.lib.add{border-radius:4px}
 #lib-msg{margin-left:8px;color:#4ec9b0}
 select{background:#3c3c3c;color:#fff;border:1px solid #555;padding:3px 6px;border-radius:4px;font-size:12px}
 #ed{position:relative;flex:1;min-height:0;display:flex;background:#1e1e1e;overflow:hidden}
+#lstat{flex:0 0 auto;height:140px;min-height:72px;max-height:46%;display:flex;flex-direction:column;background:#1a1a1a;border-top:1px solid #333;resize:vertical;overflow:hidden}
+#lcap{flex:0 0 auto;padding:3px 10px;color:#888;font:11px sans-serif;letter-spacing:.06em;border-bottom:1px solid #2a2a2a}
+#llog{flex:1;min-height:0;overflow:auto;padding:4px 10px 6px;color:#ccc;font:12px/1.45 Consolas,monospace;white-space:pre-wrap;word-break:break-word;user-select:text}
+#llog .lg{margin:0 0 2px}
+#llog .tm{color:#666;margin-right:8px}
+#llog .ok{color:#4ec9b0}
+#llog .err{color:#f48771}
+#llog .warn{color:#dcdcaa}
+#llog .info{color:#9cdcfe}
 #hl{position:absolute;left:0;right:0;height:20px;background:rgba(255,196,64,.38);pointer-events:none;display:none;z-index:0}
 textarea{flex:1;min-width:0;background:transparent;color:#d4d4d4;border:none;padding:12px;font:13px/20px Consolas,monospace;white-space:pre;overflow:auto;outline:none;user-select:text;position:relative;z-index:1;resize:none;tab-size:4;-moz-tab-size:4}
 textarea::selection{background:rgba(255,196,64,.7);color:#1e1e1e}
@@ -64,5 +73,10 @@ textarea::selection{background:rgba(255,196,64,.7);color:#1e1e1e}
 #ov svg.ghost-line circle.tip{fill:#ff9f1c;stroke:none}
 #ov svg.ghost-line.ghost-dim line{stroke:#9b2226;stroke-width:1.5;stroke-dasharray:none}
 #ov svg.ghost-line.ghost-dim line.ext{stroke:#6c757d}
+#fea-tools{display:none;align-items:center;gap:4px}
+#ebar button:disabled{opacity:.4;cursor:default}
+#ov svg.fea-sel{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:2}
+#ov svg.fea-sel polygon{fill:rgba(255,159,28,.35);stroke:#e85d04;stroke-width:2}
+#ov svg.fea-sel line{stroke:#e85d04;stroke-width:4;stroke-linecap:round}
 #marquee{position:fixed;border:1px solid #0e639c;background:rgba(14,99,156,.18);pointer-events:none;z-index:80}
 

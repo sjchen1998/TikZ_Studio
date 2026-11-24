@@ -10,6 +10,7 @@ import ezdxf
 from ezdxf import recover
 
 from .cae_beam_mesh import (
+    collect_beam_segs_from_inserts,
     collect_beam_segs_from_msp,
     expand_dist_loads,
     mesh_beams,
@@ -24,7 +25,9 @@ from .cae_face_curves import (
     curve_loops_as_polylines,
     format_stp_analytic_face,
     loops_are_coplanar,
+    transform_analytic_face,
 )
+from .dxf_import import iter_inserted_entities
 from .cae_welds import emit_weld_tex_2d, parse_seam_welds, parse_spot_welds
 
 # Shell faces only. Loose CIRCLE / LWPOLYLINE stay beams or geometry.
@@ -220,6 +223,7 @@ def dxf_to_satopdf2d(
 
     nodes: dict[tuple, tuple] = {}
     beam_segs = collect_beam_segs_from_msp(msp, dim=2)
+    beam_segs.extend(collect_beam_segs_from_inserts(doc, msp, dim=2))
     for s in beam_segs:
         nodes[s.a] = s.a
         nodes[s.b] = s.b
@@ -229,13 +233,16 @@ def dxf_to_satopdf2d(
     face_lines: list[str] = []
     face_xy: list[tuple[float, float]] = []
     n_faces = 0
-    for e in msp:
+    def _take_face(e, xform=None):
+        nonlocal n_faces
         layer = (e.dxf.layer or "").upper()
         if layer.startswith("CAE_VIS") or layer.startswith("CAE_LOAD"):
-            continue
+            return
         if e.dxftype() not in _SHELL_FACE_TYPES:
-            continue
+            return
         for af in analytic_faces_from_entity(e) or []:
+            if xform is not None:
+                af = transform_analytic_face(af, xform)
             loops = af.get("loops") or []
             if af.get("kind") != "region" and not loops_are_coplanar(loops):
                 continue
@@ -244,6 +251,11 @@ def dxf_to_satopdf2d(
             for poly in curve_loops_as_polylines(loops, n=16):
                 for p in poly:
                     face_xy.append((float(p[0]), float(p[1])))
+
+    for e in msp:
+        _take_face(e)
+    for e, xform in iter_inserted_entities(doc, msp):
+        _take_face(e, xform)
 
     # Beam XDATA → vis-handle map for SETPTLOAD direction
     ptload_by_vis: dict[str, tuple[float, tuple[float, float], str]] = {}

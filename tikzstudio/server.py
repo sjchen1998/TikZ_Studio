@@ -80,7 +80,7 @@ ensure_editorconfig()
 
 class Req(BaseModel):
     code: str
-    compiler: str = "xelatex"
+    compiler: str = "lualatex"
     fmt: str = "pdf"
     pick: bool = True  # False: skip all coordinate probes (FEA / large drawings)
 
@@ -712,7 +712,7 @@ def parse_points(code):
             pid = len(probes)
             probes.append((
                 pid,
-                f"{{{m.group(2).strip()}*\\stpDscale}},{{{m.group(3).strip()}*\\stpDscale}},{{{m.group(4).strip()}*\\stpDscale}}",
+                f"{xv * dscale:.8g},{yv * dscale:.8g},{zv * dscale:.8g}",
                 s,
             ))
             pts.append({
@@ -795,13 +795,31 @@ def _cal_span(pts):
         return 1.0
     return float(max(50.0, round(m * 0.1, 1)))
 
+_PROBE_XYZ = re.compile(
+    r"\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*,\s*"
+    r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*,\s*"
+    r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*"
+)
+
+def _probe_frag(pid, expr):
+    """Colored mark. Plain (x,y,z) uses a PDF rect; other exprs stay TikZ fills."""
+    g, b = (pid // 200) + 10, (pid % 200) + 10
+    m = _PROBE_XYZ.fullmatch(expr or "")
+    if m:
+        return (
+            "\\stpProbe{%.5f}{%.5f}{%.5f}{%s}{%s}{%s}\n"
+            % (200 / 255, g / 255, b / 255, m.group(1), m.group(2), m.group(3))
+        )
+    return (
+        f"\\definecolor{{cp{pid}}}{{RGB}}{{200,{g},{b}}}"
+        f"\\fill[cp{pid},opacity=0.05]({expr})circle(0.6pt);\n"
+    )
+
 def prep(raw, probes=None, with_cal=True, cal_span=1.0):
     is_doc = (r"\documentclass" in raw or r"\begin{document}" in raw)
     buckets = {}
     for pid, expr, at in (probes or []):
-        g, b = (pid // 200) + 10, (pid % 200) + 10
-        frag = f"\\definecolor{{cp{pid}}}{{RGB}}{{200,{g},{b}}}\\fill[cp{pid},opacity=0.05]({expr})circle(0.6pt);\n"
-        buckets.setdefault(_inject_at(raw, at), []).append(frag)
+        buckets.setdefault(_inject_at(raw, at), []).append(_probe_frag(pid, expr))
     end = _picture_end(raw)
     if end < len(raw):
         if _env_body_empty(raw):
@@ -834,7 +852,7 @@ def build_pdf(tex_str, compiler):
         try: os.remove(pf)
         except OSError: pass
     with open(tf, "w", encoding="utf-8") as f: f.write(tex_str)
-    comp = compiler if compiler in ("xelatex", "pdflatex") else "xelatex"
+    comp = compiler if compiler in ("lualatex", "xelatex", "pdflatex") else "lualatex"
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     p = subprocess.run([comp, "-interaction=nonstopmode", "-halt-on-error", "m.tex"], cwd=d, env=_tex_env(), capture_output=True, text=True, creationflags=flags)
     if not os.path.exists(pf):
@@ -964,7 +982,7 @@ def render_export(code, compiler, fmt):
     names = {"pdf": "tikz.pdf", "png": "tikz_600dpi.png", "svg": "tikz.svg"}
     if fmt not in names:
         return None, "未知格式", ""
-    pb, err = build_pdf(prep(code, None), compiler or "xelatex")
+    pb, err = build_pdf(prep(code, None), compiler or "lualatex")
     if err:
         return None, err, ""
     if fmt == "pdf":

@@ -250,32 +250,94 @@ def _nubs_from_intcurve_record(rec: dict) -> tuple[int, list[float], list[Vec3]]
         while i < len(fields) and fields[i][0] in ("INT", "DOUBLE"):
             nums.append(fields[i])
             i += 1
-        j = 0
-        knots: list[float] = []
-        while j + 2 < len(nums):
-            if not (
-                nums[j][0] == "INT"
-                and nums[j + 1][0] == "DOUBLE"
-                and nums[j + 2][0] == "INT"
-            ):
-                break
-            if all(x[0] == "DOUBLE" for x in nums[j + 3 :]):
-                break
-            mult = int(nums[j][1])
-            knots.extend([float(nums[j + 1][1])] * max(1, mult))
-            j += 2
-        if j < len(nums) and nums[j][0] == "INT":
-            j += 1
-        dbls = [float(x[1]) for x in nums[j:] if x[0] == "DOUBLE"]
-        n_pts = len(dbls) // 3
-        if n_pts < 2:
-            return None
-        cps = [
-            Vec3(dbls[k], dbls[k + 1], dbls[k + 2]) for k in range(0, 3 * n_pts, 3)
-        ]
-        return degree, knots, cps
+        parsed = _nubs_pairs(nums, degree)
+        if parsed is None:
+            parsed = _nubs_mult_value(nums, degree)
+        return parsed
     except Exception:
         return None
+
+
+def _clamp_knot_vector(knots: list[float], degree: int, n_pts: int) -> list[float] | None:
+    """ACIS stores end multiplicity ``degree``; a clamped NURBS needs ``degree+1``."""
+    if n_pts < 2 or not knots:
+        return None
+    need = n_pts + int(degree) + 1
+    if len(knots) == need:
+        return knots
+    if len(knots) == need - 2:
+        return [knots[0], *knots, knots[-1]]
+    return None
+
+
+def _cps_from_doubles(dbls: list[float]) -> list[Vec3] | None:
+    n_pts = len(dbls) // 3
+    if n_pts < 2:
+        return None
+    return [Vec3(dbls[k], dbls[k + 1], dbls[k + 2]) for k in range(0, 3 * n_pts, 3)]
+
+
+def _nubs_pairs(
+    nums: list[tuple[str, Any]], degree: int
+) -> tuple[int, list[float], list[Vec3]] | None:
+    """AutoCAD SAB: count, then (knot value, multiplicity) pairs, then xyz."""
+    if not nums or nums[0][0] != "INT":
+        return None
+    n = int(nums[0][1])
+    if n < 2:
+        return None
+    j = 1
+    knots: list[float] = []
+    for _ in range(n):
+        if j + 1 >= len(nums):
+            return None
+        if nums[j][0] != "DOUBLE" or nums[j + 1][0] != "INT":
+            return None
+        mult = int(nums[j + 1][1])
+        if mult < 1 or mult > 32:
+            return None
+        knots.extend([float(nums[j][1])] * mult)
+        j += 2
+    if any(tok[0] == "INT" for tok in nums[j:]):
+        return None
+    dbls = [float(tok[1]) for tok in nums[j:] if tok[0] == "DOUBLE"]
+    cps = _cps_from_doubles(dbls)
+    if cps is None:
+        return None
+    clamped = _clamp_knot_vector(knots, degree, len(cps))
+    if clamped is None:
+        return None
+    return degree, clamped, cps
+
+
+def _nubs_mult_value(
+    nums: list[tuple[str, Any]], degree: int
+) -> tuple[int, list[float], list[Vec3]] | None:
+    """Older dump: (multiplicity, knot value) pairs, then xyz."""
+    j = 0
+    knots: list[float] = []
+    while j + 2 < len(nums):
+        if not (
+            nums[j][0] == "INT"
+            and nums[j + 1][0] == "DOUBLE"
+            and nums[j + 2][0] == "INT"
+        ):
+            break
+        if all(x[0] == "DOUBLE" for x in nums[j + 3 :]):
+            break
+        mult = int(nums[j][1])
+        knots.extend([float(nums[j + 1][1])] * max(1, mult))
+        j += 2
+    if j < len(nums) and nums[j][0] == "INT":
+        j += 1
+    dbls = [float(x[1]) for x in nums[j:] if x[0] == "DOUBLE"]
+    cps = _cps_from_doubles(dbls)
+    if cps is None:
+        return None
+    clamped = _clamp_knot_vector(knots, degree, len(cps))
+    if clamped is None:
+        return degree, knots, cps
+    return degree, clamped, cps
 
 
 def _intcurve_is_ref_only(rec: dict) -> bool:
@@ -344,10 +406,8 @@ def _nubs_cps_aligned(
             cps = cps[: idx + 1]
             break
     # Orient so cps run start → end (coedge traversal)
-    reversed_cps = False
     if cps and cps[0].distance(start) > cps[0].distance(end):
         cps = list(reversed(cps))
-        reversed_cps = True
 
     # Knots only when a full NUBS parse matches this control polygon exactly.
     knots: list[float] | None = None
@@ -360,11 +420,11 @@ def _nubs_cps_aligned(
             flipped = all(
                 (a - b).magnitude < 1e-3 for a, b in zip(pcps, reversed(cps))
             )
-            if same or flipped:
+            if same:
                 knots = list(kn)
-                if flipped ^ reversed_cps:
-                    lo, hi = knots[0], knots[-1]
-                    knots = [lo + hi - k for k in reversed(knots)]
+            elif flipped:
+                lo, hi = kn[0], kn[-1]
+                knots = [lo + hi - k for k in reversed(kn)]
 
     return degree, cps, knots
 

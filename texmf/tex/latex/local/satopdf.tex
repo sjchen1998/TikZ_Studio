@@ -1115,7 +1115,7 @@ Boundary macros still \textbf{keep the original curve equations} for FE.
   \STParg{\cs{stpDedgeCircle}\{C\}\{n\}\{r\}}{full circle, centre / normal / radius.}
   \STParg{\cs{stpDedgeArc}\{C\}\{n\}\{major\}\{ratio\}\{t_0\}\{t_1\}}{elliptical arc
     (ACIS-style major vector, ratio, parameter range).}
-  \STParg{\cs{stpDedgeSpline}\{deg\}\{\{P_i\},\,\ldots\}\oarg{samples}}{NUBS degree + control points (FE); optional display samples from the B-spline, not the control polygon.}
+  \STParg{\cs{stpDedgeSpline}\{deg\}\oarg{k_0,k_1,\ldots}\{\{P_i\},\,\ldots\}}{NUBS degree, optional knot vector, control points. The stroke is de Boor on \([U_p,U_{n+1}]\), sampled with \cs{stpFaceDispSegs}. Missing knots use an open uniform clamped vector.}
 \end{STPargs}
 
 \DescribeMacro{\stpDcylinderMesh}

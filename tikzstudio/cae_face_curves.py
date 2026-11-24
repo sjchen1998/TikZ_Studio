@@ -17,9 +17,10 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Sequence, Union
 
-from ezdxf.math import Vec3
+from ezdxf.math import BSpline, Vec3
 
 from .cae_face_loops import (
+    _clamp_knot_vector,
     _ellipse_from_record,
     _intcurve_is_ref_only,
     _k,
@@ -346,6 +347,45 @@ def _cone_cylinder_params(
     return origin, axis, float(radius)
 
 
+def _cone_taper_params(
+    surf_rec: dict,
+) -> tuple[Vec3, Vec3, float, float, float, Vec3 | None] | None:
+    """Circular or elliptic cone: radius grows as ``radius + h * sine/cosine``.
+
+    A loft between two circles is this surface. A zero sine is a cylinder and
+    is left to ``_cone_cylinder_params``.
+    """
+    locs = [v for k, v in surf_rec["fields"] if k == "LOCATION_VEC"]
+    dirs = [v for k, v in surf_rec["fields"] if k == "DIRECTION_VEC"]
+    dbls = [float(v) for k, v in surf_rec["fields"] if k == "DOUBLE"]
+    if not locs or not dirs:
+        return None
+    origin = Vec3(locs[0])
+    axis = Vec3(dirs[0])
+    if axis.magnitude_square < 1e-18:
+        return None
+    axis = axis.normalize()
+    ratio = dbls[0] if dbls else 1.0
+    sine = dbls[1] if len(dbls) > 1 else 0.0
+    cosine = dbls[2] if len(dbls) > 2 else 1.0
+    radius = dbls[3] if len(dbls) > 3 else (
+        float(Vec3(dirs[1]).magnitude) if len(dirs) > 1 else 0.0
+    )
+    if radius <= 1e-9 or abs(cosine) < 1e-6:
+        return None
+    if ratio <= 1e-6:
+        return None
+    major = None
+    if len(dirs) > 1 and Vec3(dirs[1]).magnitude_square > 1e-12:
+        major = Vec3(dirs[1])
+        major = major - axis * float(major.dot(axis))
+        if major.magnitude_square > 1e-12:
+            major = major.normalize()
+        else:
+            major = None
+    return origin, axis, float(radius), float(sine / cosine), float(ratio), major
+
+
 def _parse_cone_as_cylinder(
     surf_rec: dict, loops: list[list[Edge]]
 ) -> dict[str, Any] | None:
@@ -416,11 +456,16 @@ def _latitude_coverage_span(angs: list[float]) -> tuple[float, float, bool]:
 def _cone_mesh_params(
     surf_rec: dict, loops: list[list[Edge]]
 ) -> dict[str, Any] | None:
-    """Cylinder mesh params from cone-surface + boundary samples (full or partial)."""
+    """Cylinder or tapered-cone mesh params from the cone-surface and its wires."""
     parsed = _cone_cylinder_params(surf_rec)
+    slope, ratio, major = 0.0, 1.0, None
     if parsed is None:
-        return None
-    origin, axis, radius = parsed
+        taper = _cone_taper_params(surf_rec)
+        if taper is None:
+            return None
+        origin, axis, radius, slope, ratio, major = taper
+    else:
+        origin, axis, radius = parsed
     u, v = _cyl_basis(axis)
     heights: list[float] = []
     angles: list[float] = []
@@ -453,6 +498,9 @@ def _cone_mesh_params(
         "h1": float(h1),
         "th0": float(th0),
         "th1": float(th1),
+        "slope": float(slope),
+        "ratio": float(ratio),
+        "major": None if major is None else _v3(major),
     }
 
 
@@ -1767,6 +1815,953 @@ def _plane_mesh_segs(
     return segs
 
 
+class _Placement:
+    """ACIS body transform. Copy and array keep local geometry and store the
+    placement here: three axis vectors (linear part, scale included) plus
+    translation. ``p' = M p + t``.
+    """
+
+    def __init__(self, x: Vec3, y: Vec3, z: Vec3, t: Vec3):
+        self.x, self.y, self.z, self.t = x, y, z, t
+        self.scale = max(x.magnitude, 1e-12)
+
+    def is_identity(self) -> bool:
+        return (
+            self.t.magnitude_square < 1e-12
+            and (self.x - Vec3(1, 0, 0)).magnitude_square < 1e-16
+            and (self.y - Vec3(0, 1, 0)).magnitude_square < 1e-16
+            and (self.z - Vec3(0, 0, 1)).magnitude_square < 1e-16
+        )
+
+    def point(self, p) -> Vec3:
+        v = Vec3(p)
+        return Vec3(
+            v.x * self.x.x + v.y * self.y.x + v.z * self.z.x + self.t.x,
+            v.x * self.x.y + v.y * self.y.y + v.z * self.z.y + self.t.y,
+            v.x * self.x.z + v.y * self.y.z + v.z * self.z.z + self.t.z,
+        )
+
+    def direction(self, p) -> Vec3:
+        v = Vec3(p)
+        return Vec3(
+            v.x * self.x.x + v.y * self.y.x + v.z * self.z.x,
+            v.x * self.x.y + v.y * self.y.y + v.z * self.z.y,
+            v.x * self.x.z + v.y * self.y.z + v.z * self.z.z,
+        )
+
+
+def _placement_from_records(records: dict[int, dict]) -> _Placement | None:
+    """Body transform of a SAB lump. None when missing or identity."""
+    tf = None
+    for rec in records.values():
+        if rec.get("type") != "body":
+            continue
+        for kind, val in rec["fields"]:
+            if (
+                kind == "POINTER"
+                and isinstance(val, int)
+                and records.get(val, {}).get("type") == "transform"
+            ):
+                tf = records[val]
+                break
+        if tf is not None:
+            break
+    if tf is None:
+        found = [r for r in records.values() if r.get("type") == "transform"]
+        if len(found) == 1:
+            tf = found[0]
+    if tf is None:
+        return None
+    vecs = [Vec3(v) for kind, v in tf["fields"] if kind == "DIRECTION_VEC"]
+    if len(vecs) < 4:
+        return None
+    pl = _Placement(vecs[0], vecs[1], vecs[2], vecs[3])
+    return None if pl.is_identity() else pl
+
+
+def _edge_under_matrix(edge: Edge, matrix, scale: float) -> Edge:
+    """Block insert / array item: block coordinates → parent coordinates."""
+    if isinstance(edge, EdgeLine):
+        return EdgeLine(_v3(matrix.transform(edge.a)), _v3(matrix.transform(edge.b)))
+    if isinstance(edge, EdgeCircle):
+        n = Vec3(matrix.transform_direction(edge.normal))
+        if n.magnitude_square < 1e-18:
+            n = Vec3(edge.normal)
+        else:
+            n = n.normalize()
+        return EdgeCircle(_v3(matrix.transform(edge.center)), _v3(n), float(edge.radius) * scale)
+    if isinstance(edge, EdgeArc):
+        n = Vec3(matrix.transform_direction(edge.normal))
+        if n.magnitude_square < 1e-18:
+            n = Vec3(edge.normal)
+        else:
+            n = n.normalize()
+        return EdgeArc(
+            _v3(matrix.transform(edge.center)),
+            _v3(n),
+            _v3(matrix.transform_direction(edge.major)),
+            float(edge.ratio),
+            float(edge.t0),
+            float(edge.t1),
+        )
+    if isinstance(edge, EdgeSpline):
+        return EdgeSpline(
+            int(edge.degree),
+            tuple(_v3(matrix.transform(p)) for p in edge.cps),
+            edge.knots,
+        )
+    return edge
+
+
+def transform_analytic_face(face: dict[str, Any], matrix) -> dict[str, Any]:
+    """Place a face that lives in a block (associative array item, INSERT)."""
+    sx = Vec3(matrix.transform_direction((1.0, 0.0, 0.0))).magnitude
+    sy = Vec3(matrix.transform_direction((0.0, 1.0, 0.0))).magnitude
+    sz = Vec3(matrix.transform_direction((0.0, 0.0, 1.0))).magnitude
+    scale = (sx + sy + sz) / 3.0 if (sx + sy + sz) > 1e-12 else 1.0
+    out = dict(face)
+    out["loops"] = [
+        [_edge_under_matrix(e, matrix, scale) for e in lp]
+        for lp in (face.get("loops") or [])
+    ]
+    if face.get("cen") is not None:
+        out["cen"] = _v3(matrix.transform(face["cen"]))
+    if face.get("origin") is not None:
+        out["origin"] = _v3(matrix.transform(face["origin"]))
+    for key in ("axis", "u", "v"):
+        if face.get(key) is None:
+            continue
+        d = Vec3(matrix.transform_direction(face[key]))
+        if d.magnitude_square > 1e-18:
+            d = d.normalize()
+        out[key] = _v3(d)
+    if face.get("radius") is not None:
+        out["radius"] = float(face["radius"]) * scale
+    if face.get("h0") is not None:
+        out["h0"] = float(face["h0"]) * scale
+    if face.get("h1") is not None:
+        out["h1"] = float(face["h1"]) * scale
+    if face.get("profile"):
+        out["profile"] = [
+            (float(h) * scale, float(rho) * scale) for h, rho in face["profile"]
+        ]
+    return out
+
+
+def _map_edge(edge: Edge, pl: _Placement) -> Edge:
+    if isinstance(edge, EdgeLine):
+        return EdgeLine(_v3(pl.point(edge.a)), _v3(pl.point(edge.b)))
+    if isinstance(edge, EdgeCircle):
+        n = pl.direction(edge.normal)
+        if n.magnitude_square < 1e-18:
+            n = Vec3(edge.normal)
+        else:
+            n = n.normalize()
+        return EdgeCircle(_v3(pl.point(edge.center)), _v3(n), float(edge.radius) * pl.scale)
+    if isinstance(edge, EdgeArc):
+        n = pl.direction(edge.normal)
+        if n.magnitude_square < 1e-18:
+            n = Vec3(edge.normal)
+        else:
+            n = n.normalize()
+        return EdgeArc(
+            _v3(pl.point(edge.center)),
+            _v3(n),
+            _v3(pl.direction(edge.major)),
+            float(edge.ratio),
+            float(edge.t0),
+            float(edge.t1),
+        )
+    if isinstance(edge, EdgeSpline):
+        return EdgeSpline(
+            int(edge.degree),
+            tuple(_v3(pl.point(p)) for p in edge.cps),
+            edge.knots,
+        )
+    return edge
+
+
+def _bake_surface_record(rec: dict, pl: _Placement) -> None:
+    """Move a cone/plane/spline surface record into the body placement."""
+    fields = []
+    dbl_i = 0
+    for kind, val in rec["fields"]:
+        if kind == "LOCATION_VEC":
+            fields.append((kind, pl.point(val)))
+        elif kind == "DIRECTION_VEC":
+            fields.append((kind, pl.direction(val)))
+        elif (
+            kind == "DOUBLE"
+            and rec.get("type") == "cone-surface"
+            and dbl_i == 3
+            and abs(pl.scale - 1.0) > 1e-9
+        ):
+            dbl_i += 1
+            fields.append((kind, float(val) * pl.scale))
+        else:
+            if kind == "DOUBLE":
+                dbl_i += 1
+            fields.append((kind, val))
+    rec["fields"] = fields
+
+
+def _n_ctrl_from_knots(knots: list[float], degree: int, n_pts: int) -> int | None:
+    """Control-point count implied by an ACIS knot vector (end mult may be degree)."""
+    if degree < 1 or not knots:
+        return None
+    for n in range(degree + 1, n_pts + 1):
+        need = n + degree + 1
+        if len(knots) == need or len(knots) == need - 2:
+            return n
+    return None
+
+
+def _closest_profile_u(bsp: BSpline, target: Vec3, shift: Vec3) -> tuple[float, float]:
+    """Parameter on ``bsp`` (knot domain) closest to ``target - shift``."""
+    knots = list(bsp.knots())
+    degree = int(bsp.order) - 1
+    u0 = float(knots[degree])
+    u1 = float(knots[-(degree + 1)])
+
+    def dist(u: float) -> float:
+        return (Vec3(bsp.point(u)) + shift - target).magnitude
+
+    best_u, best_d = u0, dist(u0)
+    n = 48
+    for i in range(n + 1):
+        u = u0 + (u1 - u0) * i / n
+        d = dist(u)
+        if d < best_d:
+            best_u, best_d = u, d
+    lo = max(u0, best_u - (u1 - u0) / n)
+    hi = min(u1, best_u + (u1 - u0) / n)
+    for _ in range(30):
+        m1 = lo + (hi - lo) / 3.0
+        m2 = hi - (hi - lo) / 3.0
+        if dist(m1) < dist(m2):
+            hi = m2
+        else:
+            lo = m1
+    u = 0.5 * (lo + hi)
+    return u, dist(u)
+
+
+def _profile_span_spline(
+    bsp: BSpline, ua: float, ub: float, shift: Vec3
+) -> EdgeSpline | None:
+    """NURBS of ``bsp`` on ``[ua, ub]``, then translated by ``shift``.
+
+    ``ua > ub`` reverses the piece so the stroke follows the coedge.
+    """
+    degree = int(bsp.order) - 1
+    knots0 = [float(k) for k in bsp.knots()]
+    u0 = knots0[degree]
+    u1 = knots0[-(degree + 1)]
+    lo, hi = (ua, ub) if ua <= ub else (ub, ua)
+    span = abs(u1 - u0)
+    # A closest-point search stops a hair inside the end. That span is the
+    # whole rail; splitting it moves the control points off the stored NURBS.
+    end_tol = 1e-5 * max(span, 1.0)
+    if lo <= u0 + end_tol:
+        lo = u0
+    if hi >= u1 - end_tol:
+        hi = u1
+    eps = 1e-8 * max(1.0, span)
+    curve = bsp
+    try:
+        if lo > u0 + eps:
+            _, curve = curve.split(lo)
+        if hi < u1 - eps:
+            curve, _ = curve.split(hi)
+    except Exception:
+        return None
+    cps = [Vec3(p) + shift for p in curve.control_points]
+    knots = [float(k) for k in curve.knots()]
+    if len(cps) < 2 or len(knots) < degree + len(cps) + 1:
+        return None
+    if ua > ub:
+        cps = list(reversed(cps))
+        k0, k1 = knots[0], knots[-1]
+        knots = [k0 + k1 - k for k in reversed(knots)]
+    return EdgeSpline(degree, tuple(_v3(p) for p in cps), tuple(knots))
+
+
+def _restore_profile_edges(
+    loops: list[list[Edge]], extrude: dict[str, Any]
+) -> None:
+    """Replace a chord that is really the uncut extrusion profile.
+
+    After a trim, ACIS often keeps that rail as an intcurve ``ref`` with no
+    control points. The edge then falls back to the straight line between its
+    vertices, so the surviving profile is stroked as a chord.
+    """
+    raw = extrude.get("cps") or ()
+    if len(raw) < 2:
+        return
+    cps = [Vec3(p) for p in raw]
+    degree = int(extrude.get("degree") or 1)
+    order = degree + 1
+    knots = list(extrude["knots"]) if extrude.get("knots") else None
+    if knots and len(knots) >= order + len(cps):
+        bsp = BSpline(cps, order=order, knots=knots)
+    else:
+        bsp = BSpline(cps, order=order)
+    V = Vec3(extrude.get("vector") or (0.0, 0.0, 0.0))
+    reach = max(float(V.magnitude), max(cps[0].distance(p) for p in cps), 1.0)
+    tol = max(1e-2, 1e-5 * reach)
+    for li, edges in enumerate(loops):
+        rebuilt: list[Edge] = []
+        for e in edges:
+            if not isinstance(e, EdgeLine):
+                rebuilt.append(e)
+                continue
+            best: tuple[float, float, float, Vec3] | None = None
+            for shift in (Vec3(0, 0, 0), V):
+                u0, d0 = _closest_profile_u(bsp, Vec3(e.a), shift)
+                u1, d1 = _closest_profile_u(bsp, Vec3(e.b), shift)
+                dist = max(d0, d1)
+                if best is None or dist < best[0]:
+                    best = (dist, u0, u1, shift)
+            if best is None or best[0] > tol or abs(best[1] - best[2]) < 1e-4:
+                rebuilt.append(e)
+                continue
+            spl = _profile_span_spline(bsp, best[1], best[2], best[3])
+            rebuilt.append(spl if spl is not None else e)
+        loops[li] = rebuilt
+
+
+def _extrude_from_spline_surface(srec: dict | None) -> dict[str, Any] | None:
+    """Profile NURBS plus its translation, from an ACIS ``cyl_spl_sur`` net.
+
+    A boolean trim stores the extruded spline as one spline-surface whose
+    v direction is degree 1. The face boundary is the trim, not the two
+    profile rails, so the boundary rail test does not see the extrusion.
+    """
+    if not srec:
+        return None
+    fields = srec.get("fields") or []
+    i = 0
+    while i < len(fields):
+        if fields[i] != ("ENTITY_TYPE", "nubs"):
+            i += 1
+            continue
+        parsed = _surface_extrude_nubs(fields, i)
+        if parsed is not None:
+            return parsed
+        i += 1
+    return None
+
+
+def _surface_extrude_nubs(fields: list, i: int) -> dict[str, Any] | None:
+    """Parse one bs3 nubs. None when this token is a curve nubs or not an extrusion."""
+    if i + 2 >= len(fields):
+        return None
+    if fields[i + 1][0] != "INT" or fields[i + 2][0] != "INT":
+        return None
+    u_deg = int(fields[i + 1][1])
+    v_deg = int(fields[i + 2][1])
+    if u_deg < 1 or v_deg != 1:
+        return None
+    j = i + 3
+    while j < len(fields) and fields[j][0] == "ENUM":
+        j += 1
+    if j + 1 >= len(fields) or fields[j][0] != "INT" or fields[j + 1][0] != "INT":
+        return None
+    nu = int(fields[j][1])
+    nv = int(fields[j + 1][1])
+    if nu < 2 or nv < 2:
+        return None
+    j += 2
+
+    def _pairs(n: int) -> list[float] | None:
+        nonlocal j
+        knots: list[float] = []
+        for _ in range(n):
+            if j + 1 >= len(fields):
+                return None
+            if fields[j][0] != "DOUBLE" or fields[j + 1][0] != "INT":
+                return None
+            mult = int(fields[j + 1][1])
+            if mult < 1 or mult > 32:
+                return None
+            knots.extend([float(fields[j][1])] * mult)
+            j += 2
+        return knots
+
+    ku = _pairs(nu)
+    kv = _pairs(nv)
+    if not ku or not kv:
+        return None
+    dbls: list[float] = []
+    while j < len(fields) and fields[j][0] == "DOUBLE":
+        dbls.append(float(fields[j][1]))
+        j += 1
+    n_pts = len(dbls) // 3
+    n_u = _n_ctrl_from_knots(ku, u_deg, n_pts)
+    n_v = _n_ctrl_from_knots(kv, v_deg, n_pts)
+    if n_u is None or n_v is None or n_v != 2 or n_u * n_v != n_pts:
+        return None
+    cps = [Vec3(dbls[k], dbls[k + 1], dbls[k + 2]) for k in range(0, 3 * n_pts, 3)]
+    row0 = cps[:n_u]
+    row1 = cps[n_u:]
+    V = row1[0] - row0[0]
+    if V.magnitude_square < 1e-12:
+        return None
+    for c in range(n_u):
+        if (row1[c] - row0[c] - V).magnitude > max(1e-3, 1e-4 * float(V.magnitude)):
+            return None
+    clamped = _clamp_knot_vector(ku, u_deg, n_u)
+    if clamped is None:
+        return None
+    return {
+        "degree": int(u_deg),
+        "knots": tuple(float(k) for k in clamped),
+        "cps": tuple(_v3(p) for p in row0),
+        "vector": _v3(V),
+    }
+
+
+def _map_extrude(extrude: dict[str, Any], pl: _Placement | None) -> dict[str, Any]:
+    """Put the extrusion profile into the same placement as the boundary edges.
+
+    Spline-surface control points are raw SAB doubles. ``_bake_surface_record``
+    moves cone and plane vectors only, so a copied body keeps the profile in
+    local coordinates while the loops are already in world coordinates.
+    """
+    if pl is None:
+        return extrude
+    cps = tuple(_v3(pl.point(p)) for p in extrude.get("cps") or ())
+    return {**extrude, "cps": cps, "vector": _v3(pl.direction(extrude.get("vector") or (0, 0, 0)))}
+
+
+def _de_boor_point(
+    u: float, degree: int, knots: Sequence[float], cps: Sequence
+) -> Vec3:
+    """Point on a clamped B-spline. ``knots`` has length ``len(cps)+degree+1``."""
+    n = len(cps)
+    if n == 0:
+        return Vec3(0, 0, 0)
+    if n == 1 or degree < 1:
+        return Vec3(cps[0])
+    u = float(u)
+    if u <= float(knots[degree]):
+        return Vec3(cps[0])
+    if u >= float(knots[n]):
+        return Vec3(cps[-1])
+    lo, hi = degree, n - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if u < float(knots[mid]):
+            hi = mid
+        elif u >= float(knots[mid + 1]):
+            lo = mid + 1
+        else:
+            lo = mid
+            break
+    k = lo
+    d = [Vec3(cps[j]) for j in range(k - degree, k + 1)]
+    for r in range(1, degree + 1):
+        for j in range(degree, r - 1, -1):
+            i = k - degree + j
+            den = float(knots[i + degree - r + 1]) - float(knots[i])
+            a = 0.0 if abs(den) < 1e-15 else (u - float(knots[i])) / den
+            d[j] = d[j - 1] * (1.0 - a) + d[j] * a
+    return d[degree]
+
+
+def _spline_net_counts(
+    ku: list[float], kv: list[float], u_deg: int, v_deg: int, n_pts: int
+) -> tuple[int, int] | None:
+    """``(n_u, n_v)`` whose product is the control net. Prefer ACIS end-multiplicity."""
+
+    def _cands(knots: list[float], degree: int) -> list[tuple[int, bool]]:
+        out: list[tuple[int, bool]] = []
+        for n in range(degree + 1, n_pts + 1):
+            need = n + degree + 1
+            if len(knots) == need:
+                out.append((n, False))
+            elif len(knots) == need - 2:
+                out.append((n, True))
+        return out
+
+    best: tuple[tuple[bool, bool, bool], int, int] | None = None
+    for nu, su in _cands(ku, u_deg):
+        if n_pts % nu:
+            continue
+        nv = n_pts // nu
+        for nvv, sv in _cands(kv, v_deg):
+            if nvv != nv:
+                continue
+            score = (su and sv, su, sv)
+            if best is None or score > best[0]:
+                best = (score, nu, nv)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _spline_surface_nubs(fields: list, i: int) -> dict[str, Any] | None:
+    """Tensor-product bs3 net. None for a curve nubs or an unreadable surface."""
+    if i + 2 >= len(fields):
+        return None
+    if fields[i + 1][0] != "INT" or fields[i + 2][0] != "INT":
+        return None
+    u_deg = int(fields[i + 1][1])
+    v_deg = int(fields[i + 2][1])
+    if u_deg < 1 or v_deg < 1 or u_deg > 16 or v_deg > 16:
+        return None
+    j = i + 3
+    while j < len(fields) and fields[j][0] == "ENUM":
+        j += 1
+    if j + 1 >= len(fields) or fields[j][0] != "INT" or fields[j + 1][0] != "INT":
+        return None
+    nu = int(fields[j][1])
+    nv = int(fields[j + 1][1])
+    if nu < 2 or nv < 2:
+        return None
+    j += 2
+
+    def _pairs(n: int) -> list[float] | None:
+        nonlocal j
+        knots: list[float] = []
+        for _ in range(n):
+            if j + 1 >= len(fields):
+                return None
+            if fields[j][0] != "DOUBLE" or fields[j + 1][0] != "INT":
+                return None
+            mult = int(fields[j + 1][1])
+            if mult < 1 or mult > 32:
+                return None
+            knots.extend([float(fields[j][1])] * mult)
+            j += 2
+        return knots
+
+    ku = _pairs(nu)
+    kv = _pairs(nv)
+    if not ku or not kv:
+        return None
+    dbls: list[float] = []
+    while j < len(fields) and fields[j][0] == "DOUBLE":
+        dbls.append(float(fields[j][1]))
+        j += 1
+    n_pts = len(dbls) // 3
+    counts = _spline_net_counts(ku, kv, u_deg, v_deg, n_pts)
+    if counts is None:
+        return None
+    n_u, n_v = counts
+    uk = _clamp_knot_vector(ku, u_deg, n_u)
+    vk = _clamp_knot_vector(kv, v_deg, n_v)
+    if uk is None or vk is None:
+        return None
+    cps = tuple(
+        _v3(Vec3(dbls[k], dbls[k + 1], dbls[k + 2]))
+        for k in range(0, 3 * n_u * n_v, 3)
+    )
+    return {
+        "u_degree": u_deg,
+        "v_degree": v_deg,
+        "u_knots": tuple(float(k) for k in uk),
+        "v_knots": tuple(float(k) for k in vk),
+        "n_u": n_u,
+        "n_v": n_v,
+        "cps": cps,
+        "u0": float(uk[u_deg]),
+        "u1": float(uk[-(u_deg + 1)]),
+        "v0": float(vk[v_deg]),
+        "v1": float(vk[-(v_deg + 1)]),
+    }
+
+
+def _spline_surface_from_record(srec: dict | None) -> dict[str, Any] | None:
+    """Loft / skin bs3 surface. An extrusion (v degree 1) is left to that path."""
+    if not srec:
+        return None
+    fields = srec.get("fields") or []
+    i = 0
+    while i < len(fields):
+        if fields[i] != ("ENTITY_TYPE", "nubs"):
+            i += 1
+            continue
+        parsed = _spline_surface_nubs(fields, i)
+        if parsed is not None and int(parsed["v_degree"]) > 1 and int(parsed["n_v"]) > 2:
+            return parsed
+        i += 1
+    return None
+
+
+def _map_spline_surface(
+    surf: dict[str, Any], pl: _Placement | None
+) -> dict[str, Any]:
+    if pl is None:
+        return surf
+    cps = tuple(_v3(pl.point(p)) for p in surf["cps"])
+    return {**surf, "cps": cps}
+
+
+def _spline_cp(surf: dict[str, Any], i: int, j: int) -> tuple:
+    """Control point ``P[i,j]``, ``i`` along u (u varies fastest)."""
+    return surf["cps"][j * int(surf["n_u"]) + i]
+
+
+def _spline_point(surf: dict[str, Any], u: float, v: float) -> Vec3:
+    n_u = int(surf["n_u"])
+    cols = []
+    for i in range(n_u):
+        column = [_spline_cp(surf, i, j) for j in range(int(surf["n_v"]))]
+        cols.append(_de_boor_point(v, int(surf["v_degree"]), surf["v_knots"], column))
+    return _de_boor_point(u, int(surf["u_degree"]), surf["u_knots"], cols)
+
+
+def _spline_uv_grid(surf: dict[str, Any]) -> tuple[list[float], list[float], list[Vec3]]:
+    """One sample grid per surface, reused while projecting the trim."""
+    cached = surf.get("_uv_grid")
+    if cached is not None:
+        return cached
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    v0, v1 = float(surf["v0"]), float(surf["v1"])
+    nu, nv = 24, 12
+    us = [u0 + (u1 - u0) * i / nu for i in range(nu + 1)]
+    vs = [v0 + (v1 - v0) * j / nv for j in range(nv + 1)]
+    pts = [_spline_point(surf, u, v) for v in vs for u in us]
+    cached = (us, vs, pts)
+    surf["_uv_grid"] = cached
+    return cached
+
+
+def _spline_uv_of_point(surf: dict[str, Any], p: Vec3) -> tuple[float, float, float]:
+    """``(u, v, distance)`` of the closest point on the net."""
+    us, vs, pts = _spline_uv_grid(surf)
+    u0, u1 = us[0], us[-1]
+    v0, v1 = vs[0], vs[-1]
+    nu = len(us) - 1
+    best_i, best_d = 0, float("inf")
+    for i, q in enumerate(pts):
+        d = q.distance(p)
+        if d < best_d:
+            best_i, best_d = i, d
+    iu, iv = best_i % len(us), best_i // len(us)
+    best_u, best_v = us[iu], vs[iv]
+    du = (u1 - u0) / nu
+    dv = (v1 - v0) / max(len(vs) - 1, 1)
+    for _ in range(8):
+        for su in (-1.0, 0.0, 1.0):
+            for sv in (-1.0, 0.0, 1.0):
+                u = min(u1, max(u0, best_u + su * du))
+                v = min(v1, max(v0, best_v + sv * dv))
+                d = _spline_point(surf, u, v).distance(p)
+                if d < best_d:
+                    best_u, best_v, best_d = u, v, d
+        du *= 0.5
+        dv *= 0.5
+    return best_u, best_v, best_d
+
+
+def _domain_boundary_splines(surf: dict[str, Any]) -> list[BSpline]:
+    """The four clamped edges of the parameter domain, as curves."""
+    n_u, n_v = int(surf["n_u"]), int(surf["n_v"])
+    ud, vd = int(surf["u_degree"]), int(surf["v_degree"])
+    uk, vk = list(surf["u_knots"]), list(surf["v_knots"])
+    rows = (
+        [Vec3(_spline_cp(surf, i, 0)) for i in range(n_u)],
+        [Vec3(_spline_cp(surf, i, n_v - 1)) for i in range(n_u)],
+    )
+    cols = (
+        [Vec3(_spline_cp(surf, 0, j)) for j in range(n_v)],
+        [Vec3(_spline_cp(surf, n_u - 1, j)) for j in range(n_v)],
+    )
+    out = [BSpline(row, order=ud + 1, knots=uk) for row in rows]
+    out.extend(BSpline(col, order=vd + 1, knots=vk) for col in cols)
+    return out
+
+
+def _curve_span_bow(bsp: BSpline, ua: float, ub: float) -> float:
+    lo, hi = (ua, ub) if ua <= ub else (ub, ua)
+    a = Vec3(bsp.point(lo))
+    b = Vec3(bsp.point(hi))
+    ab = b - a
+    L2 = float(ab.dot(ab))
+    if L2 < 1e-12:
+        return 0.0
+    bow = 0.0
+    for s in range(1, 16):
+        u = lo + (hi - lo) * s / 16
+        p = Vec3(bsp.point(u))
+        t = max(0.0, min(1.0, float((p - a).dot(ab) / L2)))
+        bow = max(bow, (a + ab * t - p).magnitude)
+    return bow
+
+
+def _restore_domain_edges(loops: list[list[Edge]], surf: dict[str, Any]) -> None:
+    """Replace a chord that is really one edge of the spline surface.
+
+    A loft stores that rail as an intcurve ``ref``. The edge then falls back
+    to the straight line between the surface corners.
+    """
+    curves = _domain_boundary_splines(surf)
+    reach = 1.0
+    for bsp in curves:
+        a = Vec3(bsp.control_points[0])
+        b = Vec3(bsp.control_points[-1])
+        reach = max(reach, a.distance(b))
+    tol = max(0.5, 1e-5 * reach)
+    for li, edges in enumerate(loops):
+        rebuilt: list[Edge] = []
+        for e in edges:
+            if not isinstance(e, EdgeLine):
+                rebuilt.append(e)
+                continue
+            best: tuple[float, float, float, BSpline] | None = None
+            for bsp in curves:
+                u0, d0 = _closest_profile_u(bsp, Vec3(e.a), Vec3(0, 0, 0))
+                u1, d1 = _closest_profile_u(bsp, Vec3(e.b), Vec3(0, 0, 0))
+                dist = max(d0, d1)
+                if best is None or dist < best[0]:
+                    best = (dist, u0, u1, bsp)
+            if (
+                best is None
+                or best[0] > tol
+                or abs(best[1] - best[2]) < 1e-4
+                or _curve_span_bow(best[3], best[1], best[2]) < max(1.0, 1e-4 * reach)
+            ):
+                rebuilt.append(e)
+                continue
+            spl = _profile_span_spline(best[3], best[1], best[2], Vec3(0, 0, 0))
+            rebuilt.append(spl if spl is not None else e)
+        loops[li] = rebuilt
+
+
+def _surface_periodic_u(surf: dict[str, Any]) -> bool:
+    """True when the u=start and u=end sections are the same curve (closed loft)."""
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    v0, v1 = float(surf["v0"]), float(surf["v1"])
+    if u1 - u0 < 1e-9:
+        return False
+    span = _spline_point(surf, u0, v0).distance(_spline_point(surf, u1, v1))
+    tol = max(1e-2, 1e-5 * max(span, 1.0))
+    for v in (v0, 0.5 * (v0 + v1), v1):
+        if _spline_point(surf, u0, v).distance(_spline_point(surf, u1, v)) > tol:
+            return False
+    return True
+
+
+def _unwrap_periodic_u(
+    uv: list[tuple[float, float]], u0: float, u1: float
+) -> list[tuple[float, float]]:
+    """Keep u continuous. On a closed loft, u=0 and u=1 are the same seam."""
+    if len(uv) < 2:
+        return uv
+    period = u1 - u0
+    if period < 1e-9:
+        return uv
+    out = [uv[0]]
+    prev = uv[0][0]
+    for u, v in uv[1:]:
+        cand = u
+        while cand - prev > period / 2.0:
+            cand -= period
+        while prev - cand > period / 2.0:
+            cand += period
+        out.append((cand, v))
+        prev = cand
+    return out
+
+
+def _spline_param_uv(
+    edges: list[Edge], surf: dict[str, Any]
+) -> list[tuple[float, float]]:
+    """Trim loop in the surface parameters ``(u, v)``."""
+    pts3: list[tuple] = []
+    for e in edges:
+        # The clip only needs the trim's shape in (u, v). The drawn tips are
+        # snapped back onto the real boundary curve.
+        if isinstance(e, EdgeLine):
+            seg = [e.a, e.b]
+        else:
+            seg = _edge_samples(e, n=40)
+        if not seg:
+            continue
+        if not pts3:
+            pts3.extend(seg)
+        elif pts3[-1] == seg[0]:
+            pts3.extend(seg[1:])
+        else:
+            pts3.extend(seg)
+    pts3 = _uniq_ring(pts3)
+    if len(pts3) < 3:
+        return []
+    out: list[tuple[float, float]] = []
+    for p in pts3:
+        u, v, _d = _spline_uv_of_point(surf, Vec3(p))
+        out.append((u, v))
+    if _surface_periodic_u(surf):
+        out = _unwrap_periodic_u(out, float(surf["u0"]), float(surf["u1"]))
+    if out and (
+        abs(out[0][0] - out[-1][0]) > 1e-9 or abs(out[0][1] - out[-1][1]) > 1e-9
+    ):
+        out.append(out[0])
+    return out
+
+
+def _closed_loft_domain(loops: list[list[Edge]], surf: dict[str, Any]) -> bool:
+    """Untrimmed closed loft: the boundary is the two end sections and the seam."""
+    if not loops or loops[1:] or not _surface_periodic_u(surf):
+        return False
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    v0, v1 = float(surf["v0"]), float(surf["v1"])
+    du, dv = 0.04 * (u1 - u0), 0.08 * (v1 - v0)
+    for e in loops[0]:
+        pts = [e.a, e.b] if isinstance(e, EdgeLine) else _edge_samples(e, n=12)
+        for p in pts:
+            u, v, _d = _spline_uv_of_point(surf, Vec3(p))
+            on_section = min(abs(v - v0), abs(v - v1)) <= dv
+            on_seam = min(abs(u - u0), abs(u - u1)) <= du
+            if not (on_section or on_seam):
+                return False
+    return True
+
+
+def _periodic_loft_grid(
+    loops: list[list[Edge]], surf: dict[str, Any], n_u: int, n_v: int
+) -> list[tuple[tuple, tuple]]:
+    """Full iso-parameter grid. u=0 and u=1 are the same seam, so rings close."""
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    v0, v1 = float(surf["v0"]), float(surf["v1"])
+    bd = _boundary_polylines(loops)
+    flat = [p for seg in bd for p in seg]
+    snap_tol = 0.0
+    if flat:
+        xs = [p[0] for p in flat]
+        ys = [p[1] for p in flat]
+        zs = [p[2] for p in flat]
+        diag = math.hypot(
+            max(xs) - min(xs),
+            math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
+        )
+        snap_tol = max(1.0, 0.03 * diag)
+
+    def _tip(p: tuple) -> tuple:
+        return _snap_point_to_polylines(p, bd, snap_tol)
+
+    segs: list[tuple[tuple, tuple]] = []
+
+    def _at(u: float, v: float) -> tuple:
+        return _v3(_spline_point(surf, u, v))
+
+    for k in range(max(int(n_u), 1)):
+        u = u0 + (u1 - u0) * k / n_u
+        n_sub = max(6, 4 * (int(surf["n_v"]) - 1))
+        prev = _tip(_at(u, v0))
+        for j in range(1, n_sub + 1):
+            cur = _at(u, v0 + (v1 - v0) * j / n_sub)
+            if j == n_sub:
+                cur = _tip(cur)
+            if Vec3(prev).distance(Vec3(cur)) > 1e-9:
+                segs.append((prev, cur))
+            prev = cur
+    for k in range(1, max(int(n_v), 1)):
+        v = v0 + (v1 - v0) * k / n_v
+        n_sub = 48
+        prev = _at(u0, v)
+        for j in range(1, n_sub + 1):
+            cur = _at(u0 + (u1 - u0) * j / n_sub, v)
+            if Vec3(prev).distance(Vec3(cur)) > 1e-9:
+                segs.append((prev, cur))
+            prev = cur
+    return segs
+
+
+def _spline_mesh_segs(
+    loops: list[list[Edge]],
+    surf: dict[str, Any],
+    n_u: int = 8,
+    n_v: int = 6,
+) -> list[tuple[tuple, tuple]]:
+    """Iso-parameter curves of a lofted spline, clipped to the trim in ``(u, v)``."""
+    if not loops or not surf:
+        return []
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    v0, v1 = float(surf["v0"]), float(surf["v1"])
+    if u1 - u0 < 1e-12 or v1 - v0 < 1e-12:
+        return []
+    if _closed_loft_domain(loops, surf):
+        return _periodic_loft_grid(loops, surf, n_u, n_v)
+    outer = _spline_param_uv(loops[0], surf)
+    holes = [_spline_param_uv(h, surf) for h in loops[1:]]
+    holes = [h for h in holes if len(h) >= 3]
+    if len(outer) < 3:
+        return []
+
+    def _at(u: float, v: float) -> tuple:
+        return _v3(_spline_point(surf, u, v))
+
+    bd = _boundary_polylines(loops)
+    flat = [p for seg in bd for p in seg]
+    snap_tol = 0.0
+    if flat:
+        xs = [p[0] for p in flat]
+        ys = [p[1] for p in flat]
+        zs = [p[2] for p in flat]
+        diag = math.hypot(
+            max(xs) - min(xs),
+            math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
+        )
+        # A loft net only approximates an analytic section. Without a hole,
+        # seat the tip on that section. A hole keeps the snap tight.
+        snap_tol = max(1e-3, (0.03 if len(loops) < 2 else 0.001) * diag)
+
+    def _tip(p: tuple) -> tuple:
+        return _snap_point_to_polylines(p, bd, snap_tol)
+
+    segs: list[tuple[tuple, tuple]] = []
+    # Constant u: curves across the loft sections.
+    for k in range(1, max(n_u, 1)):
+        u = u0 + (u1 - u0) * k / n_u
+        spans = _hits_to_spans(_poly_line_hits(outer, const=u, horizontal=False))
+        for huv in holes:
+            spans = _clip_intervals_subtract(
+                spans,
+                _hits_to_spans(_poly_line_hits(huv, const=u, horizontal=False)),
+            )
+        for va, vb in spans:
+            va = max(v0, min(v1, va))
+            vb = max(v0, min(v1, vb))
+            if vb < va:
+                va, vb = vb, va
+            if vb - va < 1e-7:
+                continue
+            n_sub = max(6, int(round((vb - va) / (v1 - v0) * (int(surf["n_v"]) - 1) * 4)))
+            pts = [_at(u, va + (vb - va) * j / n_sub) for j in range(n_sub + 1)]
+            pts[0] = _tip(pts[0])
+            pts[-1] = _tip(pts[-1])
+            for j in range(n_sub):
+                if Vec3(pts[j]).distance(Vec3(pts[j + 1])) > 1e-9:
+                    segs.append((pts[j], pts[j + 1]))
+    # Constant v: curves along a cross-section.
+    for k in range(1, max(n_v, 1)):
+        v = v0 + (v1 - v0) * k / n_v
+        spans = _hits_to_spans(_poly_line_hits(outer, const=v, horizontal=True))
+        for huv in holes:
+            spans = _clip_intervals_subtract(
+                spans,
+                _hits_to_spans(_poly_line_hits(huv, const=v, horizontal=True)),
+            )
+        for ua, ub in spans:
+            ua = max(u0, min(u1, ua))
+            ub = max(u0, min(u1, ub))
+            if ub < ua:
+                ua, ub = ub, ua
+            if ub - ua < 1e-7:
+                continue
+            n_sub = max(8, int(round((ub - ua) / (u1 - u0) * (int(surf["n_u"]) - 1) * 3)))
+            pts = [_at(ua + (ub - ua) * j / n_sub, v) for j in range(n_sub + 1)]
+            pts[0] = _tip(pts[0])
+            pts[-1] = _tip(pts[-1])
+            for j in range(n_sub):
+                if Vec3(pts[j]).distance(Vec3(pts[j + 1])) > 1e-9:
+                    segs.append((pts[j], pts[j + 1]))
+    return segs
+
+
 def faces_from_sab(entity) -> list[dict[str, Any]]:
     """One analytic face dict per SAB face.
 
@@ -1775,8 +2770,12 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
       - cone-surface (cylinder) → ``cylinder``; tapered → ``revolve``
       - torus / revolved spline profile → ``revolve``
       - spline-surface with 4-edge ruled loop → ``ruled``
+      - loft / skin spline-surface → ``spline`` (domain edges + iso-parameter mesh)
       - other → ``wire`` (boundary only)
     FE always keeps boundary edge equations.
+
+    COPY / ARRAY store one local body plus a transform. The transform is
+    applied to the boundary (and to the surface record) before classification.
     """
     sab = getattr(entity, "sab", None) or getattr(entity, "acis_data", None)
     if not sab:
@@ -1785,6 +2784,8 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
         records = _parse_sab_records(sab)
     except Exception:
         return []
+    placement = _placement_from_records(records)
+    baked_surf: set[int] = set()
     # Entity-level REVOLVEDSURFACE axis / sweep angle (shared by multi-face)
     ent_axis = None
     ent_origin = None
@@ -1810,12 +2811,21 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
         loops: list[list[Edge]] = []
         for loop_id in _sab_loop_list(records, face_id):
             edges = _curve_loop_from_sab(records, loop_id)
+            if placement is not None:
+                edges = [_map_edge(e, placement) for e in edges]
             if edges:
                 loops.append(edges)
         if not loops:
             continue
         loops = order_curve_loops(loops)
         _sid, stype, srec = _sab_face_surface(records, face_id)
+        if (
+            placement is not None
+            and srec is not None
+            and _sid not in baked_surf
+        ):
+            baked_surf.add(_sid)
+            _bake_surface_record(srec, placement)
         if stype == "cone-surface" and srec is not None:
             mesh = _cone_mesh_params(srec, loops)
             if mesh is not None:
@@ -1836,12 +2846,40 @@ def faces_from_sab(entity) -> list[dict[str, Any]]:
             cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
             out.append({"kind": "plane", "loops": loops, "cen": _k(cen)})
             continue
-        elif stype == "spline-surface" and loops and (
-            _is_ruled_loop(loops[0]) or _extract_extrusion_rails(loops[0]) is not None
-        ):
-            # ruled / extrusion strip (curved latitudes); holes OK
+        extrude = (
+            _extrude_from_spline_surface(srec) if stype == "spline-surface" else None
+        )
+        if extrude is not None:
+            extrude = _map_extrude(extrude, placement)
+            _restore_profile_edges(loops, extrude)
+        # A loft net (degree > 1 along the sections) is not a ruled strip, even
+        # when the trim is two curves joined by two generators.
+        spline = (
+            _spline_surface_from_record(srec)
+            if stype == "spline-surface" and extrude is None
+            else None
+        )
+        if spline is not None and loops:
+            spline = _map_spline_surface(spline, placement)
+            _restore_domain_edges(loops, spline)
             cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
-            out.append({"kind": "ruled", "loops": loops, "cen": _k(cen)})
+            out.append(
+                {"kind": "spline", "loops": loops, "cen": _k(cen), "spline": spline}
+            )
+            continue
+        if stype == "spline-surface" and loops and (
+            _is_ruled_loop(loops[0])
+            or _extract_extrusion_rails(loops[0]) is not None
+            or extrude is not None
+        ):
+            # ruled / extrusion strip (curved latitudes); holes OK.
+            # A trimmed cyl_spl_sur keeps the surface extrusion even when the
+            # boundary is the intersection curve rather than the two rails.
+            cen = curve_loops_centroid(loops) or (0.0, 0.0, 0.0)
+            face: dict[str, Any] = {"kind": "ruled", "loops": loops, "cen": _k(cen)}
+            if extrude is not None:
+                face["extrude"] = extrude
+            out.append(face)
             continue
         # Revolve: torus / tapered cone / spline·LWPOLYLINE·arc profiles
         if loops:
@@ -2106,12 +3144,12 @@ def _emit_edge_tex(e: Edge, indent: str = "      ", *, display: bool = True) -> 
             f"{{{e.ratio:.6g}}}{{{e.t0:.8g}}}{{{e.t1:.8g}}}"
         )
     if isinstance(e, EdgeSpline):
-        # EQUATION: degree + control points; optional [samples] for smooth display
+        # TeX evaluates the NURBS (degree, knots, control points) with de Boor.
         cps = ",".join("{" + _fmt_xyz(p) + "}" for p in e.cps)
-        if not display:
-            return f"{indent}\\stpDedgeSpline{{{e.degree}}}{{{cps}}}"
-        disp = ",".join("{" + _fmt_xyz(p) + "}" for p in _spline_disp_pts(e))
-        return f"{indent}\\stpDedgeSpline{{{e.degree}}}{{{cps}}}[{disp}]"
+        knot = ""
+        if e.knots:
+            knot = "[" + ",".join(format(float(k), ".10g") for k in e.knots) + "]"
+        return f"{indent}\\stpDedgeSpline{{{e.degree}}}{knot}{{{cps}}}"
     return ""
 
 
@@ -2201,12 +3239,74 @@ def _snap_point_to_polylines(
     return best if best_d <= tol else p
 
 
+def _cone_frustum_segs(
+    face: dict[str, Any],
+    ends: list[EdgeCircle],
+    ngen: int,
+    nring: int,
+) -> list[tuple[tuple, tuple]]:
+    """Generators and intermediate circles of a cone bounded by two full circles.
+
+    ``r(h) = radius + slope * h``. A cylinder has slope 0.
+    """
+    origin = Vec3(face["origin"])
+    axis = Vec3(face["axis"])
+    if axis.magnitude_square < 1e-18:
+        return []
+    axis = axis.normalize()
+    radius = float(face["radius"])
+    slope = float(face.get("slope") or 0.0)
+    ratio = float(face.get("ratio") or 1.0)
+    major = face.get("major")
+    if major is not None:
+        u = Vec3(major) - axis * float(Vec3(major).dot(axis))
+        if u.magnitude_square < 1e-12:
+            u, v = _cyl_basis(axis)
+        else:
+            u = u.normalize()
+            v = axis.cross(u).normalize()
+    else:
+        u, v = _cyl_basis(axis)
+
+    def _xyz(th: float, h: float) -> tuple:
+        r = radius + slope * h
+        return _v3(origin + axis * h + u * (r * math.cos(th)) + v * (r * ratio * math.sin(th)))
+
+    hs = [float((Vec3(e.center) - origin).dot(axis)) for e in ends]
+    h0, h1 = min(hs), max(hs)
+    if abs(h1 - h0) < 1e-9:
+        return []
+    segs: list[tuple[tuple, tuple]] = []
+    ngen = max(int(ngen), 1)
+    for k in range(ngen):
+        th = -math.pi + 2.0 * math.pi * k / ngen
+        segs.append((_xyz(th, h0), _xyz(th, h1)))
+    steps = 48
+    for k in range(1, max(int(nring), 1)):
+        h = h0 + (h1 - h0) * k / nring
+        prev = _xyz(-math.pi, h)
+        for s in range(1, steps + 1):
+            th = -math.pi + 2.0 * math.pi * s / steps
+            cur = _xyz(th, h)
+            if Vec3(prev).distance(Vec3(cur)) > 1e-9:
+                segs.append((prev, cur))
+            prev = cur
+    return segs
+
+
 def _cylinder_mesh_segs(
     face: dict[str, Any],
     ngen: int = _CYL_MESH_GEN,
     nring: int = _CYL_MESH_RING,
 ) -> list[tuple[tuple, tuple]]:
     """Isolines clipped to the trimmed face in (θ, h) — avoids phantom patches."""
+    ends = [
+        edges[0]
+        for edges in (face.get("loops") or [])
+        if len(edges) == 1 and isinstance(edges[0], EdgeCircle)
+    ]
+    if len(ends) == 2:
+        return _cone_frustum_segs(face, ends, ngen, nring)
     origin = Vec3(face["origin"])
     axis = Vec3(face["axis"])
     if axis.magnitude_square < 1e-18:
@@ -2430,70 +3530,289 @@ def _chain_edge_samples(edges: list[Edge], n_per: int = 24) -> list[tuple]:
     return pts
 
 
+def _resample_fraction(pts: list[tuple], n: int) -> list[tuple]:
+    """n points at uniform index fraction (curve order, not arc length)."""
+    if n < 2 or len(pts) < 2:
+        return list(pts)
+    if len(pts) == n:
+        return list(pts)
+    out: list[tuple] = []
+    last = len(pts) - 1
+    for k in range(n):
+        f = last * k / (n - 1)
+        i = min(last - 1, int(math.floor(f)))
+        u = f - i
+        out.append(_v3(Vec3(pts[i]) * (1.0 - u) + Vec3(pts[i + 1]) * u))
+    out[0] = pts[0]
+    out[-1] = pts[-1]
+    return out
+
+
+def _edge_param_samples(edge: Edge, n: int) -> list[tuple]:
+    """Uniform samples in the curve parameter. Splines are de Boor on the
+    knot domain, not the control polygon."""
+    n = max(2, int(n))
+    if isinstance(edge, EdgeLine):
+        a, b = Vec3(edge.a), Vec3(edge.b)
+        return [
+            _v3(a * (1.0 - i / (n - 1)) + b * (i / (n - 1))) for i in range(n)
+        ]
+    if isinstance(edge, EdgeArc):
+        pts = tessellate_ellipse(
+            Vec3(edge.center),
+            Vec3(edge.normal),
+            Vec3(edge.major),
+            edge.ratio,
+            edge.t0,
+            edge.t1,
+            closed=abs(abs(edge.t1 - edge.t0) - 2 * math.pi) < 1e-4,
+        )
+        return _resample_fraction(pts, n) if len(pts) >= 2 else pts
+    if isinstance(edge, EdgeSpline):
+        cps = [Vec3(p) for p in edge.cps]
+        if len(cps) < 2:
+            return [_v3(p) for p in cps]
+        degree = max(1, min(int(edge.degree), len(cps) - 1))
+        order = degree + 1
+        knots = list(edge.knots) if edge.knots else None
+        try:
+            if knots is not None and len(knots) >= order + len(cps):
+                bsp = BSpline(cps, order=order, knots=knots)
+            else:
+                bsp = BSpline(cps, order=order)
+            ks = list(bsp.knots())
+            u0 = float(ks[degree])
+            u1 = float(ks[-(degree + 1)])
+            return [
+                _v3(bsp.point(u0 + (u1 - u0) * i / (n - 1))) for i in range(n)
+            ]
+        except Exception:
+            return tessellate_bspline(cps, degree=degree, knots=knots, nseg=n)
+    return _edge_samples(edge, n=n)
+
+
+def _chain_param_samples(edges: list[Edge], n_per: int) -> list[tuple]:
+    """Sample a loop-ordered chain in curve parameter, joining end to start."""
+    pts: list[tuple] = []
+    for e in edges:
+        s = _edge_param_samples(e, max(2, n_per))
+        if not s:
+            continue
+        if not pts:
+            pts.extend(s)
+            continue
+        if Vec3(pts[-1]).distance(Vec3(s[-1])) < Vec3(pts[-1]).distance(Vec3(s[0])):
+            s = list(reversed(s))
+        if Vec3(pts[-1]).distance(Vec3(s[0])) < 1e-3:
+            pts.extend(s[1:])
+        else:
+            pts.extend(s)
+    return pts
+
+
+def _translation_dev(
+    A: list[tuple], B: list[tuple]
+) -> tuple[Vec3, float]:
+    """Mean of B[i]-A[i] and the largest deviation from that translation."""
+    m = min(len(A), len(B))
+    if m < 1:
+        return Vec3(0, 0, 0), 0.0
+    ds = [Vec3(B[i]) - Vec3(A[i]) for i in range(m)]
+    mean = sum(ds, Vec3(0, 0, 0)) / m
+    dev = max(float((d - mean).magnitude) for d in ds)
+    return mean, dev
+
+
+def _orient_translation(A: list[tuple], B: list[tuple]) -> list[tuple]:
+    """Pick B or reversed(B) so B[i]-A[i] is as constant as possible.
+
+    An extrusion loop walks the second rail opposite the first, so the
+    stored spline runs C(1-u)+V. Pairing by which endpoint is nearer in
+    space follows that reversal only when the profile chord is longer than
+    the extrusion; a control-vertex curve that bends along the extrusion
+    makes the wrong end nearer and the rulings cross.
+    """
+    if len(B) < 2 or len(A) < 2:
+        return list(B)
+    m = min(len(A), len(B))
+    Aa, Bb = A[:m], B[:m]
+
+    def _score(samples: list[tuple]) -> float:
+        _, dev = _translation_dev(Aa, samples)
+        return dev
+
+    rev = list(reversed(Bb))
+    return rev if _score(rev) < _score(Bb) else list(Bb)
+
+
+def _extrusion_chains(edges: list[Edge]) -> tuple[list[Edge], list[Edge]] | None:
+    """Split a loop into two rails around parallel extrusion generators.
+
+    Generators are the lines parallel to the longest line and of similar
+    length. The profile may move along that axis (a 3D control polygon);
+    rails are whatever is left, not only edges that lie in a constant-height
+    plane.
+    """
+    best_L = 0.0
+    best_d: Vec3 | None = None
+    info: list[tuple[Vec3, float] | None] = []
+    for e in edges:
+        if not isinstance(e, EdgeLine):
+            info.append(None)
+            continue
+        d = Vec3(e.b) - Vec3(e.a)
+        L = float(d.magnitude)
+        if L < 1e-6:
+            info.append(None)
+            continue
+        info.append((d / L, L))
+        if L > best_L:
+            best_L = L
+            best_d = d / L
+    if best_d is None or best_L < 1e-3:
+        return None
+    cos_lim = math.cos(math.radians(8.0))
+    is_gen: list[bool] = []
+    for item in info:
+        if item is None:
+            is_gen.append(False)
+            continue
+        direction, L = item
+        is_gen.append(abs(float(direction.dot(best_d))) >= cos_lim and L >= 0.5 * best_L)
+    if sum(is_gen) < 2:
+        return None
+    chains: list[list[Edge]] = []
+    cur: list[Edge] = []
+    for e, g in zip(edges, is_gen):
+        if g:
+            if cur:
+                chains.append(cur)
+                cur = []
+        else:
+            cur.append(e)
+    if cur:
+        chains.append(cur)
+    if chains and not is_gen[0] and not is_gen[-1] and len(chains) >= 2:
+        chains[0] = chains[-1] + chains[0]
+        chains.pop()
+    chains = [c for c in chains if c]
+    if len(chains) != 2:
+        return None
+    return chains[0], chains[1]
+
+
+def _sample_orient_rails(
+    chain_a: list[Edge],
+    chain_b: list[Edge],
+    n_rail: int,
+) -> tuple[list[tuple], list[tuple], Vec3, float] | None:
+    """Parameter-sample both rails, orient by translation, then arc-length resample.
+
+    Arc-length spacing keeps a fit-point spline's grid even. It preserves
+    correspondence only after the translation test has oriented the rails;
+    doing it on a reversed control-vertex rail is what crossed the rulings.
+    """
+    n_rail = max(8, int(n_rail))
+
+    def _one(chain: list[Edge]) -> list[tuple]:
+        n_per = max(8, n_rail // max(1, len(chain)))
+        pts = _chain_param_samples(chain, n_per)
+        return _resample_fraction(pts, n_rail)
+
+    A = _one(chain_a)
+    B = _one(chain_b)
+    if len(A) < 2 or len(B) < 2:
+        return None
+    B = _orient_translation(A, B)
+    mean, _dev = _translation_dev(A, B)
+    if mean.magnitude_square < 1e-18:
+        return None
+    A = _resample_polyline(A, n_rail)
+    B = _resample_polyline(B, n_rail)
+    mean, dev = _translation_dev(A, B)
+    if mean.magnitude_square < 1e-18:
+        return None
+    return A, B, mean.normalize(), dev
+
+
 def _extract_extrusion_rails(
     edges: list[Edge],
     n_rail: int = 48,
 ) -> tuple[list[tuple], list[tuple], Vec3] | None:
-    """End rails of an extrusion-like loop (gens along a shared axis).
+    """Rails of an extrusion: the second curve is the first translated.
 
-    Supports simple 4-cycles and notched boundaries (extra mid-height edges).
-    Returns (rail_a, rail_b, axis) with rails oriented so A[0]↔B[0].
+    Returns (rail_a, rail_b, axis) with A[i] corresponding to B[i], or None
+    when the two chains are not the same profile shifted along the generators.
     """
-    gens: list[tuple[EdgeLine, Vec3, float]] = []
-    for e in edges:
-        if not isinstance(e, EdgeLine):
-            continue
-        d = Vec3(e.b) - Vec3(e.a)
-        L = d.magnitude
-        if L < 1e-6:
-            continue
-        gens.append((e, d / L, L))
-    if not gens:
+    chains = _extrusion_chains(edges)
+    if chains is None:
         return None
-    gens.sort(key=lambda t: -t[2])
-    axis = gens[0][1]
-    gen_len = gens[0][2]
-    # Require at least one long generator
-    if gen_len < 1e-3:
+    packed = _sample_orient_rails(chains[0], chains[1], n_rail)
+    if packed is None:
         return None
+    A, B, axis, dev = packed
+    length = float(_translation_dev(A, B)[0].magnitude)
+    if dev > max(1.0, 0.02 * length):
+        return None
+    return A, B, axis
 
-    def _s_stats(e: Edge) -> tuple[float, float]:
-        pts = _edge_samples(e, n=12)
-        if not pts:
-            return 0.0, 0.0
-        ss = [float(Vec3(p).dot(axis)) for p in pts]
-        return sum(ss) / len(ss), max(ss) - min(ss)
 
-    planar: list[tuple[Edge, float]] = []
-    for e in edges:
-        sm, sr = _s_stats(e)
-        # Skip near-axis generators (large span along axis)
-        if isinstance(e, EdgeLine) and sr > 0.2 * gen_len:
-            continue
-        if sr <= max(0.5, 0.05 * gen_len):
-            planar.append((e, sm))
-    if len(planar) < 2:
+def _ruled_rail_pair(
+    edges: list[Edge], n_rail: int
+) -> tuple[list[tuple], list[tuple], Vec3] | None:
+    """Extrusion rails, or a 4-cycle ruled pair oriented the same way."""
+    rails = _extract_extrusion_rails(edges, n_rail=n_rail)
+    if rails is not None:
+        return rails
+    if not _is_ruled_loop(edges):
         return None
-    s_lo = min(sm for _, sm in planar)
-    s_hi = max(sm for _, sm in planar)
-    if s_hi - s_lo < 0.25 * gen_len:
+    eds = list(edges)
+    if isinstance(eds[0], EdgeLine):
+        eds = eds[1:] + eds[:1]
+    packed = _sample_orient_rails([eds[0]], [eds[2]], n_rail)
+    if packed is None:
         return None
-    tol = max(0.5, 0.02 * (s_hi - s_lo))
-    rail_a_e = [e for e, sm in planar if abs(sm - s_lo) <= tol]
-    rail_b_e = [e for e, sm in planar if abs(sm - s_hi) <= tol]
-    if not rail_a_e or not rail_b_e:
-        return None
-    A = _chain_edge_samples(rail_a_e, n_per=max(16, n_rail // max(1, len(rail_a_e))))
-    B = _chain_edge_samples(rail_b_e, n_per=max(16, n_rail // max(1, len(rail_b_e))))
-    if len(A) < 2 or len(B) < 2:
-        return None
-    if Vec3(B[0]).distance(Vec3(A[0])) > Vec3(B[-1]).distance(Vec3(A[0])):
-        B = list(reversed(B))
-    return (
-        _resample_polyline(A, n_rail),
-        _resample_polyline(B, n_rail),
-        axis,
-    )
+    A, B, axis, _dev = packed
+    return A, B, axis
+
+
+def _extrusion_param_grid(
+    A: list[tuple],
+    B: list[tuple],
+    n_gen: int,
+    n_lat: int,
+) -> list[tuple[tuple, tuple]]:
+    """Rulings A(s)→B(s) and latitudes at constant extrusion fraction.
+
+    s is arc length along the oriented profile, so each ruling is the
+    extrusion of one curve point, not a control-polygon chord.
+    """
+    n = min(len(A), len(B))
+    if n < 2:
+        return []
+    A, B = A[:n], B[:n]
+
+    def _at(s: float, t: float) -> tuple:
+        f = max(0.0, min(1.0, s)) * (n - 1)
+        i = max(0, min(n - 2, int(math.floor(f))))
+        u = f - i
+        pa = Vec3(A[i]) * (1.0 - u) + Vec3(A[i + 1]) * u
+        pb = Vec3(B[i]) * (1.0 - u) + Vec3(B[i + 1]) * u
+        return _v3(pa * (1.0 - t) + pb * t)
+
+    segs: list[tuple[tuple, tuple]] = []
+    for k in range(1, max(n_gen, 1)):
+        s = k / n_gen
+        segs.append((_at(s, 0.0), _at(s, 1.0)))
+    for k in range(1, max(n_lat, 1)):
+        t = k / n_lat
+        prev = _at(0.0, t)
+        for j in range(1, n):
+            cur = _at(j / (n - 1), t)
+            if Vec3(prev).distance(Vec3(cur)) > 1e-9:
+                segs.append((prev, cur))
+            prev = cur
+    return segs
 
 
 def _rail_s_of_point(p: Vec3, A: list[tuple], axis: Vec3) -> float:
@@ -2567,6 +3886,61 @@ def _ruled_param_poly(
     for p in pts3:
         pv = Vec3(p)
         out.append((_rail_s_of_point(pv, A, axis), float(pv.dot(axis))))
+    if out and (
+        abs(out[0][0] - out[-1][0]) > 1e-9 or abs(out[0][1] - out[-1][1]) > 1e-9
+    ):
+        out.append(out[0])
+    return out
+
+
+def _rail_at(A: list[tuple], s: float) -> Vec3:
+    """Point at fraction ``s`` along a sampled rail."""
+    n = len(A)
+    f = max(0.0, min(1.0, s)) * (n - 1)
+    i = max(0, min(n - 2, int(math.floor(f))))
+    u = f - i
+    return Vec3(A[i]) * (1.0 - u) + Vec3(A[i + 1]) * u
+
+
+def _ruled_param_st(
+    edges: list[Edge],
+    A: list[tuple],
+    B: list[tuple],
+    axis: Vec3,
+) -> list[tuple[float, float]]:
+    """Trim loop in (s, t). ``t`` is the fraction along the ruling, not height.
+
+    A profile that itself moves along the extrusion has a different height at
+    every s, so clipping at constant height draws the latitude past the cut.
+    """
+    if len(A) < 2 or len(B) < 2 or not edges:
+        return []
+    pts3: list[tuple] = []
+    for e in edges:
+        seg = _edge_boundary_samples(e)
+        if not seg:
+            continue
+        if not pts3:
+            pts3.extend(seg)
+        elif pts3[-1] == seg[0]:
+            pts3.extend(seg[1:])
+        else:
+            pts3.extend(seg)
+    pts3 = _uniq_ring(pts3)
+    if len(pts3) < 3:
+        return []
+    out: list[tuple[float, float]] = []
+    for p in pts3:
+        pv = Vec3(p)
+        s = _rail_s_of_point(pv, A, axis)
+        pa = _rail_at(A, s)
+        pb = _rail_at(B, s)
+        denom = float((pb - pa).dot(axis))
+        if abs(denom) < 1e-12:
+            t = 0.0
+        else:
+            t = float((pv - pa).dot(axis) / denom)
+        out.append((s, t))
     if out and (
         abs(out[0][0] - out[-1][0]) > 1e-9 or abs(out[0][1] - out[-1][1]) > 1e-9
     ):
@@ -2739,47 +4113,71 @@ def _hits_to_spans(hits: list[float]) -> list[tuple[float, float]]:
     return spans
 
 
+def _rails_from_extrude(
+    extrude: dict[str, Any], n_rail: int
+) -> tuple[list[tuple], list[tuple], Vec3] | None:
+    """Profile samples and the same curve shifted by the extrusion vector."""
+    cps = extrude.get("cps") or ()
+    if len(cps) < 2:
+        return None
+    V = Vec3(extrude.get("vector") or (0, 0, 0))
+    if V.magnitude_square < 1e-18:
+        return None
+    knots = extrude.get("knots")
+    edge = EdgeSpline(
+        int(extrude.get("degree") or 1),
+        tuple(tuple(p) for p in cps),
+        tuple(knots) if knots else None,
+    )
+    A = _edge_param_samples(edge, max(8, int(n_rail)))
+    if len(A) < 2:
+        return None
+    A = _resample_polyline(A, max(8, int(n_rail)))
+    B = [_v3(Vec3(p) + V) for p in A]
+    return A, B, V.normalize()
+
+
 def _ruled_mesh_segs(
     loops: list[list[Edge]],
     n_gen: int = 12,
     n_lat: int = 5,
     n_rail: int = 48,
+    extrude: dict[str, Any] | None = None,
 ) -> list[tuple[tuple, tuple]]:
-    """Ruled isolines clipped to outer (+ holes): straight gens + curved lats."""
+    """Ruled isolines: extrusion rulings at matching curve parameter, else trim clip."""
     if not loops:
         return []
     edges = loops[0]
-    rails = _extract_extrusion_rails(edges, n_rail=n_rail)
-    if rails is None and _is_ruled_loop(edges):
-        # Fallback: classic 4-cycle without long parallel gens (skew ruled)
-        eds = list(edges)
-        if isinstance(eds[0], EdgeLine):
-            eds = eds[1:] + eds[:1]
-        A = _edge_samples(eds[0], n=n_rail)
-        B = _edge_samples(eds[2], n=n_rail)
-        if len(A) < 2 or len(B) < 2:
-            return []
-        if Vec3(B[0]).distance(Vec3(A[0])) > Vec3(B[-1]).distance(Vec3(A[0])):
-            B = list(reversed(B))
-        A, B = _resample_polyline(A, n_rail), _resample_polyline(B, n_rail)
-        n = len(A)
-        axis = Vec3(B[n // 2]) - Vec3(A[n // 2])
-        if axis.magnitude_square < 1e-18:
-            return []
-        axis = axis.normalize()
-    elif rails is None:
+    paired = _ruled_rail_pair(edges, n_rail)
+    # Boundary rails miss a trimmed extrusion: the outline is the intersection
+    # curve, while the surface record still has the profile and its translation.
+    from_surface = False
+    if paired is None and extrude is not None:
+        paired = _rails_from_extrude(extrude, n_rail)
+        from_surface = paired is not None
+    if paired is None:
         return []
-    else:
-        A, B, axis = rails
-        n = len(A)
+    A, B, axis = paired
+    n = min(len(A), len(B))
+    if n < 2:
+        return []
+    A, B = A[:n], B[:n]
+    mean, dev = _translation_dev(A, B)
+    # Pure extrusion (fit spline or control-vertex spline): rulings are
+    # C(s) → C(s)+V. A height clip assumes each rail sits at one height, which
+    # is true for a planar fit profile and false when the control polygon
+    # moves along the extrusion.
+    if (
+        not from_surface
+        and not loops[1:]
+        and mean.magnitude > 1e-6
+        and dev <= max(1.0, 0.02 * float(mean.magnitude))
+    ):
+        return _extrusion_param_grid(A, B, n_gen, n_lat)
 
-    outer_uv = _ruled_param_poly(edges, A, axis)
-    hole_uvs = [_ruled_param_poly(h, A, axis) for h in loops[1:]]
+    outer_uv = _ruled_param_st(edges, A, B, axis)
+    hole_uvs = [_ruled_param_st(h, A, B, axis) for h in loops[1:]]
     hole_uvs = [h for h in hole_uvs if len(h) >= 3]
-
-    # Prefer mean rail heights if ends differ slightly
-    hA = sum(float(Vec3(p).dot(axis)) for p in A) / len(A)
-    hB = sum(float(Vec3(p).dot(axis)) for p in B) / len(B)
 
     def _at(s: float, t: float) -> tuple:
         """Interpolated point on the ruled patch (s,t) ∈ [0,1]²."""
@@ -2803,12 +4201,14 @@ def _ruled_mesh_segs(
             max(xs) - min(xs),
             math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
         )
-        snap_tol = max(1.0, 0.02 * diag)
+        # Seat a tip that is already on the trim. A wide snap pulls the
+        # cut end onto a neighbouring loop of a self-intersecting hole.
+        snap_tol = max(1e-3, 0.001 * diag)
 
     def _tip(p: tuple) -> tuple:
         return _snap_point_to_polylines(p, bd, snap_tol)
 
-    # Use (s, h) clipping when we have a reliable param polygon from SAB edges
+    # Clip in (s, t): s along the profile, t along the extrusion.
     use_clip = len(outer_uv) >= 3
     if use_clip:
         # Exact trim hits. Do not PIP-chop afterwards: endpoints that lie on
@@ -2825,26 +4225,23 @@ def _ruled_mesh_segs(
                         _poly_line_hits(huv, const=s, horizontal=False)
                     ),
                 )
-            for ha, hb in spans:
-                if abs(hB - hA) < 1e-12:
-                    continue
-                t0 = max(0.0, min(1.0, (ha - hA) / (hB - hA)))
-                t1 = max(0.0, min(1.0, (hb - hA) / (hB - hA)))
+            for t0, t1 in spans:
+                t0 = max(0.0, min(1.0, t0))
+                t1 = max(0.0, min(1.0, t1))
                 if abs(t1 - t0) < 1e-7:
                     continue
                 segs.append((_tip(_at(s, t0)), _tip(_at(s, t1))))
-        # Latitudes: constant h (skip exact rail ends) — curved rail lerp
+        # Latitudes: constant extrusion fraction (the profile, translated).
         for k in range(1, n_lat):
             t = k / n_lat
-            hh = hA + (hB - hA) * t
             spans = _hits_to_spans(
-                _poly_line_hits(outer_uv, const=hh, horizontal=True)
+                _poly_line_hits(outer_uv, const=t, horizontal=True)
             )
             for huv in hole_uvs:
                 spans = _clip_intervals_subtract(
                     spans,
                     _hits_to_spans(
-                        _poly_line_hits(huv, const=hh, horizontal=True)
+                        _poly_line_hits(huv, const=t, horizontal=True)
                     ),
                 )
             for s0, s1 in spans:
@@ -2878,11 +4275,13 @@ def _ruled_mesh_segs(
     return segs
 
 
-def _emit_ruled_mesh(loops: list[list[Edge]]) -> list[str]:
+def _emit_ruled_mesh(
+    loops: list[list[Edge]], extrude: dict[str, Any] | None = None
+) -> list[str]:
     if not loops:
         return []
     L: list[str] = []
-    for a, b in _ruled_mesh_segs(loops):
+    for a, b in _ruled_mesh_segs(loops, extrude=extrude):
         L.append(f"  \\stpDmeshSeg{{{_fmt_xyz(a)}}}{{{_fmt_xyz(b)}}}")
     return L
 
@@ -3085,7 +4484,15 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
         L.extend(_emit_loop_eq(loops))
         return L
     if kind == "ruled":
-        L.extend(_emit_ruled_mesh(loops))
+        L.extend(_emit_ruled_mesh(loops, face.get("extrude")))
+        L.extend(_emit_loop_wire(loops))
+        L.extend(_emit_loop_eq(loops))
+        return L
+    if kind == "spline":
+        L.extend(
+            f"  \\stpDmeshSeg{{{_fmt_xyz(a)}}}{{{_fmt_xyz(b)}}}"
+            for a, b in _spline_mesh_segs(loops, face.get("spline") or {})
+        )
         L.extend(_emit_loop_wire(loops))
         L.extend(_emit_loop_eq(loops))
         return L
@@ -3107,6 +4514,32 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
     return L
 
 
+def _edge_full_turn(edge: Edge) -> bool:
+    """Closed circle or a 360° arc. Chained into a path, its sample origin
+    is not the vertex the previous edge arrived at, so ``--`` draws a chord."""
+    if isinstance(edge, EdgeCircle):
+        return True
+    if isinstance(edge, EdgeArc):
+        return abs(float(edge.t1) - float(edge.t0)) >= 2 * math.pi - 0.15
+    return False
+
+
+def _wire_loops(edges: list[Edge]) -> list[list[Edge]]:
+    """Draw each full turn on its own loop. The remaining edges stay in order."""
+    if len(edges) < 2 or not any(_edge_full_turn(e) for e in edges):
+        return [edges]
+    chain: list[Edge] = []
+    parts: list[list[Edge]] = []
+    for e in edges:
+        if _edge_full_turn(e):
+            parts.append([e])
+        else:
+            chain.append(e)
+    if chain:
+        parts.append(chain)
+    return parts
+
+
 def _emit_loop_wire(
     loops: list[list[Edge]], *, skip_seam_lines: bool = False
 ) -> list[str]:
@@ -3119,12 +4552,13 @@ def _emit_loop_wire(
         return []
     L = ["  \\begin{stpDwireEnv}"]
     for edges in loops:
-        L.append("    \\begin{stpDfaceLoop}")
-        for e in edges:
-            if skip_seam_lines and isinstance(e, EdgeLine):
-                continue
-            L.append(_emit_edge_tex(e))
-        L.append("    \\end{stpDfaceLoop}")
+        for part in _wire_loops(edges):
+            L.append("    \\begin{stpDfaceLoop}")
+            for e in part:
+                if skip_seam_lines and isinstance(e, EdgeLine):
+                    continue
+                L.append(_emit_edge_tex(e))
+            L.append("    \\end{stpDfaceLoop}")
     L.append("  \\end{stpDwireEnv}")
     return L
 
@@ -3381,32 +4815,26 @@ def _ruled_surface_area(
     if not loops:
         return 0.0
     edges = loops[0]
-    rails = _extract_extrusion_rails(edges, n_rail=max(32, n_s))
-    if rails is None and _is_ruled_loop(edges):
-        eds = list(edges)
-        if isinstance(eds[0], EdgeLine):
-            eds = eds[1:] + eds[:1]
-        A = _edge_samples(eds[0], n=n_s)
-        B = _edge_samples(eds[2], n=n_s)
-        if len(A) < 2 or len(B) < 2:
-            return _planar_loops_area(loops)
-        if Vec3(B[0]).distance(Vec3(A[0])) > Vec3(B[-1]).distance(Vec3(A[0])):
-            B = list(reversed(B))
-        A, B = _resample_polyline(A, n_s), _resample_polyline(B, n_s)
-        axis = Vec3(B[len(A) // 2]) - Vec3(A[len(A) // 2])
-        if axis.magnitude_square < 1e-18:
-            return _planar_loops_area(loops)
-        axis = axis.normalize()
-    elif rails is None:
+    paired = _ruled_rail_pair(edges, max(32, n_s))
+    if paired is None:
         return _planar_loops_area(loops)
-    else:
-        A, B, axis = rails
-        A, B = _resample_polyline(A, n_s), _resample_polyline(B, n_s)
+    A, B, axis = paired
 
     n = min(len(A), len(B))
     if n < 2:
         return _planar_loops_area(loops)
     A, B = A[:n], B[:n]
+    mean, dev = _translation_dev(A, B)
+    if (
+        not loops[1:]
+        and mean.magnitude > 1e-6
+        and dev <= max(1.0, 0.02 * float(mean.magnitude))
+    ):
+        area = 0.0
+        for i in range(n - 1):
+            area += _tri_area3(A[i], A[i + 1], B[i + 1])
+            area += _tri_area3(A[i], B[i + 1], B[i])
+        return max(0.0, area)
     hA = float(Vec3(A[0]).dot(axis))
     hB = float(Vec3(B[0]).dot(axis))
     outer_uv = _ruled_param_poly(edges, A, axis)
