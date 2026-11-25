@@ -105,7 +105,7 @@
 \newcommand{\stpDimBar}{4mm}
 % Default paper offset for dim commands (5×\small 字高). Per-call override:
 %   2D: \stpDimX{A}{B}(0.4cm)[$L_x$]   \stpDimY{A}{B}(0.5cm)[$L_y$]
-%   3D: \stpDdimEnv{x}{…}(0.4cm)[$L_x$]
+%   3D: \stpDdimEnv{x}[xy|zx]{…}(0.4cm)[$L_x$]
 \newcommand{\stpDimOff}{1.6cm}
 \newdimen\stp@dimEx
 \def\stp@scale{1}
@@ -1841,10 +1841,15 @@
 %     solid circle = rotation about that axis constrained
 %     hollow circle = rotation about that axis free
 %   fixed — plane cross; [plane][normal-coord] (legacy)
-% Hollow black circle at the support node (same size/LW as rot-end BC marks)
-\newcommand{\stp@DnodeMark}[1]{%
-  \fill[white] (#1) circle[radius=0.5*\stpDhingeR];%
-  \draw[line width=\stpTinyLW] (#1) circle[radius=0.5*\stpDhingeR];%
+%   [anchor] last optional: 1 filled (node BC, default) / 0 open (segment BC)
+% Anchor circle. #2=1 filled (constraint on a node) / 0 open (constraint on a segment)
+\newcommand{\stp@DnodeMark}[2]{%
+  \ifthenelse{\equal{#2}{0}}{%
+    \draw[stpDbcRing] (#1) circle[radius=0.5*\stpDhingeR];%
+  }{%
+    \fill[\stpClrGray!55] (#1) circle[radius=0.5*\stpDhingeR];%
+    \draw[stpDbcRing] (#1) circle[radius=0.5*\stpDhingeR];%
+  }%
 }
 \newcommand{\stp@DrotMark}[2]{%
   % #1=position, #2=1 light-filled (rot fixed) / 0 hollow (rot free)
@@ -1891,24 +1896,24 @@
   \stp@DaxisMarkSpr{#1}{#4}{#7}{0}{0}{1}%
 }
 
-\NewDocumentCommand{\stpDsupport}{m m O{1} O{1} O{1} O{0} O{0} O{0}}{%
+\NewDocumentCommand{\stpDsupport}{m m O{1} O{1} O{1} O{0} O{0} O{0} O{1}}{%
   \stpValidTypefalse
   \edef\stp@t{#1}%
   \def\stp@sPin{pin}\def\stp@sFixed{fixed}\def\stp@sSpr{spring}%
   \def\stp@sFork{fork}\def\stp@sWall{wall}%
   \ifx\stp@t\stp@sPin
     \stp@DrodWall{#2}{#3}{#4}{#5}{#6}{#7}{#8}%
-    \stp@DnodeMark{#2}%
+    \stp@DnodeMark{#2}{#9}%
     \stpValidTypetrue
   \fi
   \ifx\stp@t\stp@sWall
     \stp@DrodWall{#2}{#3}{#4}{#5}{#6}{#7}{#8}%
-    \stp@DnodeMark{#2}%
+    \stp@DnodeMark{#2}{#9}%
     \stpValidTypetrue
   \fi
   \ifx\stp@t\stp@sSpr
     \stp@DrodSpring{#2}{#3}{#4}{#5}{#6}{#7}{#8}%
-    \stp@DnodeMark{#2}%
+    \stp@DnodeMark{#2}{#9}%
     \stpValidTypetrue
   \fi
   \ifx\stp@t\stp@sFork
@@ -1940,7 +1945,7 @@
         --++(0,0,-\stpDsupLen*#5+\stpDhingeAxH/2);%
       \stp@DrotMark{$ (#2)+(0,0,-\stpDsupLen*#5) $}{#8}%
     }%
-    \stp@DnodeMark{#2}%
+    \stp@DnodeMark{#2}{#9}%
     \stpValidTypetrue
   \fi
   \ifx\stp@t\stp@sFixed
@@ -1959,7 +1964,7 @@
       \draw[stpDbc] (#2)--++(-\stpDsupLen/2,0)--++(\stpDsupLen,0);%
       \draw[stpDbc] (#2)--++(0,-\stpDsupLen/2)--++(0,\stpDsupLen);%
     \end{scope}%
-    \stp@DnodeMark{#2}%
+    \stp@DnodeMark{#2}{#9}%
     \stpValidTypetrue
   \fi
   \ifstpValidType\else\stp@typeerr{Dsupport}{#1}\fi
@@ -2047,6 +2052,52 @@
 \def\stp@DldDir#1{\stp@DldDirA#1\@nil}
 \def\stp@DldDirA#1,#2,#3\@nil{%
   \def\stp@ddx{#1}\def\stp@ddy{#2}\def\stp@ddz{#3}%
+}
+
+% \stpDpolyload{N1,N2,...}{dx,dy,dz}[shaft][label]
+% Distributed load along a polyline (an open edge or a closed boundary).
+\NewDocumentCommand{\stpDpolyload}{m m O{0.55} O{}}{%
+  \edef\stp@dd{#2}%
+  \expandafter\stp@DldDir\expandafter{\stp@dd}%
+  \pgfmathsetmacro{\stp@flen}{sqrt(\stp@ddx*\stp@ddx+\stp@ddy*\stp@ddy+\stp@ddz*\stp@ddz)}%
+  \pgfmathparse{\stp@flen<1e-9?1:0}%
+  \ifnum\pgfmathresult=1\relax\PackageError{satopdf}{Zero edge-load direction}{}\fi
+  \pgfmathsetmacro{\stp@fox}{-\stp@ddx/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@foy}{-\stp@ddy/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@foz}{-\stp@ddz/\stp@flen*#3}%
+  \pgfmathsetmacro{\stp@fgx}{-\stp@ddx/\stp@flen*\stpDldGap}%
+  \pgfmathsetmacro{\stp@fgy}{-\stp@ddy/\stp@flen*\stpDldGap}%
+  \pgfmathsetmacro{\stp@fgz}{-\stp@ddz/\stp@flen*\stpDldGap}%
+  \foreach \stp@pn [count=\stp@i] in {#1} {%
+    \coordinate (stp@plt\stp@i) at ($ (\stp@pn)+(\stp@fgx,\stp@fgy,\stp@fgz) $);%
+    \coordinate (stp@plh\stp@i) at ($ (\stp@pn)+(\stp@fox,\stp@foy,\stp@foz) $);%
+    \draw[stpLoad] (stp@plh\stp@i)--(stp@plt\stp@i);%
+    \xdef\stp@pln{\stp@i}%
+  }%
+  \foreach \stp@i in {2,...,\stp@pln} {%
+    \pgfmathtruncatemacro{\stp@j}{\stp@i-1}%
+    \draw[stpLoadRail] (stp@plt\stp@j)--(stp@plt\stp@i);%
+    \draw[stpLoadRail] (stp@plh\stp@j)--(stp@plh\stp@i);%
+  }%
+  \pgfmathtruncatemacro{\stp@mid}{max(1,int((\stp@pln+1)/2))}%
+  \def\stp@dllab{#4}%
+  \ifx\stp@dllab\stp@empty\else
+    \node[stpLoadLabel, above=1mm] at (stp@plh\stp@mid) {#4};%
+  \fi
+}
+
+% \stpDpolybc{rail nodes}{symbol nodes}[ux][uy][uz][rx][ry][rz]
+% Line restraint: the rail follows the boundary; open-anchor supports sit on it.
+\NewDocumentCommand{\stpDpolybc}{m m O{1} O{1} O{1} O{0} O{0} O{0}}{%
+  \foreach \stp@pn [count=\stp@i] in {#1} {%
+    \ifnum\stp@i>1
+      \draw[stpDbc] (\stp@bcprev)--(\stp@pn);%
+    \fi
+    \xdef\stp@bcprev{\stp@pn}%
+  }%
+  \foreach \stp@sn in {#2} {%
+    \stpDsupport{pin}{\stp@sn}[#3][#4][#5][#6][#7][#8][0]%
+  }%
 }
 \newcommand{\stpDldGap}{0.08}
 
@@ -2217,7 +2268,11 @@
   \def#4{#1}\def#5{#2}\def#6{#3}%
 }
 
+\def\stp@curveGrab{0}
 \newcommand{\stp@fAddPt}[3]{%
+  \ifnum\stp@curveGrab=1\relax
+    \stpCurvePush{#1}{#2}{#3}%
+  \else
   \stp@fp{\stp@fx}{(#1)*\stpDscale}%
   \stp@fp{\stp@fy}{(#2)*\stpDscale}%
   \stp@fp{\stp@fz}{(#3)*\stpDscale}%
@@ -2239,6 +2294,7 @@
     \gdef\stp@loopstarted{1}%
     \gdef\stp@fstarted{1}%
     \xdef\stp@flastx{\stp@fx}\xdef\stp@flasty{\stp@fy}\xdef\stp@flastz{\stp@fz}%
+  \fi
   \fi
 }
 
@@ -2561,6 +2617,373 @@
   \fi
 }
 
+% Boundary load / restraint. #1 is an edge equation (\stpDedgeLine/Circle/Arc/Spline).
+% Points come from that equation. No structural node, and a restraint draws
+% only the 3D supports (the face edge is already stroked).
+\ExplSyntaxOn
+\seq_new:N \l__stp_cv_seq
+\seq_new:N \l__stp_cum_seq
+\seq_new:N \l__stp_st_seq
+\clist_new:N \l__stp_dir_clist
+\bool_new:N \l__stp_cv_closed_bool
+\bool_new:N \l__stp_hit_bool
+\int_new:N \l__stp_cvn_int
+\int_new:N \l__stp_seg_int
+\fp_new:N \l__stp_cvx_fp
+\fp_new:N \l__stp_cvy_fp
+\fp_new:N \l__stp_cvz_fp
+\fp_new:N \l__stp_cax_fp
+\fp_new:N \l__stp_cay_fp
+\fp_new:N \l__stp_caz_fp
+\fp_new:N \l__stp_cbx_fp
+\fp_new:N \l__stp_cby_fp
+\fp_new:N \l__stp_cbz_fp
+\fp_new:N \l__stp_cvlen_fp
+\fp_new:N \l__stp_cvdx_fp
+\fp_new:N \l__stp_cvdy_fp
+\fp_new:N \l__stp_cvdz_fp
+\fp_new:N \l__stp_dlen_fp
+\fp_new:N \l__stp_ct_fp
+\cs_new_protected:Npn \stpCurvePush #1#2#3
+  {
+    \fp_set:Nn \l__stp_cbx_fp {#1}
+    \fp_set:Nn \l__stp_cby_fp {#2}
+    \fp_set:Nn \l__stp_cbz_fp {#3}
+    \bool_set_false:N \l__stp_hit_bool
+    \seq_if_empty:NF \l__stp_cv_seq
+      {
+        \__stp_cv_xyz:n { \seq_count:N \l__stp_cv_seq }
+        \fp_compare:nT
+          {
+            abs( \l__stp_cvx_fp - \l__stp_cbx_fp )
+            + abs( \l__stp_cvy_fp - \l__stp_cby_fp )
+            + abs( \l__stp_cvz_fp - \l__stp_cbz_fp ) < 1e-7
+          }
+          { \bool_set_true:N \l__stp_hit_bool }
+      }
+    \bool_if:NF \l__stp_hit_bool
+      {
+        \seq_gput_right:Ne \l__stp_cv_seq
+          {
+            \fp_to_tl:N \l__stp_cbx_fp ,
+            \fp_to_tl:N \l__stp_cby_fp ,
+            \fp_to_tl:N \l__stp_cbz_fp
+          }
+      }
+  }
+\cs_new_protected:Npn \__stp_cv_xyz:n #1
+  {
+    \tl_set:Ne \l_tmpa_tl { \seq_item:Nn \l__stp_cv_seq {#1} }
+    \exp_last_unbraced:NV \__stp_cv_xyz_set:w \l_tmpa_tl \@nil
+  }
+\cs_new_protected:Npn \__stp_cv_xyz_set:w #1,#2,#3\@nil
+  {
+    \fp_set:Nn \l__stp_cvx_fp {#1}
+    \fp_set:Nn \l__stp_cvy_fp {#2}
+    \fp_set:Nn \l__stp_cvz_fp {#3}
+  }
+\cs_new_protected:Npn \__stp_densify_line:
+  {
+    \int_compare:nNnT { \seq_count:N \l__stp_cv_seq } = { 2 }
+      {
+    \__stp_cv_xyz:n { 1 }
+    \fp_set_eq:NN \l__stp_cax_fp \l__stp_cvx_fp
+    \fp_set_eq:NN \l__stp_cay_fp \l__stp_cvy_fp
+    \fp_set_eq:NN \l__stp_caz_fp \l__stp_cvz_fp
+    \__stp_cv_xyz:n { 2 }
+    \fp_set_eq:NN \l__stp_cbx_fp \l__stp_cvx_fp
+    \fp_set_eq:NN \l__stp_cby_fp \l__stp_cvy_fp
+    \fp_set_eq:NN \l__stp_cbz_fp \l__stp_cvz_fp
+    \seq_clear:N \l__stp_st_seq
+    \int_step_inline:nnn { 0 } { \stpFaceDispSegs }
+      {
+        \fp_set:Nn \l__stp_ct_fp { ##1 / \stpFaceDispSegs }
+        \seq_put_right:Ne \l__stp_st_seq
+          {
+            \fp_eval:n { \l__stp_cax_fp + \l__stp_ct_fp * (\l__stp_cbx_fp - \l__stp_cax_fp) } ,
+            \fp_eval:n { \l__stp_cay_fp + \l__stp_ct_fp * (\l__stp_cby_fp - \l__stp_cay_fp) } ,
+            \fp_eval:n { \l__stp_caz_fp + \l__stp_ct_fp * (\l__stp_cbz_fp - \l__stp_caz_fp) }
+          }
+      }
+    \seq_set_eq:NN \l__stp_cv_seq \l__stp_st_seq
+      }
+  }
+\cs_new_protected:Npn \__stp_curve_length:
+  {
+    \seq_clear:N \l__stp_cum_seq
+    \seq_put_right:Nn \l__stp_cum_seq { 0 }
+    \fp_zero:N \l__stp_cvlen_fp
+    \int_step_inline:nnn { 2 } { \seq_count:N \l__stp_cv_seq }
+      {
+        \__stp_cv_xyz:n { ##1 - 1 }
+        \fp_set_eq:NN \l__stp_cax_fp \l__stp_cvx_fp
+        \fp_set_eq:NN \l__stp_cay_fp \l__stp_cvy_fp
+        \fp_set_eq:NN \l__stp_caz_fp \l__stp_cvz_fp
+        \__stp_cv_xyz:n { ##1 }
+        \fp_add:Nn \l__stp_cvlen_fp
+          {
+            sqrt(
+              (\l__stp_cvx_fp - \l__stp_cax_fp)^2
+              + (\l__stp_cvy_fp - \l__stp_cay_fp)^2
+              + (\l__stp_cvz_fp - \l__stp_caz_fp)^2
+            )
+          }
+        \seq_put_right:Ne \l__stp_cum_seq { \fp_to_tl:N \l__stp_cvlen_fp }
+      }
+    \bool_set_false:N \l__stp_cv_closed_bool
+    \int_compare:nNnF { \seq_count:N \l__stp_cv_seq } < { 2 }
+      {
+    \__stp_cv_xyz:n { 1 }
+    \fp_set_eq:NN \l__stp_cax_fp \l__stp_cvx_fp
+    \fp_set_eq:NN \l__stp_cay_fp \l__stp_cvy_fp
+    \fp_set_eq:NN \l__stp_caz_fp \l__stp_cvz_fp
+    \__stp_cv_xyz:n { \seq_count:N \l__stp_cv_seq }
+    \fp_set:Nn \l__stp_ct_fp
+      {
+        sqrt(
+          (\l__stp_cvx_fp - \l__stp_cax_fp)^2
+          + (\l__stp_cvy_fp - \l__stp_cay_fp)^2
+          + (\l__stp_cvz_fp - \l__stp_caz_fp)^2
+        )
+      }
+    \fp_set:Nn \l__stp_dlen_fp { max(1e-3, 1e-4 * \l__stp_cvlen_fp) }
+    \fp_compare:nNnTF { \l__stp_ct_fp } < { \l__stp_dlen_fp }
+      { \bool_set_true:N \l__stp_cv_closed_bool }
+      { \bool_set_false:N \l__stp_cv_closed_bool }
+      }
+  }
+\cs_new_protected:Npn \__stp_along:n #1
+  {
+    \fp_set:Nn \l__stp_ct_fp {#1}
+    \fp_compare:nNnT { \l__stp_ct_fp } < { 0 } { \fp_zero:N \l__stp_ct_fp }
+    \fp_compare:nNnT { \l__stp_ct_fp } > { \l__stp_cvlen_fp }
+      { \fp_set_eq:NN \l__stp_ct_fp \l__stp_cvlen_fp }
+    \int_set:Nn \l__stp_seg_int { \seq_count:N \l__stp_cv_seq }
+    \bool_set_false:N \l__stp_hit_bool
+    \int_step_inline:nnn { 2 } { \seq_count:N \l__stp_cum_seq }
+      {
+        \bool_if:NF \l__stp_hit_bool
+          {
+            \fp_compare:nT
+              {
+                \l__stp_ct_fp + 1e-9 >= \seq_item:Nn \l__stp_cum_seq { ##1 - 1 }
+                && \l__stp_ct_fp <= \seq_item:Nn \l__stp_cum_seq {##1} + 1e-9
+              }
+              {
+                \int_set:Nn \l__stp_seg_int {##1}
+                \bool_set_true:N \l__stp_hit_bool
+              }
+          }
+      }
+    \__stp_cv_xyz:n { \l__stp_seg_int - 1 }
+    \fp_set_eq:NN \l__stp_cax_fp \l__stp_cvx_fp
+    \fp_set_eq:NN \l__stp_cay_fp \l__stp_cvy_fp
+    \fp_set_eq:NN \l__stp_caz_fp \l__stp_cvz_fp
+    \__stp_cv_xyz:n { \l__stp_seg_int }
+    \fp_set_eq:NN \l__stp_cbx_fp \l__stp_cvx_fp
+    \fp_set_eq:NN \l__stp_cby_fp \l__stp_cvy_fp
+    \fp_set_eq:NN \l__stp_cbz_fp \l__stp_cvz_fp
+    \fp_set:Nn \l__stp_dlen_fp
+      {
+        \seq_item:Nn \l__stp_cum_seq { \l__stp_seg_int }
+        - \seq_item:Nn \l__stp_cum_seq { \l__stp_seg_int - 1 }
+      }
+    \fp_compare:nNnTF { abs(\l__stp_dlen_fp) } < { 1e-12 }
+      { \fp_zero:N \l__stp_ct_fp }
+      {
+        \fp_set:Nn \l__stp_ct_fp
+          {
+            ( \l__stp_ct_fp - \seq_item:Nn \l__stp_cum_seq { \l__stp_seg_int - 1 } )
+            / \l__stp_dlen_fp
+          }
+      }
+    \fp_set:Nn \l__stp_cvx_fp
+      { \l__stp_cax_fp + \l__stp_ct_fp * (\l__stp_cbx_fp - \l__stp_cax_fp) }
+    \fp_set:Nn \l__stp_cvy_fp
+      { \l__stp_cay_fp + \l__stp_ct_fp * (\l__stp_cby_fp - \l__stp_cay_fp) }
+    \fp_set:Nn \l__stp_cvz_fp
+      { \l__stp_caz_fp + \l__stp_ct_fp * (\l__stp_cbz_fp - \l__stp_caz_fp) }
+  }
+\cs_new_protected:Npn \__stp_stations:n #1
+  {
+    \seq_clear:N \l__stp_st_seq
+    \int_set:Nn \l__stp_cvn_int {#1}
+    \int_compare:nNnT { \l__stp_cvn_int } < { 2 }
+      { \int_set:Nn \l__stp_cvn_int { 2 } }
+    \bool_if:NTF \l__stp_cv_closed_bool
+      {
+        \int_step_inline:nn { \l__stp_cvn_int }
+          {
+            \__stp_along:n
+              { \l__stp_cvlen_fp * (##1 - 1) / \l__stp_cvn_int }
+            \seq_put_right:Ne \l__stp_st_seq
+              {
+                \fp_to_tl:N \l__stp_cvx_fp ,
+                \fp_to_tl:N \l__stp_cvy_fp ,
+                \fp_to_tl:N \l__stp_cvz_fp
+              }
+          }
+      }
+      {
+        \int_step_inline:nn { \l__stp_cvn_int }
+          {
+            \__stp_along:n
+              { \l__stp_cvlen_fp * (##1 - 1) / ( \l__stp_cvn_int - 1 ) }
+            \seq_put_right:Ne \l__stp_st_seq
+              {
+                \fp_to_tl:N \l__stp_cvx_fp ,
+                \fp_to_tl:N \l__stp_cvy_fp ,
+                \fp_to_tl:N \l__stp_cvz_fp
+              }
+          }
+      }
+  }
+\cs_new_protected:Npn \__stp_bc_count:
+  {
+    \bool_if:NTF \l__stp_cv_closed_bool
+      { \int_set:Nn \l__stp_cvn_int { 5 } }
+      {
+        \fp_set:Nn \l__stp_ct_fp { 0.70 / \stpDscale }
+        \int_set:Nn \l__stp_cvn_int { 3 }
+        \fp_compare:nT { \l__stp_cvlen_fp / 4 >= \l__stp_ct_fp }
+          { \int_set:Nn \l__stp_cvn_int { 5 } }
+        \fp_compare:nT
+          {
+            \l__stp_cvlen_fp / 3 >= \l__stp_ct_fp
+            && \l__stp_cvn_int < 5
+          }
+          { \int_set:Nn \l__stp_cvn_int { 4 } }
+      }
+  }
+\cs_new_protected:Npn \__stp_paper:Nnn #1#2#3
+  {
+    \fp_set:Nn #1 { \l__stp_cvx_fp * \stpDscale + #2 }
+    \fp_set:Nn \l__stp_cax_fp { \l__stp_cvy_fp * \stpDscale + #3 }
+  }
+\cs_new_protected:Npn \__stp_grab:n #1
+  {
+    \seq_gclear:N \l__stp_cv_seq
+    \tl_set:Nn \stp@curveGrab {1}
+    #1
+    \tl_set:Nn \stp@curveGrab {0}
+    \__stp_densify_line:
+    \__stp_curve_length:
+  }
+\cs_new_protected:Npn \__stp_draw_chain:n #1
+  {
+    \int_step_inline:nnn { 2 } { \seq_count:N \l__stp_cv_seq }
+      {
+        \__stp_cv_xyz:n { ##1 - 1 }
+        \fp_set:Nn \l__stp_cax_fp { \l__stp_cvx_fp * \stpDscale + \l__stp_ox_fp }
+        \fp_set:Nn \l__stp_cay_fp { \l__stp_cvy_fp * \stpDscale + \l__stp_oy_fp }
+        \fp_set:Nn \l__stp_caz_fp { \l__stp_cvz_fp * \stpDscale + \l__stp_oz_fp }
+        \__stp_cv_xyz:n {##1}
+        \fp_set:Nn \l__stp_cbx_fp { \l__stp_cvx_fp * \stpDscale + \l__stp_ox_fp }
+        \fp_set:Nn \l__stp_cby_fp { \l__stp_cvy_fp * \stpDscale + \l__stp_oy_fp }
+        \fp_set:Nn \l__stp_cbz_fp { \l__stp_cvz_fp * \stpDscale + \l__stp_oz_fp }
+        \draw[#1]
+          (\fp_to_tl:N \l__stp_cax_fp, \fp_to_tl:N \l__stp_cay_fp, \fp_to_tl:N \l__stp_caz_fp)
+          --
+          (\fp_to_tl:N \l__stp_cbx_fp, \fp_to_tl:N \l__stp_cby_fp, \fp_to_tl:N \l__stp_cbz_fp);
+      }
+  }
+\fp_new:N \l__stp_ox_fp
+\fp_new:N \l__stp_oy_fp
+\fp_new:N \l__stp_oz_fp
+\cs_new_protected:Npn \stp_edge_load:nnnnn #1#2#3#4#5
+  {
+    \__stp_grab:n {#1}
+    \int_compare:nNnF { \seq_count:N \l__stp_cv_seq } < { 2 }
+      {
+    \clist_set:Nn \l__stp_dir_clist {#2}
+    \fp_set:Nn \l__stp_cvdx_fp { \clist_item:Nn \l__stp_dir_clist {1} }
+    \fp_set:Nn \l__stp_cvdy_fp { \clist_item:Nn \l__stp_dir_clist {2} }
+    \fp_set:Nn \l__stp_cvdz_fp { \clist_item:Nn \l__stp_dir_clist {3} }
+    \fp_set:Nn \l__stp_dlen_fp
+      {
+        sqrt(
+          \l__stp_cvdx_fp*\l__stp_cvdx_fp
+          + \l__stp_cvdy_fp*\l__stp_cvdy_fp
+          + \l__stp_cvdz_fp*\l__stp_cvdz_fp
+        )
+      }
+    \fp_compare:nNnF { \l__stp_dlen_fp } < { 1e-12 }
+      {
+    \fp_set:Nn \l__stp_cvdx_fp { \l__stp_cvdx_fp / \l__stp_dlen_fp }
+    \fp_set:Nn \l__stp_cvdy_fp { \l__stp_cvdy_fp / \l__stp_dlen_fp }
+    \fp_set:Nn \l__stp_cvdz_fp { \l__stp_cvdz_fp / \l__stp_dlen_fp }
+    \__stp_stations:n {#3}
+    \fp_set:Nn \l__stp_ox_fp { -\l__stp_cvdx_fp * \stpDldGap }
+    \fp_set:Nn \l__stp_oy_fp { -\l__stp_cvdy_fp * \stpDldGap }
+    \fp_set:Nn \l__stp_oz_fp { -\l__stp_cvdz_fp * \stpDldGap }
+    \__stp_draw_chain:n { stpLoadRail }
+    \fp_set:Nn \l__stp_ox_fp { -\l__stp_cvdx_fp * #4 }
+    \fp_set:Nn \l__stp_oy_fp { -\l__stp_cvdy_fp * #4 }
+    \fp_set:Nn \l__stp_oz_fp { -\l__stp_cvdz_fp * #4 }
+    \__stp_draw_chain:n { stpLoadRail }
+    \int_step_inline:nn { \seq_count:N \l__stp_st_seq }
+      {
+        \tl_set:Ne \l_tmpa_tl { \seq_item:Nn \l__stp_st_seq {##1} }
+        \exp_last_unbraced:NV \__stp_cv_xyz_set:w \l_tmpa_tl \@nil
+        \fp_set:Nn \l__stp_cax_fp
+          { \l__stp_cvx_fp * \stpDscale - \l__stp_cvdx_fp * #4 }
+        \fp_set:Nn \l__stp_cay_fp
+          { \l__stp_cvy_fp * \stpDscale - \l__stp_cvdy_fp * #4 }
+        \fp_set:Nn \l__stp_caz_fp
+          { \l__stp_cvz_fp * \stpDscale - \l__stp_cvdz_fp * #4 }
+        \fp_set:Nn \l__stp_cbx_fp
+          { \l__stp_cvx_fp * \stpDscale - \l__stp_cvdx_fp * \stpDldGap }
+        \fp_set:Nn \l__stp_cby_fp
+          { \l__stp_cvy_fp * \stpDscale - \l__stp_cvdy_fp * \stpDldGap }
+        \fp_set:Nn \l__stp_cbz_fp
+          { \l__stp_cvz_fp * \stpDscale - \l__stp_cvdz_fp * \stpDldGap }
+        \draw[stpLoad]
+          (\fp_to_tl:N \l__stp_cax_fp, \fp_to_tl:N \l__stp_cay_fp, \fp_to_tl:N \l__stp_caz_fp)
+          --
+          (\fp_to_tl:N \l__stp_cbx_fp, \fp_to_tl:N \l__stp_cby_fp, \fp_to_tl:N \l__stp_cbz_fp);
+        \int_compare:nNnT { ##1 } = { \int_div_truncate:nn { \seq_count:N \l__stp_st_seq + 1 } { 2 } }
+          {
+            \tl_if_blank:nF {#5}
+              {
+                \node[stpLoadLabel, above=1mm]
+                  at (\fp_to_tl:N \l__stp_cax_fp, \fp_to_tl:N \l__stp_cay_fp, \fp_to_tl:N \l__stp_caz_fp)
+                  {#5};
+              }
+          }
+      }
+      }
+      }
+  }
+\cs_new_protected:Npn \stp_edge_bc:nnnnnnn #1#2#3#4#5#6#7
+  {
+    \__stp_grab:n {#1}
+    \int_compare:nNnF { \seq_count:N \l__stp_cv_seq } < { 2 }
+      {
+    \__stp_bc_count:
+    \__stp_stations:n { \l__stp_cvn_int }
+    \int_step_inline:nn { \seq_count:N \l__stp_st_seq }
+      {
+        \tl_set:Ne \l_tmpa_tl { \seq_item:Nn \l__stp_st_seq {##1} }
+        \exp_last_unbraced:NV \__stp_cv_xyz_set:w \l_tmpa_tl \@nil
+        \coordinate (stp@ebc) at (
+          \fp_eval:n { \l__stp_cvx_fp * \stpDscale },
+          \fp_eval:n { \l__stp_cvy_fp * \stpDscale },
+          \fp_eval:n { \l__stp_cvz_fp * \stpDscale }
+        );
+        \stpDsupport{pin}{stp@ebc}[#2][#3][#4][#5][#6][#7][0]
+      }
+      }
+  }
+\cs_new_eq:NN \stp@edgeLoad \stp_edge_load:nnnnn
+\cs_new_eq:NN \stp@edgeBc \stp_edge_bc:nnnnnnn
+\ExplSyntaxOff
+\NewDocumentCommand{\stpDedgeLoad}{m m O{6} O{0.55} O{}}{%
+  \stp@edgeLoad{#1}{#2}{#3}{#4}{#5}%
+}
+\NewDocumentCommand{\stpDedgeBc}{m O{1} O{1} O{1} O{0} O{0} O{0}}{%
+  \stp@edgeBc{#1}{#2}{#3}{#4}{#5}{#6}{#7}%
+}
+
 %-----------------------------------------------------------------------------
 % Cylinder / cone-surface mesh (ACIS half-angle 0) — AutoCAD-style isolines.
 % EQUATION: origin #1, axis #2, radius #3, h0 #4, h1 #5.
@@ -2795,10 +3218,13 @@
 
 %-----------------------------------------------------------------------------
 % 3D envelope dimension
-%   \stpDdimEnv{x|y|z}{x0}{y0}{z0}{len}(Δ)[label]
+%   \stpDdimEnv{x|y|z}[xy|yz|zx]{x0}{y0}{z0}{len}(Δ)[label]
 %     from corner (x0,y0,z0) along axis by len; Δ = paper offset (default \stpDimOff)
-%     Lx @ y0−Δ;  Ly @ x0−Δ;  Lz @ (x0−Δ,y0−Δ)
-%   \stpDdimEnv{x}{0}{0}{0}{800}[$L_x=800mm$]
+%     Plane is a model plane, independent of which axis is screen-up.
+%     Default: Lx on xy (y=y0−Δ), Ly on yz (z=z0−Δ), Lz on zx (x=x0−Δ).
+%     The measured axis must lie in the plane: x rejects yz, y rejects zx,
+%     z rejects xy. A bad plane warns and falls back to the default.
+%   \stpDdimEnv{x}[zx]{0}{0}{0}{800}[$L_x=800mm$]
 %   \stpDdimEnv{y}{0}{0}{0}{6000}(0.4cm)[$L_y=6000mm$]
 %-----------------------------------------------------------------------------
 \newcommand{\stpDdimDelta}{1.6}% paper cm (diagnostic)
@@ -2849,49 +3275,106 @@
     \fi
   \fi
 }
-\NewDocumentCommand{\stpDdimEnv}{m m m m m D(){\stpDimOff} O{}}{%
+\NewDocumentCommand{\stpDdimEnv}{m O{} m m m m D(){\stpDimOff} O{}}{%
   \def\stp@ax{#1}%
+  \def\stp@pln{#2}%
   \def\stp@axX{x}\def\stp@axY{y}\def\stp@axZ{z}%
+  \def\stp@pXY{xy}\def\stp@pYZ{yz}\def\stp@pZX{zx}%
+  \def\stp@defpln{xy}%
+  \ifx\stp@ax\stp@axY \def\stp@defpln{yz}\fi
+  \ifx\stp@ax\stp@axZ \def\stp@defpln{zx}\fi
+  \ifx\stp@pln\@empty \let\stp@pln\stp@defpln \fi
+  \def\stp@plnok{0}%
+  \ifx\stp@pln\stp@pXY \def\stp@plnok{1}\fi
+  \ifx\stp@pln\stp@pYZ \def\stp@plnok{1}\fi
+  \ifx\stp@pln\stp@pZX \def\stp@plnok{1}\fi
+  \ifnum\stp@plnok=0
+    \PackageWarning{satopdf}{Unknown dimension plane `\stp@pln' for axis \stp@ax; using \stp@defpln}%
+    \let\stp@pln\stp@defpln
+  \fi
+  \def\stp@bad{0}%
+  \ifx\stp@ax\stp@axX \ifx\stp@pln\stp@pYZ \def\stp@bad{1}\fi\fi
+  \ifx\stp@ax\stp@axY \ifx\stp@pln\stp@pZX \def\stp@bad{1}\fi\fi
+  \ifx\stp@ax\stp@axZ \ifx\stp@pln\stp@pXY \def\stp@bad{1}\fi\fi
+  \ifnum\stp@bad=1
+    \PackageWarning{satopdf}{Axis \stp@ax\space cannot be dimensioned on plane \stp@pln; using \stp@defpln}%
+    \let\stp@pln\stp@defpln
+  \fi
+  % #3 x0, #4 y0, #5 z0, #6 len, #7 paper offset, #8 label
   \ifx\stp@ax\stp@axX
-    % Lx on XY @ z=z0, y = y0 − Δ_Y
-    \stp@paperToModel{#6}{y}%
-    \stp@fp{\stp@dimyo}{#3-\stp@dmod}%
-    \stp@fp{\stp@dimxa}{#2}%
-    \stp@fp{\stp@dimxb}{#2+#5}%
-    \stpDpoint{stp@dO}{\stp@dimxa}{#3}{#4}%
-    \stpDpoint{stp@dE}{\stp@dimxb}{#3}{#4}%
-    \stpDpoint{stp@da}{\stp@dimxa}{\stp@dimyo}{#4}%
-    \stpDpoint{stp@db}{\stp@dimxb}{\stp@dimyo}{#4}%
+    \ifx\stp@pln\stp@pZX
+      % Lx on zx, z = z0 − Δ
+      \stp@paperToModel{#7}{z}%
+      \stp@fp{\stp@dimzo}{#5-\stp@dmod}%
+      \stp@fp{\stp@dimxa}{#3}%
+      \stp@fp{\stp@dimxb}{#3+#6}%
+      \stpDpoint{stp@dO}{\stp@dimxa}{#4}{#5}%
+      \stpDpoint{stp@dE}{\stp@dimxb}{#4}{#5}%
+      \stpDpoint{stp@da}{\stp@dimxa}{#4}{\stp@dimzo}%
+      \stpDpoint{stp@db}{\stp@dimxb}{#4}{\stp@dimzo}%
+    \else
+      % Lx on xy, y = y0 − Δ
+      \stp@paperToModel{#7}{y}%
+      \stp@fp{\stp@dimyo}{#4-\stp@dmod}%
+      \stp@fp{\stp@dimxa}{#3}%
+      \stp@fp{\stp@dimxb}{#3+#6}%
+      \stpDpoint{stp@dO}{\stp@dimxa}{#4}{#5}%
+      \stpDpoint{stp@dE}{\stp@dimxb}{#4}{#5}%
+      \stpDpoint{stp@da}{\stp@dimxa}{\stp@dimyo}{#5}%
+      \stpDpoint{stp@db}{\stp@dimxb}{\stp@dimyo}{#5}%
+    \fi
     \stpDdimHelp{stp@dO}{stp@da}{stp@dE}{stp@db}%
-    \stpDdimSeg{stp@da}{stp@db}[#7]%
+    \stpDdimSeg{stp@da}{stp@db}[#8]%
   \fi
   \ifx\stp@ax\stp@axY
-    % Ly on XY @ z=z0, x = x0 − Δ_X
-    \stp@paperToModel{#6}{x}%
-    \stp@fp{\stp@dimxo}{#2-\stp@dmod}%
-    \stp@fp{\stp@dimya}{#3}%
-    \stp@fp{\stp@dimyb}{#3+#5}%
-    \stpDpoint{stp@dO}{#2}{\stp@dimya}{#4}%
-    \stpDpoint{stp@dE}{#2}{\stp@dimyb}{#4}%
-    \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimya}{#4}%
-    \stpDpoint{stp@db}{\stp@dimxo}{\stp@dimyb}{#4}%
+    \ifx\stp@pln\stp@pXY
+      % Ly on xy, x = x0 − Δ
+      \stp@paperToModel{#7}{x}%
+      \stp@fp{\stp@dimxo}{#3-\stp@dmod}%
+      \stp@fp{\stp@dimya}{#4}%
+      \stp@fp{\stp@dimyb}{#4+#6}%
+      \stpDpoint{stp@dO}{#3}{\stp@dimya}{#5}%
+      \stpDpoint{stp@dE}{#3}{\stp@dimyb}{#5}%
+      \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimya}{#5}%
+      \stpDpoint{stp@db}{\stp@dimxo}{\stp@dimyb}{#5}%
+    \else
+      % Ly on yz, z = z0 − Δ
+      \stp@paperToModel{#7}{z}%
+      \stp@fp{\stp@dimzo}{#5-\stp@dmod}%
+      \stp@fp{\stp@dimya}{#4}%
+      \stp@fp{\stp@dimyb}{#4+#6}%
+      \stpDpoint{stp@dO}{#3}{\stp@dimya}{#5}%
+      \stpDpoint{stp@dE}{#3}{\stp@dimyb}{#5}%
+      \stpDpoint{stp@da}{#3}{\stp@dimya}{\stp@dimzo}%
+      \stpDpoint{stp@db}{#3}{\stp@dimyb}{\stp@dimzo}%
+    \fi
     \stpDdimHelp{stp@dO}{stp@da}{stp@dE}{stp@db}%
-    \stpDdimSeg{stp@da}{stp@db}[#7]%
+    \stpDdimSeg{stp@da}{stp@db}[#8]%
   \fi
   \ifx\stp@ax\stp@axZ
-    % Lz on YZ @ x=x0−Δx, y=y0−Δy (same paper Δ)
-    \stp@paperToModel{#6}{x}%
-    \stp@fp{\stp@dimxo}{#2-\stp@dmod}%
-    \stp@paperToModel{#6}{y}%
-    \stp@fp{\stp@dimyo}{#3-\stp@dmod}%
-    \stp@fp{\stp@dimza}{#4}%
-    \stp@fp{\stp@dimzb}{#4+#5}%
-    \stpDpoint{stp@dO}{#2}{#3}{\stp@dimza}%
-    \stpDpoint{stp@dE}{#2}{#3}{\stp@dimzb}%
-    \stpDpoint{stp@da}{\stp@dimxo}{\stp@dimyo}{\stp@dimza}%
-    \stpDpoint{stp@db}{\stp@dimxo}{\stp@dimyo}{\stp@dimzb}%
+    \ifx\stp@pln\stp@pYZ
+      % Lz on yz, y = y0 − Δ
+      \stp@paperToModel{#7}{y}%
+      \stp@fp{\stp@dimyo}{#4-\stp@dmod}%
+      \stp@fp{\stp@dimza}{#5}%
+      \stp@fp{\stp@dimzb}{#5+#6}%
+      \stpDpoint{stp@dO}{#3}{#4}{\stp@dimza}%
+      \stpDpoint{stp@dE}{#3}{#4}{\stp@dimzb}%
+      \stpDpoint{stp@da}{#3}{\stp@dimyo}{\stp@dimza}%
+      \stpDpoint{stp@db}{#3}{\stp@dimyo}{\stp@dimzb}%
+    \else
+      % Lz on zx, x = x0 − Δ
+      \stp@paperToModel{#7}{x}%
+      \stp@fp{\stp@dimxo}{#3-\stp@dmod}%
+      \stp@fp{\stp@dimza}{#5}%
+      \stp@fp{\stp@dimzb}{#5+#6}%
+      \stpDpoint{stp@dO}{#3}{#4}{\stp@dimza}%
+      \stpDpoint{stp@dE}{#3}{#4}{\stp@dimzb}%
+      \stpDpoint{stp@da}{\stp@dimxo}{#4}{\stp@dimza}%
+      \stpDpoint{stp@db}{\stp@dimxo}{#4}{\stp@dimzb}%
+    \fi
     \stpDdimHelp{stp@dO}{stp@da}{stp@dE}{stp@db}%
-    \stpDdimSeg{stp@da}{stp@db}[#7]%
+    \stpDdimSeg{stp@da}{stp@db}[#8]%
   \fi
 }
 % Ticks + dimension line between two named 3D points

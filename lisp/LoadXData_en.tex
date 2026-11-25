@@ -211,8 +211,8 @@ SETSEC / DELSEC
 SETSHELLLOAD / DELSHELLLOAD
   & Shell edge line load or face pressure/force \\
 SETSHELLSEC & Shell section: theory, thickness, offset, material \\
-ADDSHELLBC / DELSHELLBC
-  & Edge or face shell BC \\
+SETSHELLBC / DELSHELLBC
+  & Pick a face, then a boundary curve \\
 SETSPOTWELD / DELSPOTWELD
   & Spot welds (POINT + yellow mark) \\
 SETSEAMWELD / DELSEAMWELD
@@ -333,18 +333,27 @@ Writes \appid{MY\_CAE\_SHELL\_PROP} and geometry helper
 \subsection{\cadcmd{SETSHELLLOAD} / \cadcmd{DELSHELLLOAD}}
 APPID \appid{MY\_CAE\_SHELL\_LOAD}.
 \begin{itemize}[nosep]
-  \item \texttt{Edge} --- line load along a straight edge (2~pts) or arc
-        (3~pts); unit \texttt{N-mm}/\texttt{kN-m}; global direction.
+  \item \texttt{Edge} --- select the face, then one temporary red
+        boundary (line, circle, arc, spline, \ldots). The distributed load
+        is drawn along that curve; unit \texttt{N-mm}/\texttt{kN-m};
+        global direction.
   \item \texttt{Face} --- \texttt{Pressure} (MPa/kPa) or \texttt{Total}
-        force (N/kN); direction \texttt{Normal} or global
-        \texttt{Vector}.
+        force (N/kN). \texttt{Normal} stores no fixed direction; the
+        load follows the local normal when the surface is resolved.
+        \texttt{Vector} is one global direction.
 \end{itemize}
 
-\subsection{\cadcmd{ADDSHELLBC} / \cadcmd{DELSHELLBC}}
-APPID \appid{MY\_CAE\_SHELL\_BC}.  Prefer edge or face restraints (avoid
-single-node singularities):
-\texttt{FixAll}, \texttt{PinPlane}, \texttt{SlideLine},
-\texttt{RotAxis}.
+\subsection{\cadcmd{SETSHELLBC} / \cadcmd{DELSHELLBC}}
+APPID \appid{MY\_CAE\_SHELL\_BC}.  Boundary restraints only.  Select the
+shell face.  Its edges are not separate entities, so the command copies
+and explodes the face, shows the boundary in red, and asks for one curve
+(\texttt{LINE}/\texttt{CIRCLE}/\texttt{ARC}/\texttt{ELLIPSE}/\texttt{SPLINE}/
+\texttt{LWPOLYLINE}).  The red curves are deleted after the pick.
+Modes: \texttt{FixAll}, \texttt{PinPlane}, \texttt{SlideLine},
+\texttt{RotAxis}.  Stored as \texttt{EDGE\_BC}.
+3D supports are placed at equal spacing along that boundary.
+No extra curve is drawn.  An open curve gets 3--5 symbols, including
+both ends; a closed curve gets 5.  Anchor circles are open.
 
 %==============================================================================
 \section{Welds}

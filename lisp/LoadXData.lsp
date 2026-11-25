@@ -2205,8 +2205,8 @@
 
 ;;; ---------- 板壳刷新（与梁共用 *CAE_SCALE_* 与 CAE_VIS_* 图层）----------
 (defun refresh-shell-loads (/ ss i ent entHandle entData xdata appData idx newRecs
-                             loadType lc mag unitStr unitVec numPts headLen pts j
-                             info cenPt diagLen loadTypeTag visBlk visHandle count)
+                             loadType lc mag unitStr unitVec normalP numPts headLen pts j
+                             info cenPt diagLen loadTypeTag visBlk visHandle count dirCode)
   (vl-load-com)
   (setq count 0
         ss (ssget "_X" (list (cons 0 (cae-shell-type-filter))
@@ -2229,12 +2229,15 @@
               (if (= (type (cdr (nth (+ idx 3) appData))) 'STR)
                 (progn
                   (setq unitStr (cdr (nth (+ idx 3) appData))
-                        unitVec (cdr (nth (+ idx 4) appData))
+                        normalP (and (= (type (cdr (nth (+ idx 4) appData))) 'STR)
+                                     (= (strcase (cdr (nth (+ idx 4) appData))) "NORMAL"))
+                        unitVec (if normalP nil (cdr (nth (+ idx 4) appData)))
                         numPts (cdr (nth (+ idx 6) appData))
                         headLen 7)
                 )
                 (progn
                   (setq unitVec (cdr (nth (+ idx 3) appData))
+                        normalP nil
                         numPts (cdr (nth (+ idx 5) appData))
                         headLen 6
                         unitStr (cond
@@ -2269,15 +2272,16 @@
                  (setq info (get-shell-center-normal ent)
                        cenPt (car info) diagLen (caddr info)
                        loadTypeTag (if (= loadType "FACE_TOTAL_FORCE") "TOTAL" "PRESSURE"))
-                 (if (and unitVec cenPt)
+                 (if (and cenPt (or unitVec normalP))
                    (progn
                      (setq visBlk (create-shell-faceload-block cenPt diagLen loadTypeTag mag unitVec unitStr))
                      (setq visHandle (cdr (assoc 5 (entget visBlk))))
+                     (setq dirCode (if normalP (cons 1000 "NORMAL") (cons 1013 unitVec)))
                      (entmod (append (entget visBlk)
                                      (list (list -3 (list "MY_CAE_SHELL_LOAD" (cons 1005 entHandle))))))
                      (setq newRecs (append newRecs
                        (list (cons 1000 loadType) (cons 1000 lc) (cons 1040 mag)
-                             (cons 1000 unitStr) (cons 1013 unitVec)
+                             (cons 1000 unitStr) dirCode
                              (cons 1005 visHandle) (cons 1070 0))))
                      (setq count (1+ count))
                    )
@@ -2838,34 +2842,37 @@
   (setq arrowLen (* (max (* diagLen 0.16) 80.0) *CAE_SCALE_LOAD*))
   
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  
-  ;; 1. 绘制从尾部指向面几何中心 (0,0,0) 的主箭杆（橙红色=30）
-  (setq ptTail (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec arrowLen)))
-  (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 30) (cons 10 ptTail) '(11 0.0 0.0 0.0)))
-  
-  ;; 2. 绘制三维正交双翼箭头尖端（任意三维视角均清晰立体）
-  (setq ptConeBase (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec (* arrowLen 0.25))))
-  (setq perp1 (cadr (make-local-basis unitVec)))
-  (setq perp2 (vec-unit (vec-cross unitVec perp1)))
-  
-  (foreach p (list perp1 perp2)
-    (setq pWing1 (vec-add ptConeBase (vec-scale p (* arrowLen 0.10))))
-    (setq pWing2 (vec-sub ptConeBase (vec-scale p (* arrowLen 0.10))))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 30) (cons 10 pWing1) '(11 0.0 0.0 0.0)))
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 30) (cons 10 pWing2) '(11 0.0 0.0 0.0)))
-  )
-  
-  ;; 在作用中心画一个定位圆环标记
   (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 30) '(10 0.0 0.0 0.0) (cons 40 (* arrowLen 0.08))))
-  
-  ;; 3. 根据是【面压强】还是【面总载荷】生成对应物理标签
-  (setq labelPt (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec (* arrowLen 1.15))))
   (if (or (not unitStr) (= unitStr ""))
     (setq unitStr (if (= loadTypeTag "TOTAL") "N" "MPa"))
   )
-  (setq labelStr (if (= loadTypeTag "TOTAL")
-                   (strcat "F_total=" (rtos valMag 2 2) " " unitStr " (" (rtos (car unitVec) 2 2) "," (rtos (cadr unitVec) 2 2) "," (rtos (caddr unitVec) 2 2) ")")
-                   (strcat "P_face=" (rtos valMag 2 3) " " unitStr " (" (rtos (car unitVec) 2 2) "," (rtos (cadr unitVec) 2 2) "," (rtos (caddr unitVec) 2 2) ")")))
+  (if unitVec
+    (progn
+      ;; 全局向量：一支指向面心的箭头
+      (setq ptTail (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec arrowLen)))
+      (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 30) (cons 10 ptTail) '(11 0.0 0.0 0.0)))
+      (setq ptConeBase (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec (* arrowLen 0.25))))
+      (setq perp1 (cadr (make-local-basis unitVec)))
+      (setq perp2 (vec-unit (vec-cross unitVec perp1)))
+      (foreach p (list perp1 perp2)
+        (setq pWing1 (vec-add ptConeBase (vec-scale p (* arrowLen 0.10))))
+        (setq pWing2 (vec-sub ptConeBase (vec-scale p (* arrowLen 0.10))))
+        (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 30) (cons 10 pWing1) '(11 0.0 0.0 0.0)))
+        (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 30) (cons 10 pWing2) '(11 0.0 0.0 0.0)))
+      )
+      (setq labelPt (vec-sub '(0.0 0.0 0.0) (vec-scale unitVec (* arrowLen 1.15))))
+      (setq labelStr (if (= loadTypeTag "TOTAL")
+                       (strcat "F_total=" (rtos valMag 2 2) " " unitStr " (" (rtos (car unitVec) 2 2) "," (rtos (cadr unitVec) 2 2) "," (rtos (caddr unitVec) 2 2) ")")
+                       (strcat "P_face=" (rtos valMag 2 3) " " unitStr " (" (rtos (car unitVec) 2 2) "," (rtos (cadr unitVec) 2 2) "," (rtos (caddr unitVec) 2 2) ")")))
+    )
+    (progn
+      ;; 法向：不记录固定方向，只标数值
+      (setq labelPt (list 0.0 0.0 (* arrowLen 0.35)))
+      (setq labelStr (if (= loadTypeTag "TOTAL")
+                       (strcat "F_total=" (rtos valMag 2 2) " " unitStr " normal")
+                       (strcat "P_face=" (rtos valMag 2 3) " " unitStr " normal")))
+    )
+  )
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 30) (cons 10 labelPt) (cons 40 (* arrowLen 0.22)) (cons 1 labelStr)))
   
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
@@ -2879,7 +2886,7 @@
 ;;; 三维板壳加载模块（第二部分：规范化关键字交互命令 SETSHELLLOAD / DELSHELLLOAD）
 ;;; ====================================================================
 
-(defun c:SETSHELLLOAD (/ selMain mainEnt mainType mainHandle loadScope edgeMode p1 pMid p2 pts loadMag unitStr vecInput unitVec shellInfo cenPt normVec diagLen pressType subType valMode loadTypeTag visBlk visHandle oldXd newRecs ptPairs)
+(defun c:SETSHELLLOAD (/ selMain mainEnt mainType mainHandle loadScope edgeSS selEdge edgeEnt pts loadMag unitStr vecInput unitVec shellInfo cenPt normVec diagLen pressType subType valMode loadTypeTag visBlk visHandle oldXd newRecs ptPairs)
   (vl-load-com)
   (register-shell-load-app)
   
@@ -2899,29 +2906,37 @@
           (if (not loadScope) (setq loadScope "Face"))
           
           (cond
-            ;; 分支 A：边分布线载荷
+            ;; 分支 A：先抽出边界，再选一条施加分布线载荷
             ((= loadScope "Edge")
-             (initget "Line Arc")
-             (setq edgeMode (getkword (_T "\n加载边界形态 Line=直边两点, Arc=三点圆弧 [Line/Arc] <Line>: "
-                                "\nEdge shape Line=2 pts, Arc=3 pts [Line/Arc] <Line>: ")))
-             (if (not edgeMode) (setq edgeMode "Line"))
-             
-             (if (= edgeMode "Line")
+             (princ (_T "\n正在提取边界…" "\nExtracting boundaries…"))
+             (setq edgeSS (cae-materialize-face-edges mainEnt))
+             (if (not edgeSS)
+               (princ (_T "\n[错误] 未能从该面提取出边界。" "\n[Error] No boundary curves from this face."))
                (progn
-                 (setq p1 (getpoint (_T "\n请捕捉加载边界的【起点】: " "\nPick edge [start] point: ")))
-                 (if p1 (setq p2 (getpoint p1 (_T "\n请捕捉加载边界的【终点】: " "\nPick edge [end] point: "))))
-                 (if (and p1 p2) (setq pts (list (trans p1 1 0) (trans p2 1 0))))
-               )
-               (progn
-                 (setq p1 (getpoint (_T "\n请捕捉圆弧边界的【起点】: " "\nPick arc [start]: ")))
-                 (if p1 (setq pMid (getpoint p1 (_T "\n请捕捉圆弧边界的【弧上中间点】: " "\nPick arc [mid]: "))))
-                 (if pMid (setq p2 (getpoint pMid (_T "\n请捕捉圆弧边界的【终点】: " "\nPick arc [end]: "))))
-                 (if (and p1 pMid p2)
-                   (setq pts (sample-3pt-arc-3d (trans p1 1 0) (trans pMid 1 0) (trans p2 1 0) 12))
+                 (cae-ent-invisible mainEnt T)
+                 (princ (strcat (_T "\n已显示 " "\nShowing ") (itoa (sslength edgeSS))
+                                (_T " 条红色边界。" " red boundary curve(s).")))
+                 (setq selEdge (entsel (_T "\n[第2步] 选择要加载的红色边界: "
+                                            "\n[Step 2] Select the red boundary to load: ")))
+                 (cae-ent-invisible mainEnt nil)
+                 (if (and selEdge (ssmemb (car selEdge) edgeSS))
+                   (progn
+                     (setq edgeEnt (car selEdge))
+                     (setq pts (cae-sample-boundary-curve edgeEnt))
+                     (if (not pts)
+                       (princ (_T "\n[错误] 未能读取这条边界曲线。"
+                                  "\n[Error] Could not sample that boundary curve."))
+                     )
+                   )
+                   (if selEdge
+                     (princ (_T "\n[错误] 请选择刚显示的红色边界。"
+                                "\n[Error] Pick one of the red boundary curves."))
+                   )
                  )
+                 (cae-erase-ss edgeSS)
                )
              )
-             
+
              (if pts
                (progn
                  (setq loadMag (getreal (_T "\n边界分布线载荷集度数值 <10.0>: "
@@ -2998,7 +3013,8 @@
              (if (not pressType) (setq pressType "Normal"))
              
              (if (= pressType "Normal")
-               (setq unitVec (if (< loadMag 0.0) (vec-scale normVec -1.0) normVec))
+               ;; 曲面各处法向不同，这里不计算固定方向
+               (setq unitVec nil)
                (progn
                  (setq vecInput (getpoint (_T "\n全局面力方向向量 X,Y,Z <0,0,-1>: "
                                       "\nGlobal face-load direction X,Y,Z <0,0,-1>: ")))
@@ -3012,7 +3028,7 @@
              ;; 组合标准子类型标识: "FACE_PRESSURE" 或 "FACE_TOTAL_FORCE"
              (setq subType (if (= loadTypeTag "TOTAL") "FACE_TOTAL_FORCE" "FACE_PRESSURE"))
              
-             (if unitVec
+             (if (and cenPt (or unitVec (= pressType "Normal")))
                (progn
                  (setq visBlk (create-shell-faceload-block cenPt diagLen loadTypeTag loadMag unitVec unitStr))
                  (setq visHandle (cdr (assoc 5 (entget visBlk))))
@@ -3023,7 +3039,9 @@
                          (cons 1000 "LC1")
                          (cons 1040 loadMag)
                          (cons 1000 unitStr)
-                         (cons 1013 unitVec)
+                         (if (= pressType "Normal")
+                           (cons 1000 "NORMAL")
+                           (cons 1013 unitVec))
                          (cons 1005 visHandle)
                          (cons 1070 0))))
                  
@@ -3101,6 +3119,77 @@
 ;;; ====================================================================
 ;;; 板壳属性与约束模块：几何提取与属性符号块
 ;;; ====================================================================
+
+;;; 约束边界：可直接点选的曲线
+(defun cae-boundary-curve-p (eType)
+  (member eType '("LINE" "ARC" "CIRCLE" "ELLIPSE" "SPLINE" "LWPOLYLINE" "POLYLINE"))
+)
+
+(defun cae-as-point (p)
+  (cond
+    ((= (type p) 'VARIANT)
+     (cae-as-point (vlax-safearray->list (vlax-variant-value p))))
+    ((and (= (type p) 'LIST) (>= (length p) 3))
+     (list (float (car p)) (float (cadr p)) (float (caddr p))))
+    ((and (= (type p) 'LIST) (= (length p) 2))
+     (list (float (car p)) (float (cadr p)) 0.0))
+    (T nil)
+  )
+)
+
+(defun cae-curve-closed-p (ent / ed et flags sp ep)
+  (setq ed (entget ent) et (cdr (assoc 0 ed)))
+  (cond
+    ((= et "CIRCLE") T)
+    ((member et '("LINE" "ARC")) nil)
+    ((member et '("LWPOLYLINE" "POLYLINE"))
+     (setq flags (if (assoc 70 ed) (cdr (assoc 70 ed)) 0))
+     (/= 0 (logand flags 1)))
+    ((= et "SPLINE")
+     (setq flags (if (assoc 70 ed) (cdr (assoc 70 ed)) 0))
+     (/= 0 (logand flags 3)))
+    ((= et "ELLIPSE")
+     (setq sp (vlax-curve-getStartParam ent)
+           ep (vlax-curve-getEndParam ent))
+     (< (abs (- (abs (- ep sp)) (* 2.0 pi))) 0.05))
+    (T nil)
+  )
+)
+
+;;; 沿曲线参数采样。闭合曲线的末点回到起点，符号才能绕完整圈。
+(defun cae-sample-boundary-curve (ent / et sp ep n i raw p pts)
+  (setq et (cdr (assoc 0 (entget ent))))
+  (if (not (cae-boundary-curve-p et))
+    nil
+    (if (vl-catch-all-error-p
+          (vl-catch-all-apply 'vlax-curve-getStartParam (list ent)))
+      nil
+      (progn
+        (setq sp (vlax-curve-getStartParam ent)
+              ep (vlax-curve-getEndParam ent)
+              n (if (= et "LINE") 1 (if (cae-curve-closed-p ent) 32 16))
+              i 0 pts nil)
+        (if (< (abs (- ep sp)) 1e-12)
+          nil
+          (progn
+            (while (<= i n)
+              (setq raw (vl-catch-all-apply 'vlax-curve-getPointAtParam
+                          (list ent (+ sp (* (/ (float i) (float n)) (- ep sp))))))
+              (if (not (vl-catch-all-error-p raw))
+                (progn
+                  (setq p (cae-as-point raw))
+                  (if p (setq pts (append pts (list p))))
+                )
+              )
+              (setq i (1+ i))
+            )
+            (if (>= (length pts) 2) pts nil)
+          )
+        )
+      )
+    )
+  )
+)
 
 ;;; 将一条曲线实体采样为点列（供环拼合）
 (defun cae-curve-ent-to-pts (subEnt / eType pMid)
@@ -3344,54 +3433,123 @@
 )
 
 ;;; 绘制板壳边约束或面约束整体符号 -> 放入 CAE_VIS_BC (青色=4)
-(defun create-shell-bc-block (ptsList bcScope uVecs rVecs uMask rMask / pOrigin totalLen i sz locPts pt blkDefName blkRef labelPt labelStr)
+(defun cae-poly-length (pts / i len)
+  (setq len 0.0 i 0)
+  (while (< i (1- (length pts)))
+    (setq len (+ len (distance (nth i pts) (nth (1+ i) pts)))
+          i (1+ i))
+  )
+  len
+)
+
+(defun cae-pts-closed-p (pts / len)
+  (setq len (cae-poly-length pts))
+  (and (> (length pts) 2)
+       (> len 1e-9)
+       (<= (distance (car pts) (last pts)) (max 1e-3 (* 1e-4 len))))
+)
+
+(defun cae-point-along (pts dist / i a b seg walked tt)
+  (cond
+    ((or (not pts) (<= dist 0.0)) (car pts))
+    (T
+     (setq i 0 walked 0.0 a nil)
+     (while (and (< i (1- (length pts))) (null a))
+       (setq b (nth (1+ i) pts)
+             seg (distance (nth i pts) b))
+       (if (or (>= (+ walked seg) (- dist 1e-9)) (< seg 1e-15))
+         (progn
+           (setq tt (if (< seg 1e-15) 0.0 (/ (- dist walked) seg)))
+           (if (< tt 0.0) (setq tt 0.0))
+           (if (> tt 1.0) (setq tt 1.0))
+           (setq a (mapcar '(lambda (u v) (+ u (* tt (- v u)))) (nth i pts) b))
+         )
+         (setq walked (+ walked seg)
+               i (1+ i))
+       )
+     )
+     (if a a (last pts)))
+  )
+)
+
+;;; 开口曲线 3–5 个（含两端），间距至少两个符号长；封闭曲线恰好 5 个。
+(defun cae-edge-bc-stations (pts / len gap n i out sc)
+  (setq len (cae-poly-length pts))
+  (if (or (not pts) (< len 1e-9))
+    (if pts (list (car pts)) nil)
+    (progn
+      (setq sc (if (and *CAE_SCALE_BC* (> *CAE_SCALE_BC* 0.0)) *CAE_SCALE_BC* 1.0)
+            out nil
+            i 0)
+      (if (cae-pts-closed-p pts)
+        (while (< i 5)
+          (setq out (append out (list (cae-point-along pts (* len (/ (float i) 5.0)))))
+                i (1+ i))
+        )
+        (progn
+          (setq gap (* 2.0 (max (* len 0.08) 60.0) sc))
+          (cond
+            ((>= (/ len 4.0) gap) (setq n 5))
+            ((>= (/ len 3.0) gap) (setq n 4))
+            (T (setq n 3))
+          )
+          (while (< i n)
+            (setq out (append out
+                              (list (cae-point-along pts (* len (/ (float i) (float (1- n)))))))
+                  i (1+ i))
+          )
+        )
+      )
+      out
+    )
+  )
+)
+
+(defun create-shell-bc-block (ptsList bcScope uVecs rVecs uMask rMask / pOrigin totalLen i sz locPts stations pt u r blkDefName blkRef labelPt labelStr)
   (unlock-all-cae-layers)
   (setq pOrigin (car ptsList))
   (if (= bcScope "FACE_BC")
-    (setq sz (* 120.0 *CAE_SCALE_BC*))
+    (setq sz (* 120.0 *CAE_SCALE_BC*)
+          locPts '((0.0 0.0 0.0))
+          stations '((0.0 0.0 0.0)))
     (progn
-      (setq totalLen 0.0 i 0)
-      (while (< i (1- (length ptsList)))
-        (setq totalLen (+ totalLen (distance (nth i ptsList) (nth (1+ i) ptsList))))
-        (setq i (1+ i))
-      )
+      (setq totalLen (cae-poly-length ptsList))
       (setq sz (* (max (* totalLen 0.08) 60.0) *CAE_SCALE_BC*))
+      (setq locPts (mapcar '(lambda (p) (vec-sub p pOrigin)) ptsList))
+      (setq stations (mapcar '(lambda (p) (vec-sub p pOrigin))
+                             (cae-edge-bc-stations ptsList)))
     )
   )
-  
+
   (entmake (list '(0 . "BLOCK") '(2 . "*U") '(70 . 1) '(10 0.0 0.0 0.0)))
-  
-  (if (= (length ptsList) 2)
-    (setq locPts (list '(0.0 0.0 0.0)
-                       (vec-scale (vec-sub (cadr ptsList) pOrigin) 0.5)
-                       (vec-sub (cadr ptsList) pOrigin)))
-    (setq locPts (mapcar '(lambda (p) (vec-sub p pOrigin)) ptsList))
-  )
-  
-  (foreach pt locPts
-    (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 4) (cons 10 pt) (cons 40 (* sz 0.14))))
-  )
-  (if (> (length locPts) 1)
+
+  (if (and (/= bcScope "FACE_BC") (> (length locPts) 1))
     (progn
       (setq i 0)
       (while (< i (1- (length locPts)))
-        (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4) (cons 10 (nth i locPts)) (cons 11 (nth (1+ i) locPts))))
+        (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 4)
+                       (cons 10 (nth i locPts)) (cons 11 (nth (1+ i) locPts))))
         (setq i (1+ i))
       )
     )
   )
-  
-  (foreach u uVecs
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 6) '(10 0.0 0.0 0.0) (cons 11 (vec-scale u (* sz 1.5)))))
+
+  (foreach pt stations
+    (entmake (list '(0 . "CIRCLE") '(8 . "0") '(62 . 4) (cons 10 pt) (cons 40 (* sz 0.14))))
+    (foreach u uVecs
+      (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 6)
+                     (cons 10 pt) (cons 11 (vec-add pt (vec-scale u (* sz 1.2))))))
+    )
+    (foreach r rVecs
+      (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 2)
+                     (cons 10 pt) (cons 11 (vec-add pt (vec-scale r (* sz 1.4))))))
+    )
   )
-  (foreach r rVecs
-    (entmake (list '(0 . "LINE") '(8 . "0") '(62 . 2) '(10 0.0 0.0 0.0) (cons 11 (vec-scale r (* sz 1.8)))))
-  )
-  
-  (setq labelPt (nth (/ (length locPts) 2) locPts))
+
+  (setq labelPt (if stations (nth (/ (length stations) 2) stations) '(0.0 0.0 0.0)))
   (setq labelStr (strcat bcScope " U:" uMask " R:" rMask))
   (entmake (list '(0 . "TEXT") '(8 . "0") '(62 . 4) (cons 10 labelPt) (cons 40 (* sz 0.25)) (cons 1 labelStr)))
-  
+
   (setq blkDefName (entmake '((0 . "ENDBLK"))))
   (setq blkRef (entmakex (list '(0 . "INSERT") '(8 . "CAE_VIS_BC") (cons 2 blkDefName) (cons 10 pOrigin))))
   (lock-all-cae-layers)
@@ -3399,57 +3557,164 @@
 )
 
 ;;; ====================================================================
-;;; 板壳属性与约束模块 - 代码块 3/3：ADDSHELLBC 与 DELSHELLBC 命令
+;;; 板壳属性与约束模块 - 代码块 3/3：SETSHELLBC 与 DELSHELLBC 命令
 ;;; ====================================================================
 
-;;; 命令：ADDSHELLBC - 对板壳边界线或整个面施加复合约束（杜绝单点应力奇异）
-(defun c:ADDSHELLBC (/ selMain mainEnt mainType mainHandle bcScope edgeMode p1 pMid p2 pts shellInfo bcType pA pB v1 v2 nVec sVec rAxis uVecs rVecs uTriad rTriad scopeTag visPts visBlk visHandle oldXd newRecs ptPairs)
+(defun cae-ents-after (mark / e out)
+  (setq e (entnext mark) out nil)
+  (while e
+    (setq out (cons e out)
+          e (entnext e))
+  )
+  out
+)
+
+(defun cae-layer-locked-p (name / en flags)
+  (setq en (tblobjname "LAYER" name))
+  (if en
+    (progn
+      (setq flags (cdr (assoc 70 (entget en))))
+      (= 4 (logand flags 4))
+    )
+    nil
+  )
+)
+
+(defun cae-ent-invisible (ent flag / obj)
+  (setq obj (vlax-ename->vla-object ent))
+  (vl-catch-all-apply 'vla-put-Visible
+    (list obj (if flag :vlax-false :vlax-true)))
+  (redraw ent)
+)
+
+(defun cae-paint-pick-edge (ent / ed)
+  (setq ed (entget ent))
+  (if (assoc 8 ed)
+    (setq ed (subst '(8 . "CAE_EDGE_PICK") (assoc 8 ed) ed))
+    (setq ed (append ed '((8 . "CAE_EDGE_PICK"))))
+  )
+  (if (assoc 62 ed)
+    (setq ed (subst '(62 . 1) (assoc 62 ed) ed))
+    (setq ed (append ed '((62 . 1))))
+  )
+  (entmod ed)
+  (entupd ent)
+)
+
+(defun cae-erase-ss (ss / i)
+  (if ss
+    (progn
+      (setq i 0)
+      (while (< i (sslength ss))
+        (if (entget (ssname ss i)) (entdel (ssname ss i)))
+        (setq i (1+ i))
+      )
+    )
+  )
+)
+
+;;; 复制面并炸开，得到可点选的边界曲线（红，图层 CAE_EDGE_PICK）。原面不动。
+(defun cae-materialize-face-edges (face / echo faceLay faceLocked sent pending curves pass born e eType ss)
+  (setq echo (getvar "CMDECHO"))
+  (setvar "CMDECHO" 0)
+  (setq faceLay (cdr (assoc 8 (entget face)))
+        faceLocked (cae-layer-locked-p faceLay))
+  (if faceLocked (cae-set-layer-lock faceLay nil))
+  (cae-ensure-layer "CAE_EDGE_PICK" 1)
+  (cae-set-layer-lock "CAE_EDGE_PICK" nil)
+  ;; 哨兵留在数据库末尾之前，后面只走本次复制/炸开产生的实体
+  (setq sent (entmakex (list '(0 . "POINT") '(8 . "CAE_EDGE_PICK") '(62 . 1) '(10 0.0 0.0 0.0))))
+  (command "_.COPY" face "" '(0.0 0.0 0.0) '(0.0 0.0 0.0))
+  (setq pending (cae-ents-after sent)
+        curves nil
+        pass 0)
+  (while (and pending (< pass 4))
+    (foreach e pending
+      (if (entget e)
+        (progn
+          (cae-paint-pick-edge e)
+          (command "_.EXPLODE" e)
+        )
+      )
+    )
+    (setq born (cae-ents-after sent)
+          pending nil)
+    (foreach e born
+      (if (and (entget e) (not (member e curves)))
+        (progn
+          (setq eType (cdr (assoc 0 (entget e))))
+          (cond
+            ((cae-boundary-curve-p eType)
+             (setq curves (cons e curves)))
+            ((or (= eType "REGION") (cae-modern-surface-p eType)
+                 (member eType '("3DSOLID" "BODY" "MESH")))
+             (setq pending (cons e pending)))
+            (T (entdel e))
+          )
+        )
+      )
+    )
+    (setq pass (1+ pass))
+  )
+  (foreach e pending
+    (if (entget e) (entdel e))
+  )
+  (if (and sent (entget sent)) (entdel sent))
+  (setq ss (ssadd))
+  (foreach e curves
+    (if (entget e)
+      (progn
+        (cae-paint-pick-edge e)
+        (ssadd e ss)
+        (redraw e 3)
+      )
+    )
+  )
+  (if faceLocked (cae-set-layer-lock faceLay T))
+  (setvar "CMDECHO" echo)
+  (if (and ss (> (sslength ss) 0)) ss nil)
+)
+
+;;; 命令：SETSHELLBC - 先选面，再从临时显示的边界中选一条施加约束
+(defun c:SETSHELLBC (/ selMain mainEnt mainType mainHandle edgeSS selEdge edgeEnt edgeType pts bcType pA pB pMid v1 v2 nVec sVec rAxis uVecs rVecs uTriad rTriad visBlk visHandle oldXd newRecs ptPairs)
   (vl-load-com)
   (register-shell-bc-app)
-  
-  (setq selMain (entsel (_T "\n[第1步] 请选择要施加约束的板壳面片 (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …): "
-                             "\n[Step 1] Select shell face for BC (MESH / REGION / SURFACE / EXTRUDEDSURFACE / …): ")))
+
+  (setq selMain (entsel (_T "\n[第1步] 请选择板壳面 (MESH / REGION / SURFACE / …): "
+                             "\n[Step 1] Select a shell face (MESH / REGION / SURFACE / …): ")))
   (if selMain
     (progn
       (setq mainEnt (car selMain))
       (setq mainType (cdr (assoc 0 (entget mainEnt))))
       (setq mainHandle (cdr (assoc 5 (entget mainEnt))))
-      
+
       (if (cae-shell-type-p mainType)
         (progn
-          (initget "Edge Face")
-          (setq bcScope (getkword (_T "\n[第2步] 约束区域 Edge=边界线, Face=整面 [Edge/Face] <Edge>: "
-                               "\n[Step 2] BC region Edge/Face [Edge/Face] <Edge>: ")))
-          (if (not bcScope) (setq bcScope "Edge"))
-          
-          (if (= bcScope "Edge")
+          (princ (_T "\n正在提取边界…" "\nExtracting boundaries…"))
+          (setq edgeSS (cae-materialize-face-edges mainEnt))
+          (if (not edgeSS)
+            (princ (_T "\n[错误] 未能从该面提取出边界。" "\n[Error] No boundary curves from this face."))
             (progn
-              (initget "Line Arc")
-              (setq edgeMode (getkword (_T "\n约束边界形态 Line=直边两点, Arc=三点圆弧 [Line/Arc] <Line>: "
-                                "\nBC edge shape Line/Arc [Line/Arc] <Line>: ")))
-              (if (not edgeMode) (setq edgeMode "Line"))
-              (if (= edgeMode "Line")
+              (cae-ent-invisible mainEnt T)
+              (princ (strcat (_T "\n已显示 " "\nShowing ") (itoa (sslength edgeSS))
+                             (_T " 条红色边界。" " red boundary curve(s).")))
+              (setq selEdge (entsel (_T "\n[第2步] 选择一条红色边界: "
+                                         "\n[Step 2] Select one red boundary: ")))
+              (cae-ent-invisible mainEnt nil)
+              (if (and selEdge (ssmemb (car selEdge) edgeSS))
                 (progn
-                  (setq p1 (getpoint (_T "\n请捕捉约束边界的【起点】: " "\nPick BC edge [start]: ")))
-                  (if p1 (setq p2 (getpoint p1 (_T "\n请捕捉约束边界的【终点】: " "\nPick BC edge [end]: "))))
-                  (if (and p1 p2) (setq pts (list (trans p1 1 0) (trans p2 1 0))))
+                  (setq edgeEnt (car selEdge))
+                  (setq edgeType (cdr (assoc 0 (entget edgeEnt))))
+                  (setq pts (cae-sample-boundary-curve edgeEnt))
                 )
-                (progn
-                  (setq p1 (getpoint (_T "\n请捕捉圆弧约束边界的【起点】: " "\nPick BC arc [start]: ")))
-                  (if p1 (setq pMid (getpoint p1 (_T "\n请捕捉圆弧约束边界的【弧上中间点】: " "\nPick BC arc [mid]: "))))
-                  (if pMid (setq p2 (getpoint pMid (_T "\n请捕捉圆弧约束边界的【终点】: " "\nPick BC arc [end]: "))))
-                  (if (and p1 pMid p2)
-                    (setq pts (sample-3pt-arc-3d (trans p1 1 0) (trans pMid 1 0) (trans p2 1 0) 12))
-                  )
+                (if selEdge
+                  (princ (_T "\n[错误] 请选择刚显示的红色边界。" "\n[Error] Pick one of the red boundary curves."))
                 )
               )
-            )
-            (progn
-              (setq shellInfo (get-shell-center-normal mainEnt))
-              (setq pts (list (car shellInfo)))
+              (cae-erase-ss edgeSS)
             )
           )
-          
+
           (if pts
             (progn
               (setq uVecs nil rVecs nil)
@@ -3457,7 +3722,7 @@
               (setq bcType (getkword (_T "\n约束模式 FixAll=全固支, PinPlane=面内滑移, SlideLine=沿线滑移, RotAxis=绕轴转动 [FixAll/PinPlane/SlideLine/RotAxis] <FixAll>: "
                               "\nBC mode [FixAll/PinPlane/SlideLine/RotAxis] <FixAll>: ")))
               (if (not bcType) (setq bcType "FixAll"))
-              
+
               (cond
                 ((= bcType "FixAll")
                  (setq uVecs '((1.0 0.0 0.0) (0.0 1.0 0.0) (0.0 0.0 1.0)))
@@ -3506,33 +3771,35 @@
                  )
                 )
               )
-              
+
               (setq uTriad (build-full-triad uVecs))
               (setq rTriad (build-full-triad rVecs))
-              (setq scopeTag (if (= bcScope "Edge") "EDGE_BC" "FACE_BC"))
-              (setq visPts (if (= bcScope "Edge") pts nil))
-              
-              (setq visBlk (create-shell-bc-block pts scopeTag uVecs rVecs (nth 3 uTriad) (nth 3 rTriad)))
+
+              (setq visBlk (create-shell-bc-block pts "EDGE_BC" uVecs rVecs (nth 3 uTriad) (nth 3 rTriad)))
               (setq visHandle (cdr (assoc 5 (entget visBlk))))
-              
-              (setq ptPairs (if visPts (mapcar '(lambda (p) (cons 1010 p)) visPts) nil))
+
+              (setq ptPairs (mapcar '(lambda (p) (cons 1010 p)) pts))
               (setq oldXd (cdr (cadr (assoc -3 (entget mainEnt '("MY_CAE_SHELL_BC"))))))
               (setq newRecs (append oldXd
-                (list (cons 1000 scopeTag)
+                (list (cons 1000 "EDGE_BC")
                       (cons 1000 (nth 3 uTriad)) (cons 1013 (nth 0 uTriad)) (cons 1013 (nth 1 uTriad)) (cons 1013 (nth 2 uTriad))
                       (cons 1000 (nth 3 rTriad)) (cons 1013 (nth 0 rTriad)) (cons 1013 (nth 1 rTriad)) (cons 1013 (nth 2 rTriad))
                       (cons 1005 visHandle)
-                      (cons 1070 (length visPts)))
+                      (cons 1070 (length pts)))
                 ptPairs))
-              
+
               (entmod (append (entget mainEnt) (list (list -3 (cons "MY_CAE_SHELL_BC" newRecs)))))
               (entupd mainEnt)
               (entmod (append (entget visBlk) (list (list -3 (list "MY_CAE_SHELL_BC" (cons 1005 mainHandle))))))
-              (princ (strcat (_T "\n[成功] 已为板壳施加 [" "\n[OK] Shell BC [") scopeTag (_T "] 约束 -> 平动 U:" "] U:") (nth 3 uTriad) " | R:" (nth 3 rTriad)))
+              (princ (strcat (_T "\n[成功] 已在边界 " "\n[OK] Boundary ") edgeType
+                             (_T " 上施加约束 U:" " BC U:") (nth 3 uTriad) " | R:" (nth 3 rTriad)))
+            )
+            (if (and selEdge (cae-boundary-curve-p edgeType))
+              (princ (_T "\n[错误] 未能读取这条边界曲线。" "\n[Error] Could not sample that boundary curve."))
             )
           )
         )
-        (princ (strcat "\n[错误] 不支持的面片实体类型: " mainType))
+        (princ (strcat (_T "\n[错误] 不支持的面片实体类型: " "\n[Error] Unsupported face type: ") mainType))
       )
     )
   )
@@ -4186,8 +4453,8 @@
            "\n  Kind: SETROD/SETBEAM/DELKIND | Beam loads: SETLOAD/DELLOAD/SETPTLOAD/DELPTLOAD/SETMOMENT/DELMOMENT"))
 (princ (_T "\n  约束: SETBC/DELBC/ADDBC | 弹簧: SETSPRING/DELSPRING | 截面: SETSEC/DELSEC"
            "\n  BC: SETBC/DELBC/ADDBC | Spring: SETSPRING/DELSPRING | Sec: SETSEC/DELSEC"))
-(princ (_T "\n  板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELLSEC | ADDSHELLBC/DELSHELLBC"
-           "\n  Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELLSEC | ADDSHELLBC/DELSHELLBC"))
+(princ (_T "\n  板壳: SETSHELLLOAD/DELSHELLLOAD | SETSHELLSEC | SETSHELLBC/DELSHELLBC"
+           "\n  Shell: SETSHELLLOAD/DELSHELLLOAD | SETSHELLSEC | SETSHELLBC/DELSHELLBC"))
 (princ (_T "\n  板壳面: REGION/MESH/SURFACE/EXTRUDEDSURFACE/PLANESURFACE/…/3DFACE"
            "\n  Shell faces: REGION/MESH/SURFACE/EXTRUDEDSURFACE/PLANESURFACE/…/3DFACE"))
 (princ (_T "\n  焊缝: SETSPOTWELD/DELSPOTWELD | SETSEAMWELD/DELSEAMWELD | TOGGLEWELD"

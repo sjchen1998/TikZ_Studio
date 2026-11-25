@@ -27,6 +27,8 @@ from .cae_face_curves import (
     curve_loops_as_polylines,
     cylinder_extent_pts,
     face_curve_loops_from_entity,
+    _edge_samples,
+    _emit_edge_tex,
     format_stp_analytic_face,
     revolve_extent_pts,
     transform_analytic_face,
@@ -343,38 +345,87 @@ def _point_load_label(mag: float, unit: str) -> str:
 
 
 def _parse_shell_load_xdata(tags) -> dict | None:
-    """MY_CAE_SHELL_LOAD: FACE_PRESSURE | FACE_TOTAL_FORCE (skip EDGE_LOAD here)."""
-    if not tags:
-        return None
-    kind = None
-    mag = None
-    unit = ""
-    direction = None
-    for t in tags:
-        code = getattr(t, "code", None)
-        val = getattr(t, "value", t)
-        if code is None and isinstance(t, (tuple, list)) and len(t) >= 2:
-            code, val = t[0], t[1]
-        if code == 1000 and isinstance(val, str):
-            u = val.upper()
-            if u in ("FACE_PRESSURE", "FACE_TOTAL_FORCE", "EDGE_LOAD"):
-                kind = u
-            elif u.startswith("LC"):
-                pass
-            elif kind is not None and mag is not None and not unit:
-                unit = val
-        elif code == 1040 and kind is not None and mag is None:
-            mag = float(val)
-        elif code == 1013 and direction is None:
-            direction = (float(val[0]), float(val[1]), float(val[2]))
-    if kind not in ("FACE_PRESSURE", "FACE_TOTAL_FORCE") or mag is None or direction is None:
-        return None
-    return {
-        "kind": "pressure" if kind == "FACE_PRESSURE" else "total",
-        "mag": mag,
-        "unit": unit,
-        "dir": direction,
-    }
+    """First FACE_PRESSURE / FACE_TOTAL_FORCE record. NORMAL has no fixed direction."""
+    vals = _xdata_pairs(tags)
+    i = 0
+    found = None
+    while i < len(vals):
+        code, val = vals[i]
+        scope = str(val).upper() if code == 1000 and isinstance(val, str) else ""
+        if scope not in ("EDGE_LOAD", "FACE_PRESSURE", "FACE_TOTAL_FORCE") or i + 6 >= len(vals):
+            i += 1
+            continue
+        try:
+            n = int(vals[i + 6][1])
+        except (TypeError, ValueError):
+            n = 0
+        if scope in ("FACE_PRESSURE", "FACE_TOTAL_FORCE") and found is None:
+            try:
+                mag = float(vals[i + 2][1])
+            except (TypeError, ValueError):
+                mag = None
+            slot = vals[i + 4]
+            normal = slot[0] == 1000 and str(slot[1]).upper() == "NORMAL"
+            direction = None if normal else _as_xyz(slot[1])
+            if mag is not None and (normal or direction is not None):
+                found = {
+                    "kind": "pressure" if scope == "FACE_PRESSURE" else "total",
+                    "mag": mag,
+                    "unit": str(vals[i + 3][1] or ""),
+                    "dir": direction,
+                    "normal": normal,
+                }
+        i = i + 7 + max(0, n)
+    return found
+
+
+def _parse_shell_edge_loads(tags) -> list[dict]:
+    """MY_CAE_SHELL_LOAD records whose type is EDGE_LOAD (boundary polyline)."""
+    vals = _xdata_pairs(tags)
+    recs: list[dict] = []
+    i = 0
+    while i < len(vals):
+        code, val = vals[i]
+        scope = str(val).upper() if code == 1000 and isinstance(val, str) else ""
+        if scope not in ("EDGE_LOAD", "FACE_PRESSURE", "FACE_TOTAL_FORCE") or i + 6 >= len(vals):
+            i += 1
+            continue
+        try:
+            n = int(vals[i + 6][1])
+        except (TypeError, ValueError):
+            n = 0
+        j = i + 7
+        pts: list[tuple[float, float, float]] = []
+        for _ in range(max(0, n)):
+            if j < len(vals) and vals[j][0] == 1010:
+                p = _as_xyz(vals[j][1])
+                if p is not None:
+                    pts.append(p)
+            j += 1
+        if scope == "EDGE_LOAD":
+            direction = _as_xyz(vals[i + 4][1])
+            try:
+                mag = float(vals[i + 2][1])
+            except (TypeError, ValueError):
+                mag = None
+            if direction is not None and mag is not None and len(pts) >= 2:
+                recs.append(
+                    {
+                        "mag": mag,
+                        "unit": str(vals[i + 3][1] or ""),
+                        "dir": direction,
+                        "pts": pts,
+                    }
+                )
+        i = j
+    return recs
+
+
+def _edge_load_label(mag: float, unit: str) -> str:
+    unit_tex = re.sub(r"[^A-Za-z0-9_\-./]", "", unit or "")
+    if unit_tex:
+        return rf"$q={mag:g}\,\mathrm{{{unit_tex}}}$"
+    return rf"$q={mag:g}$"
 
 
 def _face_load_label(info: dict) -> str:
@@ -384,9 +435,13 @@ def _face_load_label(info: dict) -> str:
     unit_tex = re.sub(r"[^A-Za-z0-9_\-./]", "", unit) or (
         "MPa" if info["kind"] == "pressure" else "N"
     )
+    if info.get("normal"):
+        tag = rf"\,n"
+    else:
+        tag = ""
     if info["kind"] == "pressure":
-        return rf"$P_{{\mathrm{{face}}}}={mag:g}\,\mathrm{{{unit_tex}}}$"
-    return rf"$F_{{\mathrm{{total}}}}={mag:g}\,\mathrm{{{unit_tex}}}$"
+        return rf"$P_{{\mathrm{{face}}}}={mag:g}\,\mathrm{{{unit_tex}}}{tag}$"
+    return rf"$F_{{\mathrm{{total}}}}={mag:g}\,\mathrm{{{unit_tex}}}{tag}$"
 
 
 def _uniq_ring(pts: list[tuple]) -> list[tuple]:
@@ -484,6 +539,200 @@ def _mask_to_dirs(mask: str):
     return tuple(bits)
 
 
+def _xdata_pairs(tags) -> list[tuple]:
+    out = []
+    for t in tags or []:
+        code = getattr(t, "code", None)
+        val = getattr(t, "value", t)
+        if code is None and isinstance(t, (tuple, list)) and len(t) >= 2:
+            code, val = t[0], t[1]
+        out.append((code, val))
+    return out
+
+
+def _as_xyz(val) -> tuple[float, float, float] | None:
+    try:
+        return (float(val[0]), float(val[1]), float(val[2]))
+    except Exception:
+        return None
+
+
+def _parse_shell_edge_bcs(tags) -> list[dict]:
+    """MY_CAE_SHELL_BC records whose scope is EDGE_BC (boundary polyline)."""
+    vals = _xdata_pairs(tags)
+    recs: list[dict] = []
+    i = 0
+    while i < len(vals):
+        code, val = vals[i]
+        scope = str(val).upper() if code == 1000 and isinstance(val, str) else ""
+        if scope not in ("EDGE_BC", "FACE_BC") or i + 10 >= len(vals):
+            i += 1
+            continue
+        try:
+            n = int(vals[i + 10][1])
+        except (TypeError, ValueError):
+            n = 0
+        j = i + 11
+        pts: list[tuple[float, float, float]] = []
+        for _ in range(max(0, n)):
+            if j < len(vals) and vals[j][0] == 1010:
+                p = _as_xyz(vals[j][1])
+                if p is not None:
+                    pts.append(p)
+            j += 1
+        if scope == "EDGE_BC" and len(pts) >= 2:
+            recs.append(
+                {
+                    "u_mask": str(vals[i + 1][1] or "000"),
+                    "u_axes": [_as_xyz(vals[i + k][1]) for k in (2, 3, 4)],
+                    "r_mask": str(vals[i + 5][1] or "000"),
+                    "r_axes": [_as_xyz(vals[i + k][1]) for k in (6, 7, 8)],
+                    "pts": pts,
+                }
+            )
+        i = j
+    return recs
+
+
+def _triad_flags(mask3: str, axes: list) -> list[int]:
+    """Map a 3-bit local mask onto global X/Y/Z by each axis's largest component."""
+    flags = [0, 0, 0]
+    bits = (mask3 or "000")[:3]
+    for i, bit in enumerate(bits):
+        if bit != "1":
+            continue
+        v = axes[i] if i < len(axes) else None
+        if not v:
+            flags[i] = 1
+            continue
+        ax = max(range(3), key=lambda k: abs(v[k]))
+        flags[ax] = 1
+    return flags
+
+
+def _edge_bc_mask(rec: dict) -> str:
+    u = _triad_flags(rec.get("u_mask") or "000", rec.get("u_axes") or [])
+    r = _triad_flags(rec.get("r_mask") or "000", rec.get("r_axes") or [])
+    return "".join(str(b) for b in u + r)
+
+
+def _poly_length(pts: list[tuple]) -> float:
+    return sum(_dist3(a, b) for a, b in zip(pts, pts[1:]))
+
+
+def _edge_bc_closed(pts: list[tuple]) -> bool:
+    if len(pts) < 3:
+        return False
+    length = _poly_length(pts)
+    if length < 1e-9:
+        return False
+    return _dist3(pts[0], pts[-1]) <= max(1e-3, 1e-4 * length)
+
+
+def _point_along(pts: list[tuple], distance: float) -> tuple:
+    if not pts:
+        return (0.0, 0.0, 0.0)
+    if distance <= 0.0:
+        return pts[0]
+    walked = 0.0
+    for a, b in zip(pts, pts[1:]):
+        seg = _dist3(a, b)
+        if walked + seg >= distance - 1e-9 or seg < 1e-15:
+            t = 0.0 if seg < 1e-15 else (distance - walked) / seg
+            t = max(0.0, min(1.0, t))
+            return tuple(a[i] + t * (b[i] - a[i]) for i in range(3))
+        walked += seg
+    return pts[-1]
+
+
+def _edge_bc_stations(pts: list[tuple], scale: float) -> list[tuple]:
+    """Equal-arc stations for one boundary curve.
+
+    An open curve gets 3 to 5 symbols and always includes both ends.
+    A closed curve has no end, so it gets 5 symbols around the loop.
+    """
+    if len(pts) < 2:
+        return []
+    closed = _edge_bc_closed(pts)
+    seq = list(pts)
+    length = _poly_length(seq)
+    if length < 1e-9:
+        return [seq[0]]
+    if closed:
+        return [_point_along(seq, length * k / 5.0) for k in range(5)]
+    # Largest count in 3..5 whose gap is at least two symbol lengths on paper.
+    paper = 0.70 / scale if scale and scale > 0 else 0.0
+    count = 3
+    for n in (5, 4, 3):
+        if length / (n - 1) >= paper - 1e-9:
+            count = n
+            break
+    return [_point_along(seq, length * i / (count - 1)) for i in range(count)]
+
+
+def _point_seg_dist(p, a, b) -> float:
+    ab = [float(b[i]) - float(a[i]) for i in range(3)]
+    ap = [float(p[i]) - float(a[i]) for i in range(3)]
+    ab2 = sum(x * x for x in ab)
+    if ab2 < 1e-18:
+        return _dist3(p, a)
+    t = max(0.0, min(1.0, sum(ap[i] * ab[i] for i in range(3)) / ab2))
+    return _dist3(p, tuple(float(a[i]) + t * ab[i] for i in range(3)))
+
+
+def _edge_deviation(edge, pts: list[tuple]) -> float:
+    samples = _edge_samples(edge, n=48)
+    if len(samples) < 2 or not pts:
+        return float("inf")
+    segs = list(zip(samples, samples[1:]))
+    if getattr(edge, "kind", "") == "circle":
+        segs.append((samples[-1], samples[0]))
+    worst = 0.0
+    for p in pts:
+        worst = max(worst, min(_point_seg_dist(p, a, b) for a, b in segs))
+    return worst
+
+
+def _match_boundary_edge(faces, idxs, pts):
+    """Edge whose equation the picked samples lie on. Prefer the closest length."""
+    best = None
+    best_key = None
+    slen = _poly_length(pts)
+    for i in idxs or []:
+        if i < 0 or i >= len(faces):
+            continue
+        for loop in faces[i].get("loops") or []:
+            if not isinstance(loop, (list, tuple)):
+                continue
+            for edge in loop:
+                dev = _edge_deviation(edge, pts)
+                samples = _edge_samples(edge, n=48)
+                elen = _poly_length(samples)
+                if getattr(edge, "kind", "") == "circle" and len(samples) >= 2:
+                    elen += _dist3(samples[-1], samples[0])
+                tol = max(0.5, 0.02 * max(elen, slen, 1.0))
+                if dev > tol:
+                    continue
+                key = (dev, abs(elen - slen))
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best = edge
+    return best
+
+
+def _xform_xyz(xform, p: tuple) -> tuple:
+    q = xform.transform((float(p[0]), float(p[1]), float(p[2])))
+    return (float(q[0]), float(q[1]), float(q[2]))
+
+
+def _xform_dir(xform, v: tuple) -> tuple:
+    q = xform.transform_direction((float(v[0]), float(v[1]), float(v[2])))
+    n = math.sqrt(sum(float(q[i]) ** 2 for i in range(3)))
+    if n < 1e-12:
+        return v
+    return (float(q[0]) / n, float(q[1]) / n, float(q[2]) / n)
+
+
 def _nearest3(nodes, p):
     return min(
         nodes, key=lambda q: sum((q[i] - p[i]) ** 2 for i in range(3))
@@ -522,6 +771,8 @@ def dxf_to_satopdf3d(
     # Shell faces: exact curve equations (line/arc/circle/spline), NOT FE tessellation.
     faces: list[dict] = []
     face_loads_by_idx: dict[int, dict] = {}
+    shell_edge_bcs: list[dict] = []
+    shell_edge_loads: list[dict] = []
     # Sampled boundary points for scale / envelope only (never emitted as FE nodes).
     extent_pts: list[tuple] = []
     _FACE_TYPES = (
@@ -557,6 +808,31 @@ def dxf_to_satopdf3d(
             shell_ld = _parse_shell_load_xdata(e.get_xdata("MY_CAE_SHELL_LOAD"))
         except Exception:
             shell_ld = None
+        edge_bcs = []
+        edge_lds = []
+        try:
+            edge_bcs = _parse_shell_edge_bcs(e.get_xdata("MY_CAE_SHELL_BC"))
+        except Exception:
+            edge_bcs = []
+        try:
+            edge_lds = _parse_shell_edge_loads(e.get_xdata("MY_CAE_SHELL_LOAD"))
+        except Exception:
+            edge_lds = []
+        if xform is not None:
+            for rec in edge_bcs:
+                rec["pts"] = [_xform_xyz(xform, p) for p in rec["pts"]]
+                rec["u_axes"] = [
+                    _xform_dir(xform, v) if v else None for v in rec["u_axes"]
+                ]
+                rec["r_axes"] = [
+                    _xform_dir(xform, v) if v else None for v in rec["r_axes"]
+                ]
+            for rec in edge_lds:
+                rec["pts"] = [_xform_xyz(xform, p) for p in rec["pts"]]
+                rec["dir"] = _xform_dir(xform, rec["dir"])
+        shell_edge_bcs.extend(edge_bcs)
+        shell_edge_loads.extend(edge_lds)
+        span0 = len(faces)
         mesh_u, mesh_v = _dxf_surface_isoline_counts(e)
         for af in analytic:
             if xform is not None:
@@ -582,6 +858,11 @@ def dxf_to_satopdf3d(
             if shell_ld is not None:
                 nodes[cen] = cen
                 face_loads_by_idx[fi] = shell_ld
+        span = list(range(span0, len(faces)))
+        for rec in edge_bcs:
+            rec["faces"] = span
+        for rec in edge_lds:
+            rec["faces"] = span
 
     for e in msp:
         _take_face(e)
@@ -805,6 +1086,51 @@ def dxf_to_satopdf3d(
         else:
             scale_n = None
 
+    # Boundary loads and restraints use the face edge equation in TeX.
+    # They do not add structural nodes.
+    edge_bc_lines: list[str] = []
+    edge_ld_lines: list[str] = []
+    seen_edge: set[str] = set()
+    for rec in shell_edge_bcs:
+        mask = _edge_bc_mask(rec)
+        if not any(ch == "1" for ch in mask):
+            continue
+        edge = _match_boundary_edge(faces, rec.get("faces") or [], rec["pts"])
+        if edge is None:
+            continue
+        call = _emit_edge_tex(edge, indent="").strip()
+        if not call:
+            continue
+        ux, uy, uz, rx, ry, rz = _mask_to_dirs(mask)
+        line = (
+            f"  \\stpDedgeBc{{{call}}}"
+            f"[{ux}][{uy}][{uz}][{rx}][{ry}][{rz}]"
+            f"  % EDGE_BC[{mask}]"
+        )
+        if line not in seen_edge:
+            seen_edge.add(line)
+            edge_bc_lines.append(line)
+    for rec in shell_edge_loads:
+        if not rec.get("dir"):
+            continue
+        edge = _match_boundary_edge(faces, rec.get("faces") or [], rec["pts"])
+        if edge is None:
+            continue
+        call = _emit_edge_tex(edge, indent="").strip()
+        if not call:
+            continue
+        ddx, ddy, ddz = rec["dir"]
+        label = _edge_load_label(rec["mag"], rec.get("unit") or "")
+        line = (
+            f"  \\stpDedgeLoad{{{call}}}{{{ddx:g},{ddy:g},{ddz:g}}}"
+            f"[{load_count}][{load_shaft:g}][{label}]"
+        )
+        if line not in seen_edge:
+            seen_edge.add(line)
+            edge_ld_lines.append(line)
+    ordered = sorted(nodes.keys(), key=lambda t: (t[1], t[0], t[2]))
+    nid = {p: f"N{i}" for i, p in enumerate(ordered)}
+
     L: list[str] = []
     if not fragment:
         L += [
@@ -829,7 +1155,10 @@ def dxf_to_satopdf3d(
     else:
         vx, vy, vz = view
         view_line = f"\\stpDsetView{{{vx:g}}}{{{vy:g}}}{{{vz:g}}}"
+    # Up vector is a separate line so it can be edited without touching VPOINT.
+    # Default matches \\stpDsetUp in satopdf.sty (+Z). Y-up is {0}{1}{0}.
     L += [
+        "\\stpDsetUp{0}{0}{1}",
         view_line,
         "\\stpDsetAxis{xyz}",
         f"\\renewcommand{{\\stpDscale}}{{{scale:g}}}",
@@ -893,6 +1222,8 @@ def dxf_to_satopdf3d(
                 f"  % BC GLOBAL[{mask}]"
             )
 
+    L.extend(edge_bc_lines)
+
     for ld in loads:
         a, b = ld["a"], ld["b"]
         ddx, ddy, ddz = ld["dir"]
@@ -917,12 +1248,21 @@ def dxf_to_satopdf3d(
         cname = nid.get(face["cen"])
         if not cname:
             continue
-        ddx, ddy, ddz = info["dir"]
         label = _face_load_label(info)
-        L.append(
-            f"  \\stpDpointload{{{cname}}}{{{ddx:g},{ddy:g},{ddz:g}}}"
-            f"[{load_shaft:g}][{label}]"
-        )
+        if info.get("normal"):
+            # Direction is the local face normal, resolved when the face is meshed.
+            L.append(
+                f"  \\node[stpLoadLabel] at ({cname}) {{{label}}};"
+                f"  % FACE normal"
+            )
+        else:
+            ddx, ddy, ddz = info["dir"]
+            L.append(
+                f"  \\stpDpointload{{{cname}}}{{{ddx:g},{ddy:g},{ddz:g}}}"
+                f"[{load_shaft:g}][{label}]"
+            )
+
+    L.extend(edge_ld_lines)
 
     corners = {
         _k((0, 0, 0)): ("A", "below left"),
@@ -979,6 +1319,7 @@ def dxf_to_satopdf3d(
     note = (
         f"satopdf 3D: {len(ordered)} nodes, {len(members)} members, "
         f"{len(faces)} faces, {len(point_loads)} point loads, {n_fl} face loads, "
+        f"{len(edge_bc_lines)} edge BCs, {len(edge_ld_lines)} edge loads, "
         f"spots={len(spot_welds)}, seams={len(seam_welds)}"
         f"{scale_note}"
         f"; V={mass_info['volume_mm3']:.3g} mm3, m={mass_info['mass_kg']:.3g} kg"

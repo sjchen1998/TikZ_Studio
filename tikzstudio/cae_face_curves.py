@@ -2670,6 +2670,180 @@ def _periodic_loft_grid(
     return segs
 
 
+def _periodic_trim(loops: list[list[Edge]], surf: dict[str, Any]) -> bool:
+    """Closed loft with a hole or a boundary that is not just the two end sections."""
+    if not loops or not _surface_periodic_u(surf):
+        return False
+    if loops[1:]:
+        return True
+    for e in loops[0]:
+        if isinstance(e, EdgeLine) or _edge_full_turn(e):
+            continue
+        return True
+    return False
+
+
+def _uv_edge_segments(
+    edges: list[Edge], surf: dict[str, Any]
+) -> list[tuple[float, float, float, float]]:
+    """Each boundary edge as ``(u0, v0, u1, v1)``, u unwrapped along that edge."""
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    period = u1 - u0
+    segments: list[tuple[float, float, float, float]] = []
+    for e in edges:
+        if isinstance(e, EdgeLine):
+            pts = [e.a, e.b]
+        elif isinstance(e, EdgeCircle):
+            pts = _edge_samples(e, n=48)
+        else:
+            pts = _edge_param_samples(e, 32)
+        prev: float | None = None
+        chain: list[tuple[float, float]] = []
+        for p in pts:
+            u, v, _d = _spline_uv_of_point(surf, Vec3(p))
+            u = _unwrap_to(prev, u, period)
+            chain.append((u, v))
+            prev = u
+        for i in range(len(chain) - 1):
+            a, b = chain[i], chain[i + 1]
+            if abs(a[0] - b[0]) < 1e-12 and abs(a[1] - b[1]) < 1e-9:
+                continue
+            segments.append((a[0], a[1], b[0], b[1]))
+    return segments
+
+
+def _periodic_latitude_spans(
+    segments: list[tuple[float, float, float, float]],
+    v: float,
+    u0: float,
+    period: float,
+) -> list[tuple[float, float]]:
+    """Inside arcs of the constant-v line. ``u`` may run past ``u0 + period``.
+
+    A hit is the parameter where a trim segment crosses this latitude, so the
+    arc ends on the boundary instead of on the last interior sample.
+    """
+    if period < 1e-12:
+        return []
+
+    def _fold(u: float) -> float:
+        x = (u - u0) / period
+        return u0 + (x - math.floor(x)) * period
+
+    hits: list[float] = []
+    for a0, b0, a1, b1 in segments:
+        db = b1 - b0
+        if abs(db) < 1e-12:
+            continue
+        t = (v - b0) / db
+        if t < -1e-8 or t > 1.0 + 1e-8:
+            continue
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        hits.append(_fold(a0 + t * (a1 - a0)))
+    hits.sort()
+    merged: list[float] = []
+    for h in hits:
+        if merged and min(abs(h - merged[-1]), period - abs(h - merged[-1])) < 1e-4:
+            continue
+        merged.append(h)
+    if len(merged) >= 2 and (merged[0] + period) - merged[-1] < 1e-4:
+        merged.pop()
+
+    def _inside(u: float) -> bool:
+        return _odd_below(_periodic_coord_hits(segments, _fold(u), period), v)
+
+    if not merged:
+        return [(u0, u0 + period)] if _inside(u0 + 0.5 * period) else []
+    spans: list[tuple[float, float]] = []
+    ring = merged + [merged[0] + period]
+    for a, b in zip(ring, ring[1:]):
+        if b - a < 1e-6:
+            continue
+        if _inside(0.5 * (a + b)):
+            spans.append((a, b))
+    return spans
+
+
+def _periodic_spline_mesh(
+    loops: list[list[Edge]],
+    surf: dict[str, Any],
+    n_u: int,
+    n_v: int,
+) -> list[tuple[tuple, tuple]]:
+    """Iso-lines of a periodic loft, clipped by even-odd on the trim.
+
+    u=0 and u=1 are the same seam. A hole or a notch is two extra crossings
+    of a constant-u ray, so that interval drops out of the mesh.
+    """
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    v0, v1 = float(surf["v0"]), float(surf["v1"])
+    period = u1 - u0
+    # The periodic seam is where the parameter was split. It is not a trim,
+    # and a latitude must cross it without a gap.
+    segments: list[tuple[float, float, float, float]] = []
+    for lp in loops:
+        kept = [e for e in lp if not _line_on_periodic_seam(e, surf)]
+        segments.extend(_uv_edge_segments(kept, surf))
+    if not segments:
+        return []
+
+    def _fold(u: float) -> float:
+        x = (u - u0) / period
+        return u0 + (x - math.floor(x)) * period
+
+    def _at(u: float, v: float) -> tuple:
+        return _v3(_spline_point(surf, _fold(u), min(v1, max(v0, v))))
+
+    bd = _boundary_polylines(loops)
+    flat = [p for seg in bd for p in seg]
+    snap_tol = 0.0
+    if flat:
+        xs = [p[0] for p in flat]
+        ys = [p[1] for p in flat]
+        zs = [p[2] for p in flat]
+        diag = math.hypot(
+            max(xs) - min(xs),
+            math.hypot(max(ys) - min(ys), max(zs) - min(zs)),
+        )
+        snap_tol = max(1.0, 0.03 * diag)
+
+    def _tip(p: tuple) -> tuple:
+        return _snap_point_to_polylines(p, bd, snap_tol)
+
+    segs: list[tuple[tuple, tuple]] = []
+    n_u = max(int(n_u), 1)
+    n_sub_v = max(6, 4 * (int(surf.get("n_v") or 2) - 1))
+    for k in range(1, n_u):
+        u = u0 + period * k / n_u
+        for va, vb in _hits_to_spans(_periodic_coord_hits(segments, u, period)):
+            if vb < va:
+                va, vb = vb, va
+            if vb - va < 1e-7:
+                continue
+            pts = [_at(u, va + (vb - va) * j / n_sub_v) for j in range(n_sub_v + 1)]
+            pts[0] = _tip(pts[0])
+            pts[-1] = _tip(pts[-1])
+            for a, b in zip(pts, pts[1:]):
+                if Vec3(a).distance(Vec3(b)) > 1e-9:
+                    segs.append((a, b))
+    steps = 48
+    for k in range(1, max(int(n_v), 1)):
+        v = v0 + (v1 - v0) * k / n_v
+        for ua, ub in _periodic_latitude_spans(segments, v, u0, period):
+            closed = ub - ua > period - 1e-4
+            n_sub = max(4, int(round((ub - ua) / period * steps)))
+            pts = [
+                _at(ua + (ub - ua) * j / n_sub, v) for j in range(n_sub + 1)
+            ]
+            if pts and not closed:
+                pts[0] = _tip(pts[0])
+                pts[-1] = _tip(pts[-1])
+            for a, b in zip(pts, pts[1:]):
+                if Vec3(a).distance(Vec3(b)) > 1e-9:
+                    segs.append((a, b))
+    return segs
+
+
 def _spline_mesh_segs(
     loops: list[list[Edge]],
     surf: dict[str, Any],
@@ -2683,6 +2857,8 @@ def _spline_mesh_segs(
     v0, v1 = float(surf["v0"]), float(surf["v1"])
     if u1 - u0 < 1e-12 or v1 - v0 < 1e-12:
         return []
+    if _periodic_trim(loops, surf):
+        return _periodic_spline_mesh(loops, surf, max(n_u, 16), max(n_v, 8))
     if _closed_loft_domain(loops, surf):
         return _periodic_loft_grid(loops, surf, n_u, n_v)
     outer = _spline_param_uv(loops[0], surf)
@@ -3089,32 +3265,73 @@ def _fmt_xyz(p: tuple[float, float, float]) -> str:
     return f"{p[0]:.6g},{p[1]:.6g},{p[2]:.6g}"
 
 
+def _pts_close(a: tuple, b: tuple, tol: float) -> bool:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1]) + abs(a[2] - b[2]) <= tol
+
+
+def _without_cancelling_seams(edges: list[Edge]) -> list[Edge]:
+    """Drop a line that is immediately traversed back along itself.
+
+    A full annulus is stored as two circles joined by one radial cut, once
+    each way. Those two lines are not an edge of the face.
+    """
+    lines = [e for e in edges if isinstance(e, EdgeLine)]
+    drop: set[int] = set()
+    for i, a in enumerate(lines):
+        if id(a) in drop:
+            continue
+        span = (
+            abs(a.a[0] - a.b[0]) + abs(a.a[1] - a.b[1]) + abs(a.a[2] - a.b[2])
+        )
+        tol = max(1e-4, 1e-6 * max(span, 1.0))
+        for b in lines[i + 1 :]:
+            if id(b) in drop:
+                continue
+            if _pts_close(a.a, b.b, tol) and _pts_close(a.b, b.a, tol):
+                drop.add(id(a))
+                drop.add(id(b))
+                break
+    if not drop:
+        return edges
+    return [e for e in edges if id(e) not in drop]
+
+
 def format_stp_dface_curves(loops: list[list[Edge]]) -> list[str]:
-    """TeX lines: equation-preserving planar face (no boundary node cloud)."""
+    """TeX lines: equation-preserving planar face (no boundary node cloud).
+
+    A full circle sampled from angle -π does not start where the previous
+    edge arrived. Left in the same loop, the path draws a chord through the
+    disk. Each full turn is its own subpath, and a there-and-back seam is
+    omitted, so an annulus fills by even-odd without those two chords.
+    """
     if not loops:
         return []
     L = ["  \\begin{stpDfaceEnv}"]
     for edges in loops:
-        L.append("    \\begin{stpDfaceLoop}")
-        for e in edges:
-            if isinstance(e, EdgeLine):
-                L.append(
-                    f"      \\stpDedgeLine{{{_fmt_xyz(e.a)}}}{{{_fmt_xyz(e.b)}}}"
-                )
-            elif isinstance(e, EdgeCircle):
-                L.append(
-                    f"      \\stpDedgeCircle{{{_fmt_xyz(e.center)}}}"
-                    f"{{{_fmt_xyz(e.normal)}}}{{{e.radius:.6g}}}"
-                )
-            elif isinstance(e, EdgeArc):
-                L.append(
-                    f"      \\stpDedgeArc{{{_fmt_xyz(e.center)}}}"
-                    f"{{{_fmt_xyz(e.normal)}}}{{{_fmt_xyz(e.major)}}}"
-                    f"{{{e.ratio:.6g}}}{{{e.t0:.8g}}}{{{e.t1:.8g}}}"
-                )
-            elif isinstance(e, EdgeSpline):
-                L.append(_emit_edge_tex(e, indent="      "))
-        L.append("    \\end{stpDfaceLoop}")
+        for part in _wire_loops(edges):
+            part = _without_cancelling_seams(part)
+            if not part:
+                continue
+            L.append("    \\begin{stpDfaceLoop}")
+            for e in part:
+                if isinstance(e, EdgeLine):
+                    L.append(
+                        f"      \\stpDedgeLine{{{_fmt_xyz(e.a)}}}{{{_fmt_xyz(e.b)}}}"
+                    )
+                elif isinstance(e, EdgeCircle):
+                    L.append(
+                        f"      \\stpDedgeCircle{{{_fmt_xyz(e.center)}}}"
+                        f"{{{_fmt_xyz(e.normal)}}}{{{e.radius:.6g}}}"
+                    )
+                elif isinstance(e, EdgeArc):
+                    L.append(
+                        f"      \\stpDedgeArc{{{_fmt_xyz(e.center)}}}"
+                        f"{{{_fmt_xyz(e.normal)}}}{{{_fmt_xyz(e.major)}}}"
+                        f"{{{e.ratio:.6g}}}{{{e.t0:.8g}}}{{{e.t1:.8g}}}"
+                    )
+                elif isinstance(e, EdgeSpline):
+                    L.append(_emit_edge_tex(e, indent="      "))
+            L.append("    \\end{stpDfaceLoop}")
     L.append("  \\end{stpDfaceEnv}")
     return L
 
@@ -3239,20 +3456,14 @@ def _snap_point_to_polylines(
     return best if best_d <= tol else p
 
 
-def _cone_frustum_segs(
+def _cone_frame(
     face: dict[str, Any],
-    ends: list[EdgeCircle],
-    ngen: int,
-    nring: int,
-) -> list[tuple[tuple, tuple]]:
-    """Generators and intermediate circles of a cone bounded by two full circles.
-
-    ``r(h) = radius + slope * h``. A cylinder has slope 0.
-    """
+) -> tuple[Vec3, Vec3, Vec3, Vec3, float, float, float] | None:
+    """Origin, axis, major, minor, radius, slope, ratio. ``r(h) = radius + slope*h``."""
     origin = Vec3(face["origin"])
     axis = Vec3(face["axis"])
     if axis.magnitude_square < 1e-18:
-        return []
+        return None
     axis = axis.normalize()
     radius = float(face["radius"])
     slope = float(face.get("slope") or 0.0)
@@ -3267,31 +3478,143 @@ def _cone_frustum_segs(
             v = axis.cross(u).normalize()
     else:
         u, v = _cyl_basis(axis)
+    return origin, axis, u, v, radius, slope, ratio
 
-    def _xyz(th: float, h: float) -> tuple:
-        r = radius + slope * h
-        return _v3(origin + axis * h + u * (r * math.cos(th)) + v * (r * ratio * math.sin(th)))
 
-    hs = [float((Vec3(e.center) - origin).dot(axis)) for e in ends]
-    h0, h1 = min(hs), max(hs)
-    if abs(h1 - h0) < 1e-9:
+def _cone_th_h(
+    p: Sequence[float] | Vec3,
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+) -> tuple[float, float]:
+    w = Vec3(p) - origin
+    h = float(w.dot(axis))
+    radial = w - axis * h
+    return math.atan2(float(radial.dot(v)), float(radial.dot(u))), h
+
+
+def _cone_xyz(
+    th: float,
+    h: float,
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+    radius: float,
+    slope: float,
+    ratio: float,
+) -> tuple:
+    r = radius + slope * h
+    return _v3(
+        origin + axis * h + u * (r * math.cos(th)) + v * (r * ratio * math.sin(th))
+    )
+
+
+def _unwrap_to(prev: float | None, cur: float, period: float) -> float:
+    if prev is None or period < 1e-12:
+        return cur
+    while cur - prev > period / 2.0:
+        cur -= period
+    while prev - cur > period / 2.0:
+        cur += period
+    return cur
+
+
+def _periodic_coord_hits(
+    segments: list[tuple[float, float, float, float]],
+    const: float,
+    period: float,
+) -> list[float]:
+    """Other-coordinate hits of the line at ``const`` on the periodic axis.
+
+    Each segment is ``(a0, b0, a1, b1)`` with ``a`` periodic.
+    Coincident hits are merged so a vertex shared by two segments counts once.
+    """
+    hits: list[float] = []
+    for a0, b0, a1, b1 in segments:
+        da = a1 - a0
+        if abs(da) < 1e-12:
+            continue
+        q = const
+        if period > 1e-9:
+            q += period * round((0.5 * (a0 + a1) - q) / period)
+        t = (q - a0) / da
+        if t < -1e-7 or t > 1.0 + 1e-7:
+            continue
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        hits.append(b0 + t * (b1 - b0))
+    hits.sort()
+    out: list[float] = []
+    for h in hits:
+        if not out or abs(h - out[-1]) > 1e-4:
+            out.append(h)
+    return out
+
+
+def _odd_below(hits: list[float], value: float) -> bool:
+    return sum(1 for h in hits if h < value - 1e-4) % 2 == 1
+
+
+def _flag_runs(flags: list[bool]) -> list[tuple[int, int, bool]]:
+    """Inclusive index runs of True. The third flag is True when the run is the full ring."""
+    n = len(flags)
+    if n == 0 or not any(flags):
         return []
-    segs: list[tuple[tuple, tuple]] = []
-    ngen = max(int(ngen), 1)
-    for k in range(ngen):
-        th = -math.pi + 2.0 * math.pi * k / ngen
-        segs.append((_xyz(th, h0), _xyz(th, h1)))
-    steps = 48
-    for k in range(1, max(int(nring), 1)):
-        h = h0 + (h1 - h0) * k / nring
-        prev = _xyz(-math.pi, h)
-        for s in range(1, steps + 1):
-            th = -math.pi + 2.0 * math.pi * s / steps
-            cur = _xyz(th, h)
-            if Vec3(prev).distance(Vec3(cur)) > 1e-9:
-                segs.append((prev, cur))
-            prev = cur
-    return segs
+    if all(flags):
+        return [(0, n - 1, True)]
+    ext = flags + flags
+    start = next(i for i, f in enumerate(flags) if not f)
+    runs: list[tuple[int, int, bool]] = []
+    s: int | None = None
+    for k in range(start, start + n):
+        if ext[k] and s is None:
+            s = k
+        elif not ext[k] and s is not None:
+            runs.append((s % n, (k - 1) % n, False))
+            s = None
+    # The scan stops on the repeated False at the end of the window, so a
+    # run that reaches that sample has not been closed yet.
+    if s is not None:
+        runs.append((s % n, (start - 1) % n, False))
+    return runs
+
+
+def _cone_th_segments(
+    face: dict[str, Any],
+    origin: Vec3,
+    axis: Vec3,
+    u: Vec3,
+    v: Vec3,
+) -> list[tuple[float, float, float, float]]:
+    """Boundary edges as ``(θ0, h0, θ1, h1)``. θ is unwrapped along each edge.
+
+    End circles and a trimmed base are separate loops. A vertical ray crosses
+    each once, so the mantle is the odd span between them and a notch is the
+    gap under the trim. A hole adds two more crossings.
+    """
+    segments: list[tuple[float, float, float, float]] = []
+    period = 2.0 * math.pi
+    for edges in face.get("loops") or []:
+        for e in edges:
+            pts = (
+                _edge_samples(e, n=72)
+                if isinstance(e, (EdgeCircle, EdgeArc))
+                else _edge_boundary_samples(e)
+            )
+            prev: float | None = None
+            chain: list[tuple[float, float]] = []
+            for p in pts:
+                th, h = _cone_th_h(p, origin, axis, u, v)
+                th = _unwrap_to(prev, th, period)
+                chain.append((th, h))
+                prev = th
+            for i in range(len(chain) - 1):
+                a, b = chain[i], chain[i + 1]
+                if abs(a[0] - b[0]) < 1e-12 and abs(a[1] - b[1]) < 1e-9:
+                    continue
+                segments.append((a[0], a[1], b[0], b[1]))
+    return segments
 
 
 def _cylinder_mesh_segs(
@@ -3299,72 +3622,26 @@ def _cylinder_mesh_segs(
     ngen: int = _CYL_MESH_GEN,
     nring: int = _CYL_MESH_RING,
 ) -> list[tuple[tuple, tuple]]:
-    """Isolines clipped to the trimmed face in (θ, h) — avoids phantom patches."""
-    ends = [
-        edges[0]
-        for edges in (face.get("loops") or [])
-        if len(edges) == 1 and isinstance(edges[0], EdgeCircle)
-    ]
-    if len(ends) == 2:
-        return _cone_frustum_segs(face, ends, ngen, nring)
-    origin = Vec3(face["origin"])
-    axis = Vec3(face["axis"])
-    if axis.magnitude_square < 1e-18:
+    """Generators and rings on the cone, clipped to the trim in (θ, h).
+
+    ``r(h) = radius + slope * h``. A straight cylinder has slope 0.
+    """
+    frame = _cone_frame(face)
+    if frame is None:
         return []
-    axis = axis.normalize()
-    radius = float(face["radius"])
-    u, v = _cyl_basis(axis)
+    origin, axis, u, v, radius, slope, ratio = frame
+    segments = _cone_th_segments(face, origin, axis, u, v)
+    if not segments:
+        return []
+    hs = [s[1] for s in segments] + [s[3] for s in segments]
+    hmin, hmax = min(hs), max(hs)
+    if hmax - hmin < 1e-6:
+        return []
+
+    def _xyz(th: float, h: float) -> tuple:
+        return _cone_xyz(th, h, origin, axis, u, v, radius, slope, ratio)
+
     loops = face.get("loops") or []
-    if not loops:
-        return []
-
-    # Parameter polygons from SAB boundary edges (outer + holes)
-    def _loop_th_h(edges: list[Edge]) -> list[tuple[float, float]]:
-        pts3: list[tuple] = []
-        for e in edges:
-            seg = _edge_boundary_samples(e)
-            if not seg:
-                continue
-            if not pts3:
-                pts3.extend(seg)
-            elif pts3[-1] == seg[0]:
-                pts3.extend(seg[1:])
-            else:
-                pts3.extend(seg)
-        pts3 = _uniq_ring(pts3)
-        if len(pts3) < 3:
-            return []
-        raw = [_cyl_th_h(p, origin, axis, u, v) for p in pts3]
-        ths = _unwrap_theta_chain([t for t, _ in raw])
-        uv = list(zip(ths, [h for _, h in raw]))
-        if abs(uv[0][0] - uv[-1][0]) > 1e-9 or abs(uv[0][1] - uv[-1][1]) > 1e-9:
-            uv = list(uv) + [uv[0]]
-        return uv
-
-    loop_uvs = [_loop_th_h(edges) for edges in loops]
-    loop_uvs = [uv for uv in loop_uvs if len(uv) >= 3]
-    if not loop_uvs:
-        return []
-    # Largest loop = outer; remaining = holes (order_curve_loops usually already)
-    loop_uvs.sort(key=len, reverse=True)
-    best = loop_uvs[0]
-    hole_uvs = loop_uvs[1:]
-
-    ths = [p[0] for p in best]
-    hs = [p[1] for p in best]
-    th_min, th_max = min(ths), max(ths)
-    h_min, h_max = min(hs), max(hs)
-    if th_max - th_min < 1e-6 or h_max - h_min < 1e-6:
-        return []
-
-    segs: list[tuple[tuple, tuple]] = []
-
-    def _to_xyz(th: float, h: float) -> tuple:
-        p = origin + axis * h + u * (radius * math.cos(th)) + v * (
-            radius * math.sin(th)
-        )
-        return _v3(p)
-
     bd = _boundary_polylines(loops)
     flat = [p for seg in bd for p in seg]
     snap_tol = 0.0
@@ -3381,68 +3658,38 @@ def _cylinder_mesh_segs(
     def _tip(p: tuple) -> tuple:
         return _snap_point_to_polylines(p, bd, snap_tol)
 
-    def _emit_spans(
-        spans: list[tuple[float, float]], *, horizontal: bool, const: float
-    ) -> None:
-        # horizontal=True: const is h, spans are theta — sample the CIRCULAR
-        # arc (not a single chord). Generators stay straight in h.
-        # Only the span tips are snapped; chord joints stay on the cylinder.
-        for a, b in spans:
-            if b - a < 1e-7:
-                continue
-            if horizontal:
-                nsub = max(8, int(round(abs(b - a) / (2 * math.pi) * 48)))
-                pts = [
-                    _to_xyz(a + (b - a) * s / nsub, const) for s in range(nsub + 1)
-                ]
+    segs: list[tuple[tuple, tuple]] = []
+    ngen = max(int(ngen), 1)
+    for k in range(ngen):
+        th = -math.pi + 2.0 * math.pi * (k + 0.5) / ngen
+        hits = _periodic_coord_hits(segments, th, 2.0 * math.pi)
+        for ha, hb in _hits_to_spans(hits):
+            pa, pb = _tip(_xyz(th, ha)), _tip(_xyz(th, hb))
+            if Vec3(pa).distance(Vec3(pb)) > 1e-9:
+                segs.append((pa, pb))
+
+    steps = 64
+    ths = [-math.pi + 2.0 * math.pi * s / steps for s in range(steps)]
+    for k in range(1, max(int(nring), 1)):
+        h = hmin + (hmax - hmin) * k / nring
+        flags = [
+            _odd_below(_periodic_coord_hits(segments, th, 2.0 * math.pi), h)
+            for th in ths
+        ]
+        for i0, i1, closed in _flag_runs(flags):
+            if closed:
+                idxs = list(range(steps)) + [0]
+            elif i1 >= i0:
+                idxs = list(range(i0, i1 + 1))
+            else:
+                idxs = list(range(i0, steps)) + list(range(0, i1 + 1))
+            pts = [_xyz(ths[i], h) for i in idxs]
+            if pts:
                 pts[0] = _tip(pts[0])
                 pts[-1] = _tip(pts[-1])
-                for s in range(nsub):
-                    if Vec3(pts[s]).distance(Vec3(pts[s + 1])) > 1e-9:
-                        segs.append((pts[s], pts[s + 1]))
-            else:
-                segs.append((_tip(_to_xyz(const, a)), _tip(_to_xyz(const, b))))
-
-    def _clipped(
-        outer_hits: list[float],
-        hole_hits_list: list[list[float]],
-    ) -> list[tuple[float, float]]:
-        spans = _hits_to_spans(outer_hits)
-        for hh in hole_hits_list:
-            spans = _clip_intervals_subtract(spans, _hits_to_spans(hh))
-        return spans
-
-    # Generators: constant θ. Skip θ = th_min/th_max — those are the
-    # boundary meridians already stroked in red. Extra samples near one
-    # end stacked a second bundle of lines on top of that edge.
-    th_samples = [
-        th_min + (th_max - th_min) * k / max(ngen, 1) for k in range(1, max(ngen, 1))
-    ]
-    for th in th_samples:
-        spans = _clipped(
-            _poly_line_hits(best, const=th, horizontal=False),
-            [
-                _poly_line_hits(huv, const=th, horizontal=False)
-                for huv in hole_uvs
-            ],
-        )
-        _emit_spans(spans, horizontal=False, const=th)
-    # Rings: constant h (skip exact ends — boundary wire draws those).
-    # Do not add a second set from partial arcs; that redrew full rings
-    # on top of this grid.
-    h_samples = [
-        h_min + (h_max - h_min) * k / nring for k in range(1, max(nring, 1))
-    ]
-    for hh in h_samples:
-        spans = _clipped(
-            _poly_line_hits(best, const=hh, horizontal=True),
-            [
-                _poly_line_hits(huv, const=hh, horizontal=True)
-                for huv in hole_uvs
-            ],
-        )
-        _emit_spans(spans, horizontal=True, const=hh)
-
+            for a, b in zip(pts, pts[1:]):
+                if Vec3(a).distance(Vec3(b)) > 1e-9:
+                    segs.append((a, b))
     return segs
 
 
@@ -4462,20 +4709,10 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
         return L
     if kind == "cylinder":
         L.extend(_emit_cylinder_mesh(face))
-        # Full 360°: each end circle own loop (avoid -- chords between circles)
+        # Full 360°: drop seam lines. Keep circles, arcs, and trim splines.
+        # Each full circle is its own loop so the path does not stroke a chord.
         full = abs(float(face.get("th1", 0)) - float(face.get("th0", 0))) > 2 * math.pi - 0.15
-        if full:
-            L.extend(
-                _emit_revolve_wire(
-                    {
-                        "loops": loops,
-                        "axis": face.get("axis") or (0, 0, 1),
-                        "full_turn": True,
-                    }
-                )
-            )
-        else:
-            L.extend(_emit_loop_wire(loops))
+        L.extend(_emit_loop_wire(loops, skip_seam_lines=full))
         L.extend(_emit_loop_eq(loops))
         return L
     if kind == "revolve":
@@ -4493,7 +4730,15 @@ def format_stp_analytic_face(face: dict[str, Any]) -> list[str]:
             f"  \\stpDmeshSeg{{{_fmt_xyz(a)}}}{{{_fmt_xyz(b)}}}"
             for a, b in _spline_mesh_segs(loops, face.get("spline") or {})
         )
-        L.extend(_emit_loop_wire(loops))
+        # The seam between a closed circle and a closed ellipse is only where
+        # the periodic parameter was split. It is not a real edge of the face.
+        surf = face.get("spline") or {}
+        L.extend(
+            _emit_loop_wire(
+                loops,
+                seam_surf=surf if _surface_periodic_u(surf) else None,
+            )
+        )
         L.extend(_emit_loop_eq(loops))
         return L
     if kind == "plane":
@@ -4540,23 +4785,56 @@ def _wire_loops(edges: list[Edge]) -> list[list[Edge]]:
     return parts
 
 
+def _line_on_periodic_seam(edge: Edge, surf: dict[str, Any] | None) -> bool:
+    """Straight connector of a closed loft. The circle and the ellipse have
+    no start vertex, so this line is the parameter seam, not a boundary."""
+    if not isinstance(edge, EdgeLine) or not surf or not _surface_periodic_u(surf):
+        return False
+    u0, u1 = float(surf["u0"]), float(surf["u1"])
+    period = u1 - u0
+    if period < 1e-9:
+        return False
+    tol = 0.04 * period
+    mid = (
+        0.5 * (edge.a[0] + edge.b[0]),
+        0.5 * (edge.a[1] + edge.b[1]),
+        0.5 * (edge.a[2] + edge.b[2]),
+    )
+    for p in (edge.a, edge.b, mid):
+        u, _v, _d = _spline_uv_of_point(surf, Vec3(p))
+        frac = abs((u - u0) / period - round((u - u0) / period))
+        if frac * period > tol:
+            return False
+    return True
+
+
 def _emit_loop_wire(
-    loops: list[list[Edge]], *, skip_seam_lines: bool = False
+    loops: list[list[Edge]],
+    *,
+    skip_seam_lines: bool = False,
+    seam_surf: dict[str, Any] | None = None,
 ) -> list[str]:
     """Stroke face boundary once (no fill).
 
     ``skip_seam_lines``: for full 360° cylinder, drop EdgeLine seams
     (often duplicated forward/back); keep circles / arcs.
+    ``seam_surf``: drop only the lines that lie on a periodic loft seam.
     """
     if not loops:
         return []
     L = ["  \\begin{stpDwireEnv}"]
     for edges in loops:
         for part in _wire_loops(edges):
+            drawn = [
+                e
+                for e in part
+                if not (skip_seam_lines and isinstance(e, EdgeLine))
+                and not _line_on_periodic_seam(e, seam_surf)
+            ]
+            if not drawn:
+                continue
             L.append("    \\begin{stpDfaceLoop}")
-            for e in part:
-                if skip_seam_lines and isinstance(e, EdgeLine):
-                    continue
+            for e in drawn:
                 L.append(_emit_edge_tex(e))
             L.append("    \\end{stpDfaceLoop}")
     L.append("  \\end{stpDwireEnv}")

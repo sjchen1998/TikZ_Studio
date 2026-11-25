@@ -1026,7 +1026,7 @@ from DXF.
 
 \DescribeMacro{\stpDsupport}
 \cs{stpDsupport}\marg{pin\textbar wall\textbar spring\textbar fork\textbar fixed}%
-\marg{point}\oarg{ux}\oarg{uy}\oarg{uz}\oarg{rx}\oarg{ry}\oarg{rz}\\*
+\marg{point}\oarg{ux}\oarg{uy}\oarg{uz}\oarg{rx}\oarg{ry}\oarg{rz}\oarg{anchor}\\*
 \textit{Purpose:} 3D support with optional translation rods and rotation
 marks.  DXF: \texttt{MY\_CAE\_BC} $\rightarrow$ \cs{stpDsupport} with the
 six-bit mask as \texttt{[ux]...[rz]}.
@@ -1042,6 +1042,8 @@ six-bit mask as \texttt{[ux]...[rz]}.
   \STParg{[rx][ry][rz]}{rotation marks at rod ends (default \texttt{0}):
     nonzero $=$ solid filled circle (rotation fixed); \texttt{0} with $u\neq0$
     $=$ hollow (rotation free).}
+  \STParg{[anchor]}{anchor circle: \texttt{1} filled (constraint on a node,
+    default), \texttt{0} open (constraint along a segment).}
 \end{STPargs}
 
 \DescribeMacro{\stpDhinge}
@@ -1172,13 +1174,18 @@ wireframe mesh: planes get UV \cs{stpDmeshSeg} lines; cylinders use
 \subsection{3D dimensions and welds}
 
 \DescribeMacro{\stpDdimEnv}
-\cs{stpDdimEnv}\marg{x\textbar y\textbar z}\marg{x0}\marg{y0}\marg{z0}\marg{L}%
-\oarg{$\Delta$}\oarg{label}\\*
+\cs{stpDdimEnv}\marg{x\textbar y\textbar z}\oarg{xy\textbar yz\textbar zx}%
+\marg{x0}\marg{y0}\marg{z0}\marg{L}\oarg{$\Delta$}\oarg{label}\\*
 \textit{Purpose:} 3D envelope dimension along one model axis ($L_x$,
-$L_y$, $L_z$).  Emitted by the 3D importer / SA3D template from the
-bounding box.
+$L_y$, $L_z$).  The optional plane is a model plane and does not follow
+which axis is screen-up.  Defaults: $L_x$ on $xy$ (offset $-y$),
+$L_y$ on $yz$ (offset $-z$), $L_z$ on $zx$ (offset $-x$).
+The measured axis must lie in the plane, so $x$ rejects $yz$, $y$ rejects
+$zx$, and $z$ rejects $xy$; a rejected or unknown plane warns and restores
+the default.  Emitted by the 3D importer / SA3D template from the bounding box.
 \begin{STPargs}
   \STParg{x\textbar y\textbar z}{which model axis is dimensioned.}
+  \STParg{[xy\textbar yz\textbar zx]}{dimension plane. Omit for the default above.}
   \STParg{x0,y0,z0}{reference corner of the envelope in model units.}
   \STParg{L}{length along the chosen axis.}
   \STParg{($\Delta$)}{paper offset of the dimension line (default \cs{stpDimOff}).}

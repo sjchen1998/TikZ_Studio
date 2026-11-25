@@ -201,8 +201,8 @@ SETSEC / DELSEC
 SETSHELLLOAD / DELSHELLLOAD
   & 板壳边线载荷或面压/面力 \\
 SETSHELLSEC & 板壳截面：理论、厚度、偏置、材料 \\
-ADDSHELLBC / DELSHELLBC
-  & 板壳边线或整面约束 \\
+SETSHELLBC / DELSHELLBC
+  & 先选面，再选边界曲线施加约束 \\
 SETSPOTWELD / DELSPOTWELD
   & 点焊（POINT + 黄色标记） \\
 SETSEAMWELD / DELSEAMWELD
@@ -317,17 +317,22 @@ APPID \appid{MY\_CAE\_MOMENT}。
 \subsection{\cadcmd{SETSHELLLOAD} / \cadcmd{DELSHELLLOAD}}
 APPID \appid{MY\_CAE\_SHELL\_LOAD}。
 \begin{itemize}[nosep]
-  \item \texttt{Edge} --- 直边（两点）或圆弧（三点）线载荷；
+  \item \texttt{Edge} --- 先选面，再选一条临时显示的红色边界
+        （直线、圆、圆弧、样条等）。分布载荷沿该边界绘制；
         单位 \texttt{N-mm}/\texttt{kN-m}；全局方向。
   \item \texttt{Face} --- \texttt{Pressure}（MPa/kPa）或
-        \texttt{Total} 总合力（N/kN）；方向取 \texttt{Normal}
-        或全局 \texttt{Vector}。
+        \texttt{Total} 总合力（N/kN）。\texttt{Normal} 不记录固定方向，
+        解析曲面时按各处法向计算；\texttt{Vector} 为全局方向。
 \end{itemize}
 
-\subsection{\cadcmd{ADDSHELLBC} / \cadcmd{DELSHELLBC}}
-APPID \appid{MY\_CAE\_SHELL\_BC}。优先边线或整面约束（避免单点奇异）：
-\texttt{FixAll}、\texttt{PinPlane}、\texttt{SlideLine}、
-\texttt{RotAxis}。
+\subsection{\cadcmd{SETSHELLBC} / \cadcmd{DELSHELLBC}}
+APPID \appid{MY\_CAE\_SHELL\_BC}。只对边界施加约束：先选板壳面。
+面的边界通常不是独立图元，命令会复制并炸开该面，临时显示红色边界，
+再点选其中一条（直线、圆、圆弧、椭圆、样条或多段线）。选完后红色边界删除。
+模式：\texttt{FixAll}、\texttt{PinPlane}、\texttt{SlideLine}、
+\texttt{RotAxis}。记录为 \texttt{EDGE\_BC}。
+三维支座沿该边界等距布置，不另画曲线。
+开口曲线 3--5 个（含两端），封闭曲线 5 个。锚点圆不填充。
 
 %==============================================================================
 \section{焊缝}
